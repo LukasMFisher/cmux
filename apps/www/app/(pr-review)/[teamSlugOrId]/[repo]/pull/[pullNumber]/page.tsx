@@ -161,6 +161,7 @@ function scheduleCodeReviewStart({
             githubLink,
             prNumber: pullNumber,
             commitRef,
+            force: false,
           },
         });
 

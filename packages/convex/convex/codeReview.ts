@@ -2,14 +2,12 @@ import { ConvexError, v } from "convex/values";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { env } from "../_shared/convex-env";
-import { authMutation } from "./users/utils";
+import { authMutation, authQuery } from "./users/utils";
 import { mutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 const GITHUB_HOST = "github.com";
 type JobDoc = Doc<"automatedCodeReviewJobs">;
-
-const MORPH_API_BASE_URL = "https://cloud.morph.so";
 
 function isActiveState(state: JobDoc["state"]): boolean {
   return state === "pending" || state === "running";
@@ -77,11 +75,11 @@ function ensureJobOwner(requesterId: string, job: JobDoc) {
 
 async function findExistingActiveJob(
   db: MutationCtx["db"],
-  teamId: string,
+  teamId: string | undefined,
   repoFullName: string,
   prNumber: number,
 ): Promise<JobDoc | null> {
-  const teamFilter = teamId ?? null;
+  const teamFilter = teamId ?? undefined;
   const query = db
     .query("automatedCodeReviewJobs")
     .withIndex("by_team_repo_pr_updated", (q) =>
@@ -105,50 +103,13 @@ async function findExistingActiveJob(
   return null;
 }
 
-function getMorphApiKey(): string | null {
-  const key = env.MORPH_API_KEY;
-  if (!key || key.length === 0) {
-    return null;
-  }
-  return key;
-}
-
-async function pauseMorphInstance(sandboxInstanceId: string): Promise<void> {
-  const apiKey = getMorphApiKey();
-  if (!apiKey) {
-    console.warn(
-      "[codeReview] MORPH_API_KEY not configured; skipping Morph pause request",
-      { sandboxInstanceId }
-    );
-    return;
-  }
-
-  const url = `${MORPH_API_BASE_URL}/api/instances/${encodeURIComponent(
-    sandboxInstanceId
-  )}/pause`;
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      console.warn("[codeReview] Failed to pause Morph instance", {
-        sandboxInstanceId,
-        status: response.status,
-        bodyPreview: text.slice(0, 512),
-      });
-    }
-  } catch (error) {
-    console.error("[codeReview] Error pausing Morph instance", {
-      sandboxInstanceId,
-      error,
-    });
-  }
+async function schedulePauseMorphInstance(
+  ctx: MutationCtx,
+  sandboxInstanceId: string
+): Promise<void> {
+  await ctx.scheduler.runAfter(0, internal.codeReviewActions.pauseMorphInstance, {
+    sandboxInstanceId,
+  });
 }
 
 export const reserveJob = authMutation({
@@ -158,6 +119,7 @@ export const reserveJob = authMutation({
     prNumber: v.number(),
     commitRef: v.optional(v.string()),
     callbackTokenHash: v.string(),
+    force: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { identity } = ctx;
@@ -186,7 +148,7 @@ export const reserveJob = authMutation({
       repoFullName,
       args.prNumber,
     );
-    if (existing) {
+    if (existing && !args.force) {
       console.info("[codeReview.reserveJob] Reusing existing active job", {
         jobId: existing._id,
         repoFullName,
@@ -196,6 +158,24 @@ export const reserveJob = authMutation({
         wasCreated: false as const,
         job: serializeJob(existing),
       };
+    }
+
+    if (existing && args.force) {
+      ensureJobOwner(identity.subject, existing);
+      const now = Date.now();
+      await ctx.db.patch(existing._id, {
+        state: "failed",
+        errorCode: "force_rerun",
+        errorDetail: "Superseded by a new automated code review run",
+        updatedAt: now,
+        completedAt: now,
+        callbackTokenHash: undefined,
+      });
+      console.info("[codeReview.reserveJob] Forced rerun; superseding job", {
+        jobId: existing._id,
+        repoFullName,
+        prNumber: args.prNumber,
+      });
     }
 
     const pullRequest = await ctx.db
@@ -444,7 +424,7 @@ export const completeJobFromCallback = mutation({
     if (!updated) {
       throw new ConvexError("Failed to update job");
     }
-    await pauseMorphInstance(sandboxInstanceId);
+    await schedulePauseMorphInstance(ctx, sandboxInstanceId);
     return serializeJob(updated);
   },
 });
@@ -494,7 +474,51 @@ export const failJobFromCallback = mutation({
     if (!updated) {
       throw new ConvexError("Failed to update job");
     }
-    await pauseMorphInstance(sandboxInstanceId);
+    await schedulePauseMorphInstance(ctx, sandboxInstanceId);
     return serializeJob(updated);
+  },
+});
+
+export const listFileOutputsForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    commitRef: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const limit = Math.min(args.limit ?? 200, 500);
+
+    let query = ctx.db
+      .query("automatedCodeReviewFileOutputs")
+      .withIndex("by_team_repo_pr_commit", (q) =>
+        q
+          .eq("teamId", teamId)
+          .eq("repoFullName", args.repoFullName)
+          .eq("prNumber", args.prNumber),
+      )
+      .order("desc");
+
+    if (args.commitRef) {
+      query = query.filter((q) => q.eq(q.field("commitRef"), args.commitRef));
+    }
+
+    const outputs = await query.take(limit);
+
+    return outputs.map((output) => ({
+      id: output._id,
+      jobId: output.jobId,
+      teamId: output.teamId,
+      repoFullName: output.repoFullName,
+      prNumber: output.prNumber,
+      commitRef: output.commitRef,
+      sandboxInstanceId: output.sandboxInstanceId ?? null,
+      filePath: output.filePath,
+      codexReviewOutput: output.codexReviewOutput,
+      createdAt: output.createdAt,
+      updatedAt: output.updatedAt,
+    }));
   },
 });

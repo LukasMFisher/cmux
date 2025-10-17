@@ -16,6 +16,7 @@ type StartCodeReviewPayload = {
   githubLink: string;
   prNumber: number;
   commitRef?: string;
+  force?: boolean;
 };
 
 type StartCodeReviewOptions = {
@@ -107,6 +108,7 @@ export async function startCodeReviewJob({
     prNumber: payload.prNumber,
     commitRef: payload.commitRef,
     callbackTokenHash,
+    force: payload.force,
   });
 
   if (!reserveResult.wasCreated) {

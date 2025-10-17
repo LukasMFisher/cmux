@@ -331,7 +331,14 @@ const convexSchema = defineSchema({
     updatedAt: v.number(),
   })
     .index("by_job", ["jobId", "createdAt"])
-    .index("by_job_file", ["jobId", "filePath"]),
+    .index("by_job_file", ["jobId", "filePath"])
+    .index("by_team_repo_pr_commit", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "commitRef",
+      "createdAt",
+    ]),
 
   repos: defineTable({
     fullName: v.string(),

@@ -17,6 +17,22 @@ interface CommandOptions {
 
 const execFileAsync = promisify(execFile);
 
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) {
+    return `${ms}`;
+  }
+  if (ms < 1000) {
+    return `${ms.toFixed(0)}ms`;
+  }
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(2)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds - minutes * 60;
+  return `${minutes}m ${remainder.toFixed(1)}s`;
+}
+
 interface CallbackContext {
   url: string;
   token: string;
@@ -304,8 +320,10 @@ async function runCodexReviews({
 
   let failureCount = 0;
   const collectedResults: CodexReviewResult[] = [];
+  const reviewStart = performance.now();
 
   for (const file of files) {
+    const fileStart = performance.now();
     try {
       const diff = await runCommandCapture(
         "git",
@@ -319,10 +337,10 @@ async function runCodexReviews({
       const prompt = `\
 You are a senior engineer performing a focused pull request review, focusing only on the file provided.
 File path: ${file}
-Return a JSON object of type { lines: { line: string, hasChanged: boolean, shouldBeReviewedScore?: boolean, shouldReviewWhy?: string, mostImportantCharacterIndex: number }[] }.
+Return a JSON object of type { lines: { line: string, hasChanged: boolean, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
 You should only have the "post-diff" array of lines in the JSON object, with the hasChanged true or false.
 
-shouldBeReviewedScore and shouldReviewWhy should only be given if hasChanged is true. shouldReviewWhy should only be given if there is something interesting to say that might be non-obvious to the dev.
+shouldBeReviewedScore and shouldReviewWhy should only contain meaningful values when hasChanged is true. When they are not needed, set them to null.
 
 shouldBeReviewedScore is a number from 0 to 1 that indicates how careful the reviewer should be when reviewing this line of code.
 Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
@@ -342,12 +360,56 @@ DO NOT BE LAZY DO THE ENTIRE FILE. FROM START TO FINISH. DO NOT BE LAZY.
 The diff:
 ${diff || "(no diff output)"}`;
 
-      const turn = await thread.run(prompt);
-      const response = turn.finalResponse ?? "";
+      logIndentedBlock(`[inject] Prompt for ${file}`, prompt);
+
+      const turn = await thread.runStreamed(prompt, {
+        outputSchema: {
+          type: "object",
+          properties: {
+            lines: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  line: { type: "string" },
+                  hasChanged: { type: "boolean" },
+                  shouldBeReviewedScore: { type: ["number", "null"] as const },
+                  shouldReviewWhy: { type: ["string", "null"] as const },
+                  mostImportantCharacterIndex: { type: "number" },
+                },
+                required: [
+                  "line",
+                  "hasChanged",
+                  "shouldBeReviewedScore",
+                  "shouldReviewWhy",
+                  "mostImportantCharacterIndex",
+                ],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["lines"],
+          additionalProperties: false,
+        } as const,
+      });
+      let response = "<no response>";
+      for await (const event of turn.events) {
+        console.log(`[inject] Codex event: ${JSON.stringify(event)}`);
+        if (event.type === "item.completed") {
+          if (event.item.type === "agent_message") {
+            response = event.item.text;
+          }
+        }
+      }
+      // const response = turn.finalResponse ?? "";
       logIndentedBlock(`[inject] Codex review for ${file}`, response);
 
       const result: CodexReviewResult = { file, response };
       collectedResults.push(result);
+      const elapsedMs = performance.now() - fileStart;
+      console.log(
+        `[inject] Review completed for ${file} in ${formatDuration(elapsedMs)}`
+      );
 
       if (fileCallback) {
         try {
@@ -376,6 +438,10 @@ ${diff || "(no diff output)"}`;
           ? error.message
           : String(error ?? "unknown error");
       console.error(`[inject] Codex review failed for ${file}: ${reason}`);
+      const elapsedMs = performance.now() - fileStart;
+      console.error(
+        `[inject] Review for ${file} failed after ${formatDuration(elapsedMs)}`
+      );
     }
   }
 
@@ -385,7 +451,11 @@ ${diff || "(no diff output)"}`;
     );
   }
 
-  console.log("[inject] Codex reviews completed.");
+  console.log(
+    `[inject] Codex reviews completed in ${formatDuration(
+      performance.now() - reviewStart
+    )}.`
+  );
   return collectedResults;
 }
 
@@ -446,6 +516,8 @@ async function main(): Promise<void> {
   console.log(
     `[inject] Base ${baseRepo.owner}/${baseRepo.name}@${baseRefName}`
   );
+
+  const jobStart = performance.now();
 
   try {
     console.log(`[inject] Clearing workspace ${workspaceDir}...`);
@@ -567,6 +639,11 @@ async function main(): Promise<void> {
     });
 
     console.log("[inject] Done with PR review.");
+    console.log(
+      `[inject] Total review runtime ${formatDuration(
+        performance.now() - jobStart
+      )}`
+    );
 
     const reviewOutput: Record<string, unknown> = {
       prUrl,
@@ -598,6 +675,11 @@ async function main(): Promise<void> {
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
     console.error(`[inject] Error during review: ${message}`);
+    console.error(
+      `[inject] Total runtime before failure ${formatDuration(
+        performance.now() - jobStart
+      )}`
+    );
     if (callbackContext) {
       try {
         await sendCallback(callbackContext, {

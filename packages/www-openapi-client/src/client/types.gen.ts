@@ -549,10 +549,11 @@ export type CodeReviewStartResponse = {
 };
 
 export type CodeReviewStartBody = {
-    teamSlugOrId: string;
+    teamSlugOrId?: string;
     githubLink: string;
     prNumber: number;
     commitRef?: string;
+    force?: boolean;
 };
 
 export type GetApiHealthData = {

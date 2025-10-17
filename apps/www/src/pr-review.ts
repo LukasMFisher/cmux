@@ -126,6 +126,7 @@ interface PrMetadata extends ParsedPrUrl {
   headRefName: string;
   headRepoOwner: string;
   headRepoName: string;
+  headSha: string;
   baseRefName: string;
 }
 
@@ -246,6 +247,11 @@ async function fetchPrMetadata(prUrl: string): Promise<PrMetadata> {
     throw new Error("PR metadata is missing base.ref.");
   }
 
+  const headSha = data.head?.sha;
+  if (typeof headSha !== "string" || headSha.length === 0) {
+    throw new Error("PR metadata is missing head.sha.");
+  }
+
   const baseRepoName = data.base?.repo?.name;
   const baseRepoOwner = data.base?.repo?.owner?.login;
 
@@ -263,6 +269,7 @@ async function fetchPrMetadata(prUrl: string): Promise<PrMetadata> {
     headRefName,
     headRepoName,
     headRepoOwner,
+    headSha,
     baseRefName,
   };
 }
@@ -436,7 +443,7 @@ async function startMorphInstanceTask(
   try {
     return await client.instances.start({
       snapshotId,
-      ttlSeconds: 60 * 60 * 2,
+      ttlSeconds: 60 * 30,
       ttlAction: "pause",
       metadata: {
         purpose: "pr-review",
@@ -493,12 +500,29 @@ export async function startAutomatedPrReview(
     ]);
     instance = startedInstance;
 
+    const normalizedCommitRef =
+      config.commitRef === "unknown" && prMetadata.headSha
+        ? prMetadata.headSha
+        : config.commitRef;
+
+    const metadataConfig =
+      normalizedCommitRef === config.commitRef
+        ? config
+        : { ...config, commitRef: normalizedCommitRef };
+
     console.log(
       `[pr-review] Targeting ${prMetadata.headRepoOwner}/${prMetadata.headRepoName}@${prMetadata.headRefName}`
     );
+    console.log("[pr-review][debug] Commit context", {
+      originalCommitRef: config.commitRef,
+      normalizedCommitRef,
+      headSha: prMetadata.headSha,
+    });
 
     try {
-      await startedInstance.setMetadata(buildMetadata(prMetadata, config));
+      await startedInstance.setMetadata(
+        buildMetadata(prMetadata, metadataConfig)
+      );
     } catch (metadataError) {
       const message =
         metadataError instanceof Error
@@ -546,7 +570,7 @@ export async function startAutomatedPrReview(
       ["JOB_ID", config.jobId],
       ["SANDBOX_INSTANCE_ID", startedInstance.id],
       ["REPO_FULL_NAME", config.repoFullName],
-      ["COMMIT_REF", config.commitRef],
+      ["COMMIT_REF", normalizedCommitRef],
     ];
 
     if (config.callback) {

@@ -28,10 +28,11 @@ const CodeReviewJobSchema = z.object({
 
 const StartBodySchema = z
   .object({
-    teamSlugOrId: z.string(),
+    teamSlugOrId: z.string().optional(),
     githubLink: z.string().url(),
     prNumber: z.number().int().positive(),
     commitRef: z.string().optional(),
+    force: z.boolean().optional(),
   })
   .openapi("CodeReviewStartBody");
 
@@ -93,7 +94,13 @@ codeReviewRouter.openapi(
     const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
       accessToken,
       callbackBaseUrl: convexHttpBase,
-      payload: body,
+      payload: {
+        teamSlugOrId: body.teamSlugOrId,
+        githubLink: body.githubLink,
+        prNumber: body.prNumber,
+        commitRef: body.commitRef,
+        force: body.force,
+      },
       request: c.req.raw,
     });
 

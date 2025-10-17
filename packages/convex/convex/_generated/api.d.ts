@@ -11,6 +11,7 @@
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
 import type * as codeReview from "../codeReview.js";
+import type * as codeReviewActions from "../codeReviewActions.js";
 import type * as codeReview_http from "../codeReview_http.js";
 import type * as comments from "../comments.js";
 import type * as containerSettings from "../containerSettings.js";
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
   codeReview: typeof codeReview;
+  codeReviewActions: typeof codeReviewActions;
   codeReview_http: typeof codeReview_http;
   comments: typeof comments;
   containerSettings: typeof containerSettings;
