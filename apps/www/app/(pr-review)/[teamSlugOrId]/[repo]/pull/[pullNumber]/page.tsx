@@ -41,26 +41,39 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
-  const { teamSlugOrId, repo, pullNumber: pullNumberRaw } = await params;
+  const user = await stackServerApp.getUser({ or: "redirect" });
+  const selectedTeam = user.selectedTeam;
+  if (!selectedTeam) {
+    throw notFound();
+  }
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = await params;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
     return {
-      title: `Invalid pull request • ${teamSlugOrId}/${repo}`,
+      title: `Invalid pull request • ${githubOwner}/${repo}`,
     };
   }
 
   try {
-    const pullRequest = await fetchPullRequest(teamSlugOrId, repo, pullNumber);
+    const pullRequest = await fetchPullRequest(
+      selectedTeam.id,
+      repo,
+      pullNumber
+    );
 
     return {
-      title: `${pullRequest.title} · #${pullRequest.number} · ${teamSlugOrId}/${repo}`,
+      title: `${pullRequest.title} · #${pullRequest.number} · ${githubOwner}/${repo}`,
       description: pullRequest.body?.slice(0, 160),
     };
   } catch (error) {
     if (isGithubApiError(error) && error.status === 404) {
       return {
-        title: `${teamSlugOrId}/${repo} · #${pullNumber}`,
+        title: `${githubOwner}/${repo} · #${pullNumber}`,
       };
     }
 
@@ -69,24 +82,37 @@ export async function generateMetadata({
 }
 
 export default async function PullRequestPage({ params }: PageProps) {
-  await stackServerApp.getUser({ or: "redirect" });
+  const user = await stackServerApp.getUser({ or: "redirect" });
+  const selectedTeam = user.selectedTeam;
+  if (!selectedTeam) {
+    throw notFound();
+  }
 
-  const { teamSlugOrId, repo, pullNumber: pullNumberRaw } = await params;
+  const {
+    teamSlugOrId: githubOwner,
+    repo,
+    pullNumber: pullNumberRaw,
+  } = await params;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
   if (pullNumber === null) {
     notFound();
   }
 
-  const pullRequestPromise = fetchPullRequest(teamSlugOrId, repo, pullNumber);
+  const pullRequestPromise = fetchPullRequest(
+    githubOwner,
+    repo,
+    pullNumber
+  );
   const pullRequestFilesPromise = fetchPullRequestFiles(
-    teamSlugOrId,
+    githubOwner,
     repo,
     pullNumber
   );
 
   scheduleCodeReviewStart({
-    teamSlugOrId,
+    teamSlugOrId: selectedTeam.id,
+    githubOwner,
     repo,
     pullNumber,
     pullRequestPromise,
@@ -98,13 +124,20 @@ export default async function PullRequestPage({ params }: PageProps) {
         <Suspense fallback={<PullRequestHeaderSkeleton />}>
           <PullRequestHeader
             promise={pullRequestPromise}
-            owner={teamSlugOrId}
+            githubOwner={githubOwner}
             repo={repo}
           />
         </Suspense>
 
         <Suspense fallback={<DiffViewerSkeleton />}>
-          <PullRequestDiffSection promise={pullRequestFilesPromise} />
+          <PullRequestDiffSection
+            filesPromise={pullRequestFilesPromise}
+            pullRequestPromise={pullRequestPromise}
+            teamSlugOrId={selectedTeam.id}
+            githubOwner={githubOwner}
+            repo={repo}
+            pullNumber={pullNumber}
+          />
         </Suspense>
       </div>
     </div>
@@ -115,11 +148,13 @@ type PullRequestPromise = ReturnType<typeof fetchPullRequest>;
 
 function scheduleCodeReviewStart({
   teamSlugOrId,
+  githubOwner,
   repo,
   pullNumber,
   pullRequestPromise,
 }: {
   teamSlugOrId: string;
+  githubOwner: string;
   repo: string;
   pullNumber: number;
   pullRequestPromise: Promise<GithubPullRequest>;
@@ -131,7 +166,7 @@ function scheduleCodeReviewStart({
         const fallbackRepoFullName =
           pullRequest.base?.repo?.full_name ??
           pullRequest.head?.repo?.full_name ??
-          `${teamSlugOrId}/${repo}`;
+          `${githubOwner}/${repo}`;
         const githubLink =
           pullRequest.html_url ??
           `https://github.com/${fallbackRepoFullName}/pull/${pullNumber}`;
@@ -169,10 +204,12 @@ function scheduleCodeReviewStart({
           await backgroundTask;
         }
       } catch (error) {
-        console.error(
-          "[code-review] Skipping auto-start due to PR fetch error",
-          error
-        );
+        console.error("[code-review] Skipping auto-start due to PR fetch error", {
+          teamSlugOrId,
+          githubOwner,
+          repo,
+          pullNumber,
+        }, error);
       }
     })()
   );
@@ -180,11 +217,11 @@ function scheduleCodeReviewStart({
 
 function PullRequestHeader({
   promise,
-  owner,
+  githubOwner,
   repo,
 }: {
   promise: PullRequestPromise;
-  owner: string;
+  githubOwner: string;
   repo: string;
 }) {
   try {
@@ -192,7 +229,7 @@ function PullRequestHeader({
     return (
       <PullRequestHeaderContent
         pullRequest={pullRequest}
-        owner={owner}
+        githubOwner={githubOwner}
         repo={repo}
       />
     );
@@ -218,11 +255,11 @@ function PullRequestHeader({
 
 function PullRequestHeaderContent({
   pullRequest,
-  owner,
+  githubOwner,
   repo,
 }: {
   pullRequest: GithubPullRequest;
-  owner: string;
+  githubOwner: string;
   repo: string;
 }) {
   const statusBadge = getStatusBadge(pullRequest);
@@ -246,7 +283,7 @@ function PullRequestHeaderContent({
               #{pullRequest.number}
             </span>
             <span className="text-neutral-500">
-              {owner}/{repo}
+              {githubOwner}/{repo}
             </span>
           </div>
 
@@ -325,13 +362,29 @@ function PullRequestHeaderContent({
 type PullRequestFilesPromise = ReturnType<typeof fetchPullRequestFiles>;
 
 function PullRequestDiffSection({
-  promise,
+  filesPromise,
+  pullRequestPromise,
+  githubOwner,
+  teamSlugOrId,
+  repo,
+  pullNumber,
 }: {
-  promise: PullRequestFilesPromise;
+  filesPromise: PullRequestFilesPromise;
+  pullRequestPromise: PullRequestPromise;
+  githubOwner: string;
+  teamSlugOrId: string;
+  repo: string;
+  pullNumber: number;
 }) {
   try {
-    const files = use(promise);
+    const files = use(filesPromise);
+    const pullRequest = use(pullRequestPromise);
     const totals = summarizeFiles(files);
+    const fallbackRepoFullName =
+      pullRequest.base?.repo?.full_name ??
+      pullRequest.head?.repo?.full_name ??
+      `${githubOwner}/${repo}`;
+    const commitRef = pullRequest.head?.sha ?? undefined;
 
     return (
       <section className="flex flex-col gap-4">
@@ -346,7 +399,13 @@ function PullRequestDiffSection({
             </p>
           </div>
         </header>
-        <PullRequestDiffViewer files={files} />
+        <PullRequestDiffViewer
+          files={files}
+          teamSlugOrId={teamSlugOrId}
+          repoFullName={fallbackRepoFullName}
+          prNumber={pullNumber}
+          commitRef={commitRef}
+        />
       </section>
     );
   } catch (error) {

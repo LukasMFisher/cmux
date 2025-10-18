@@ -1,14 +1,17 @@
 #!/usr/bin/env bun
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import process from "node:process";
 import readline from "node:readline/promises";
+import { promisify } from "node:util";
 import {
   startAutomatedPrReview,
   type PrReviewJobContext,
 } from "../src/pr-review";
 
 const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/653";
+const execFileAsync = promisify(execFile);
 
 interface ParsedPrUrl {
   owner: string;
@@ -40,6 +43,39 @@ function parsePrUrl(prUrl: string): ParsedPrUrl {
   return { owner, repo, number };
 }
 
+async function resolveCommitRef(
+  repoFullName: string,
+  prNumber: number
+): Promise<string> {
+  const prIdentifier = `${repoFullName}#${prNumber}`;
+  try {
+    const { stdout } = await execFileAsync("gh", [
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      repoFullName,
+      "--json",
+      "headRefOid",
+      "--jq",
+      ".headRefOid",
+    ]);
+    const commitRef = stdout.trim();
+    if (!commitRef) {
+      throw new Error(
+        `GitHub CLI returned an empty commit ref for ${prIdentifier}`
+      );
+    }
+    return commitRef;
+  } catch (error) {
+    const baseMessage = `Failed to fetch head commit for ${prIdentifier} via gh`;
+    if (error instanceof Error) {
+      throw new Error(`${baseMessage}: ${error.message}`, { cause: error });
+    }
+    throw new Error(baseMessage);
+  }
+}
+
 async function main(): Promise<void> {
   const prUrlInput = process.argv[2] ?? DEFAULT_PR_URL;
   const prUrl = prUrlInput.trim();
@@ -54,16 +90,17 @@ async function main(): Promise<void> {
   const sandboxLabel = randomUUID();
 
   console.log(`[cli] Starting PR review for ${repoFullName}#${parsed.number}`);
+  const commitRef = await resolveCommitRef(repoFullName, parsed.number);
 
   const config: PrReviewJobContext = {
     jobId,
-    teamId: "cli",
+    teamId: "780c4397-90dd-47f1-b336-b8c376039db5",
     repoFullName,
     repoUrl,
     prNumber: parsed.number,
     prUrl,
-    commitRef: "cli-run",
-    morphSnapshotId: process.env.MORPH_SNAPSHOT_ID ?? undefined,
+    commitRef,
+    morphSnapshotId: "snapshot_vb7uqz8o",
   };
 
   try {

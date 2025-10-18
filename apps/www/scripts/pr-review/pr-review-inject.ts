@@ -173,6 +173,12 @@ function logIndentedBlock(header: string, content: string): void {
   });
 }
 
+function isFulfilled<T>(
+  result: PromiseSettledResult<T>
+): result is PromiseFulfilledResult<T> {
+  return result.status === "fulfilled";
+}
+
 interface RepoIdentifier {
   owner: string;
   name: string;
@@ -318,11 +324,9 @@ async function runCodexReviews({
   const { Codex } = await import("@openai/codex-sdk");
   const codex = new Codex({ apiKey: openAiApiKey });
 
-  let failureCount = 0;
-  const collectedResults: CodexReviewResult[] = [];
   const reviewStart = performance.now();
 
-  for (const file of files) {
+  const reviewPromises = files.map(async (file) => {
     const fileStart = performance.now();
     try {
       const diff = await runCommandCapture(
@@ -335,27 +339,20 @@ async function runCodexReviews({
         model: "gpt-5-codex",
       });
       const prompt = `\
-You are a senior engineer performing a focused pull request review, focusing only on the file provided.
+You are a senior engineer performing a focused pull request review, focusing only on the diffs in the file provided.
 File path: ${file}
-Return a JSON object of type { lines: { line: string, hasChanged: boolean, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
-You should only have the "post-diff" array of lines in the JSON object, with the hasChanged true or false.
-
-shouldBeReviewedScore and shouldReviewWhy should only contain meaningful values when hasChanged is true. When they are not needed, set them to null.
-
+Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
+You should only have the "post-diff" array of lines in the JSON object
 shouldBeReviewedScore is a number from 0 to 1 that indicates how careful the reviewer should be when reviewing this line of code.
 Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-
 shouldReviewWhy should be a concise (4-10 words) hint on why the reviewer should maybe review this line of code, but it shouldn't state obvious things, instead it should only be a hint for the reviewer as to what exactly you meant when you flagged it.
 In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
 It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-
 mostImportantCharacterIndex should be the index of the character that you deem most important in the review; if you're not sure or there are multiple, just choose any one of them.
-
 Ugly code should be given a higher score.
 Code that may be hard to read for a human should also be given a higher score.
 Non-clean code too.
-
-DO NOT BE LAZY DO THE ENTIRE FILE. FROM START TO FINISH. DO NOT BE LAZY.
+Only return lines that are actually interesting to review. Do not return lines that a human would not care about. But you should still be thorough and cover all interesting/suspicious lines.
 
 The diff:
 ${diff || "(no diff output)"}`;
@@ -372,14 +369,12 @@ ${diff || "(no diff output)"}`;
                 type: "object",
                 properties: {
                   line: { type: "string" },
-                  hasChanged: { type: "boolean" },
                   shouldBeReviewedScore: { type: ["number", "null"] as const },
                   shouldReviewWhy: { type: ["string", "null"] as const },
                   mostImportantCharacterIndex: { type: "number" },
                 },
                 required: [
                   "line",
-                  "hasChanged",
                   "shouldBeReviewedScore",
                   "shouldReviewWhy",
                   "mostImportantCharacterIndex",
@@ -405,7 +400,6 @@ ${diff || "(no diff output)"}`;
       logIndentedBlock(`[inject] Codex review for ${file}`, response);
 
       const result: CodexReviewResult = { file, response };
-      collectedResults.push(result);
       const elapsedMs = performance.now() - fileStart;
       console.log(
         `[inject] Review completed for ${file} in ${formatDuration(elapsedMs)}`
@@ -431,25 +425,39 @@ ${diff || "(no diff output)"}`;
           );
         }
       }
+
+      return result;
     } catch (error) {
-      failureCount += 1;
       const reason =
         error instanceof Error
           ? error.message
           : String(error ?? "unknown error");
-      console.error(`[inject] Codex review failed for ${file}: ${reason}`);
       const elapsedMs = performance.now() - fileStart;
+      console.error(`[inject] Codex review failed for ${file}: ${reason}`);
       console.error(
         `[inject] Review for ${file} failed after ${formatDuration(elapsedMs)}`
       );
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(reason);
     }
-  }
+  });
+
+  const settledResults = await Promise.allSettled(reviewPromises);
+  const failureCount = settledResults.filter(
+    (result) => result.status === "rejected"
+  ).length;
 
   if (failureCount > 0) {
     throw new Error(
       `[inject] Codex review encountered ${failureCount} failure(s). See logs above.`
     );
   }
+
+  const collectedResults = settledResults
+    .filter(isFulfilled)
+    .map((result) => result.value);
 
   console.log(
     `[inject] Codex reviews completed in ${formatDuration(

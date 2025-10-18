@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 
-import { LightModeEnforcer } from "@/components/pr/light-mode-enforcer";
+import { PrReviewClientLayout } from "@/components/pr/pr-review-client-layout";
 
 export default function PrReviewLayout({ children }: { children: ReactNode }) {
-  return (
-    <LightModeEnforcer>
-      <div className="min-h-dvh bg-white font-sans text-neutral-900 light">
-        {children}
-      </div>
-    </LightModeEnforcer>
-  );
+  return <PrReviewClientLayout>{children}</PrReviewClientLayout>;
 }

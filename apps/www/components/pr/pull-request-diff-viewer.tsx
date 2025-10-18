@@ -1,12 +1,6 @@
-'use client';
+"use client";
 
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import {
   ChevronDown,
@@ -17,27 +11,47 @@ import {
   FilePlus,
   FileText,
   Folder,
+  Sparkles,
 } from "lucide-react";
 import {
   Decoration,
   Diff,
   Hunk,
+  computeNewLineNumber,
   isDelete,
   isInsert,
   parseDiff,
+  pickRanges,
   tokenize,
   type ChangeData,
   type FileData,
   type HunkTokens,
+  type RenderGutter,
+  type RenderToken,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
 
+import { api } from "@cmux/convex/api";
+import { useConvexQuery } from "@convex-dev/react-query";
+import type { FunctionReturnType } from "convex/server";
 import type { GithubPullRequestFile } from "@/lib/github/fetch-pull-request";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { refractor } from "refractor/all";
+
+import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
 
 type PullRequestDiffViewerProps = {
   files: GithubPullRequestFile[];
+  teamSlugOrId: string;
+  repoFullName: string;
+  prNumber: number;
+  commitRef?: string;
 };
 
 type ParsedFileDiff = {
@@ -127,8 +141,8 @@ const filenameLanguageMap: Record<string, string> = {
   "docker-compose.yml": "yaml",
   "cmakelists.txt": "cmake",
   makefile: "makefile",
-  "gitignore": "bash",
-  "env": "bash",
+  gitignore: "bash",
+  env: "bash",
   "env.example": "bash",
   gemfile: "ruby",
   podfile: "ruby",
@@ -145,7 +159,7 @@ type RefractorLike = {
 
 function createRefractorAdapter(base: RefractorLike) {
   const isNodeWithChildren = (
-    value: unknown,
+    value: unknown
   ): value is { children: RefractorNode[] } => {
     return (
       typeof value === "object" &&
@@ -178,6 +192,21 @@ function createRefractorAdapter(base: RefractorLike) {
 }
 
 const refractorAdapter = createRefractorAdapter(refractor);
+
+type FileOutput = FunctionReturnType<
+  typeof api.codeReview.listFileOutputsForPr
+>[number];
+
+type HeatmapTooltipMeta = {
+  score: number;
+  reason: string | null;
+};
+
+type HeatmapTooltipTheme = {
+  contentClass: string;
+  titleClass: string;
+  reasonClass: string;
+};
 
 function inferLanguage(filename: string): string | null {
   const lowerPath = filename.toLowerCase();
@@ -219,7 +248,7 @@ type FileStatusMeta = {
 };
 
 function getFileStatusMeta(
-  status: GithubPullRequestFile["status"] | undefined,
+  status: GithubPullRequestFile["status"] | undefined
 ): FileStatusMeta {
   const iconClassName = "h-3.5 w-3.5";
 
@@ -266,7 +295,49 @@ function getFileStatusMeta(
 
 export function PullRequestDiffViewer({
   files,
+  teamSlugOrId,
+  repoFullName,
+  prNumber,
+  commitRef,
 }: PullRequestDiffViewerProps) {
+  const fileOutputArgs = useMemo(
+    () => ({
+      teamSlugOrId,
+      repoFullName,
+      prNumber,
+      ...(commitRef ? { commitRef } : {}),
+    }),
+    [teamSlugOrId, repoFullName, prNumber, commitRef]
+  );
+
+  const fileOutputs = useConvexQuery(
+    api.codeReview.listFileOutputsForPr,
+    fileOutputArgs
+  );
+
+  useEffect(() => {
+    if (!fileOutputs) {
+      return;
+    }
+
+    console.log("[code-review] automatedCodeReviewFileOutputs", {
+      args: fileOutputArgs,
+      outputs: fileOutputs,
+    });
+  }, [fileOutputs, fileOutputArgs]);
+
+  const fileOutputIndex = useMemo(() => {
+    if (!fileOutputs) {
+      return new Map<string, FileOutput>();
+    }
+
+    const map = new Map<string, FileOutput>();
+    for (const output of fileOutputs) {
+      map.set(output.filePath, output);
+    }
+    return map;
+  }, [fileOutputs]);
+
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return files.map((file) => {
       if (!file.patch) {
@@ -304,7 +375,7 @@ export function PullRequestDiffViewer({
   const fileTree = useMemo(() => buildFileTree(files), [files]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
-    [fileTree],
+    [fileTree]
   );
 
   const hydratedInitialPath =
@@ -314,7 +385,8 @@ export function PullRequestDiffViewer({
 
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
-    hydratedInitialPath && files.some((file) => file.filename === hydratedInitialPath)
+    hydratedInitialPath &&
+    files.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -372,7 +444,7 @@ export function PullRequestDiffViewer({
           .sort(
             (a, b) =>
               a.target.getBoundingClientRect().top -
-              b.target.getBoundingClientRect().top,
+              b.target.getBoundingClientRect().top
           );
 
         if (visible[0]?.target.id) {
@@ -394,7 +466,7 @@ export function PullRequestDiffViewer({
       {
         rootMargin: "-128px 0px -55% 0px",
         threshold: [0, 0.2, 0.4, 0.6, 1],
-      },
+      }
     );
 
     const elements = parsedDiffs
@@ -460,6 +532,7 @@ export function PullRequestDiffViewer({
             key={entry.anchorId}
             entry={entry}
             isActive={entry.anchorId === activeAnchor}
+            review={fileOutputIndex.get(entry.file.filename) ?? null}
           />
         ))}
       </div>
@@ -499,7 +572,7 @@ function FileTreeNavigator({
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
                   "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm font-medium transition hover:bg-neutral-100",
-                  isExpanded ? "text-neutral-900" : "text-neutral-700",
+                  isExpanded ? "text-neutral-900" : "text-neutral-700"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
               >
@@ -534,7 +607,9 @@ function FileTreeNavigator({
             onClick={() => onSelectFile(node.path)}
             className={cn(
               "flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
-              isActive ? "bg-sky-100/80 text-sky-900 shadow-sm" : "text-neutral-700",
+              isActive
+                ? "bg-sky-100/80 text-sky-900 shadow-sm"
+                : "text-neutral-700"
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
@@ -549,16 +624,18 @@ function FileTreeNavigator({
 function FileDiffCard({
   entry,
   isActive,
+  review,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
+  review: FileOutput | null;
 }) {
   const { file, diff, anchorId, error } = entry;
   const [isCollapsed, setIsCollapsed] = useState(false);
   const language = useMemo(() => inferLanguage(file.filename), [file.filename]);
   const statusMeta = useMemo(
     () => getFileStatusMeta(file.status),
-    [file.status],
+    [file.status]
   );
 
   useEffect(() => {
@@ -567,10 +644,173 @@ function FileDiffCard({
     }
   }, [isActive]);
 
+  const reviewHeatmapLines = useMemo(() => {
+    if (!review) {
+      return [];
+    }
+
+    return parseReviewHeatmap(review.codexReviewOutput);
+  }, [review]);
+
+  const diffHeatmap = useMemo(() => {
+    if (!diff || reviewHeatmapLines.length === 0) {
+      return null;
+    }
+
+    return buildDiffHeatmap(diff, reviewHeatmapLines);
+  }, [diff, reviewHeatmapLines]);
+
+  useEffect(() => {
+    if (!review) {
+      return;
+    }
+
+    console.log("[diff-viewer] heatmap payload", {
+      file: file.filename,
+      raw: review.codexReviewOutput,
+      parsedHeatmap: reviewHeatmapLines,
+      hydrated: diffHeatmap,
+    });
+  }, [review, reviewHeatmapLines, diffHeatmap, file.filename]);
+
+  const lineTooltips = useMemo(() => {
+    if (!diffHeatmap) {
+      return null;
+    }
+
+    const tooltipMap = new Map<number, HeatmapTooltipMeta>();
+    for (const [lineNumber, metadata] of diffHeatmap.entries.entries()) {
+      const score = metadata.score ?? null;
+      if (score === null || score <= 0) {
+        continue;
+      }
+
+      tooltipMap.set(lineNumber, {
+        score,
+        reason: metadata.reason ?? null,
+      });
+    }
+
+    return tooltipMap.size > 0 ? tooltipMap : null;
+  }, [diffHeatmap]);
+
+  const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
+    if (!lineTooltips) {
+      return undefined;
+    }
+
+    const renderTokenWithTooltip: RenderToken = (token, renderDefault, index) => {
+      if (token && typeof token === "object") {
+        const tokenRecord = token as Record<string, unknown>;
+        const className =
+          typeof tokenRecord.className === "string"
+            ? tokenRecord.className
+            : null;
+        const lineNumber =
+          typeof tokenRecord.lineNumber === "number"
+            ? tokenRecord.lineNumber
+            : null;
+
+        if (
+          className &&
+          lineNumber !== null &&
+          (className.includes("cmux-heatmap-char") ||
+            className.includes("cmux-heatmap-char-tier"))
+        ) {
+          const tooltipMeta = lineTooltips.get(lineNumber);
+          if (tooltipMeta) {
+            const rendered = renderDefault(token, index);
+            return (
+              <Tooltip key={`heatmap-char-${lineNumber}-${index}`} delayDuration={120}>
+                <TooltipTrigger asChild>
+                  <span className="cmux-heatmap-char-wrapper">{rendered}</span>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  align="start"
+                  className={cn(
+                    "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+                    getHeatmapTooltipTheme(tooltipMeta.score).contentClass
+                  )}
+                >
+                  <HeatmapTooltipBody
+                    score={tooltipMeta.score}
+                    reason={tooltipMeta.reason}
+                  />
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+        }
+      }
+
+      return renderDefault(token, index);
+    };
+    return renderTokenWithTooltip;
+  }, [lineTooltips]);
+
+  const renderHeatmapGutter = useMemo<RenderGutter | undefined>(() => {
+    if (!lineTooltips) {
+      return undefined;
+    }
+
+    const renderGutterWithTooltip: RenderGutter = ({
+      change,
+      side,
+      renderDefault,
+      wrapInAnchor,
+    }) => {
+      const content = renderDefault();
+      if (side !== "new") {
+        return wrapInAnchor(content);
+      }
+
+      const lineNumber = computeNewLineNumber(change);
+      if (lineNumber <= 0) {
+        return wrapInAnchor(content);
+      }
+
+      const tooltipMeta = lineTooltips.get(lineNumber);
+      if (!tooltipMeta) {
+        return wrapInAnchor(content);
+      }
+
+      const tooltipNode = (
+        <Tooltip key={`heatmap-gutter-${lineNumber}`} delayDuration={120}>
+          <TooltipTrigger asChild>
+            <span className="cmux-heatmap-gutter">{content}</span>
+          </TooltipTrigger>
+          <TooltipContent
+            side="top"
+            align="start"
+            className={cn(
+              "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+              getHeatmapTooltipTheme(tooltipMeta.score).contentClass
+            )}
+          >
+            <HeatmapTooltipBody
+              score={tooltipMeta.score}
+              reason={tooltipMeta.reason}
+            />
+          </TooltipContent>
+        </Tooltip>
+      );
+
+      return wrapInAnchor(tooltipNode);
+    };
+
+    return renderGutterWithTooltip;
+  }, [lineTooltips]);
+
   const tokens = useMemo<HunkTokens | null>(() => {
     if (!diff) {
       return null;
     }
+
+    const enhancers =
+      diffHeatmap && diffHeatmap.newRanges.length > 0
+        ? [pickRanges([], diffHeatmap.newRanges)]
+        : undefined;
 
     if (language && refractor.registered(language)) {
       try {
@@ -578,31 +818,54 @@ function FileDiffCard({
           highlight: true,
           language,
           refractor: refractorAdapter,
+          ...(enhancers ? { enhancers } : {}),
         });
       } catch (error) {
         console.warn("[diff-viewer] highlight failed", file.filename, error);
       }
     }
 
-    return tokenize(diff.hunks);
-  }, [diff, language, file.filename]);
+    return tokenize(
+      diff.hunks,
+      enhancers
+        ? {
+            enhancers,
+          }
+        : undefined
+    );
+  }, [diff, language, file.filename, diffHeatmap]);
+
+  const reviewContent = useMemo(() => {
+    if (!review) {
+      return null;
+    }
+
+    return extractAutomatedReviewText(review.codexReviewOutput);
+  }, [review]);
+
+  const showReview = Boolean(reviewContent);
 
   return (
-    <article
-      id={anchorId}
-      className={cn(
-        "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
-        isActive ? "ring-1 ring-sky-200" : "ring-0",
-      )}
-      tabIndex={-1}
-      aria-current={isActive}
+    <TooltipProvider
+      delayDuration={120}
+      skipDelayDuration={100}
+      disableHoverableContent
     >
-      <button
-        type="button"
-        onClick={() => setIsCollapsed((previous) => !previous)}
-        className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-        aria-expanded={!isCollapsed}
+      <article
+        id={anchorId}
+        className={cn(
+          "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
+          isActive ? "ring-1 ring-sky-200" : "ring-0"
+        )}
+        tabIndex={-1}
+        aria-current={isActive}
       >
+        <button
+          type="button"
+          onClick={() => setIsCollapsed((previous) => !previous)}
+          className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          aria-expanded={!isCollapsed}
+        >
         <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
           {isCollapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
@@ -612,7 +875,10 @@ function FileDiffCard({
         </span>
 
         <span
-          className={cn("flex h-5 w-5 items-center justify-center", statusMeta.colorClassName)}
+          className={cn(
+            "flex h-5 w-5 items-center justify-center",
+            statusMeta.colorClassName
+          )}
         >
           {statusMeta.icon}
           <span className="sr-only">{statusMeta.label}</span>
@@ -630,14 +896,22 @@ function FileDiffCard({
         </div>
 
         <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
-          <span className="text-emerald-600">
-            +{file.additions}
-          </span>
-          <span className="text-rose-600">
-            -{file.deletions}
-          </span>
+          <span className="text-emerald-600">+{file.additions}</span>
+          <span className="text-rose-600">-{file.deletions}</span>
         </div>
       </button>
+
+      {showReview ? (
+        <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+            <Sparkles className="h-4 w-4" aria-hidden />
+            Automated review
+          </div>
+          <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+            {reviewContent}
+          </pre>
+        </div>
+      ) : null}
 
       {!isCollapsed ? (
         diff ? (
@@ -650,31 +924,53 @@ function FileDiffCard({
             gutterClassName="system-mono bg-white text-xs text-neutral-500"
             codeClassName="system-mono text-xs text-neutral-800"
             tokens={tokens ?? undefined}
+            renderToken={renderHeatmapToken}
+            renderGutter={renderHeatmapGutter}
             generateLineClassName={({ changes, defaultGenerate }) => {
               const defaultClassName = defaultGenerate();
               const classNames: string[] = ["system-mono text-xs py-1"];
               const normalizedChanges = changes.filter(
-                (change): change is ChangeData => Boolean(change),
+                (change): change is ChangeData => Boolean(change)
               );
               const hasInsert = normalizedChanges.some((change) =>
-                isInsert(change),
+                isInsert(change)
               );
               const hasDelete = normalizedChanges.some((change) =>
-                isDelete(change),
+                isDelete(change)
               );
+              if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
+                let bestHeatmapClass: string | null = null;
+                for (const change of normalizedChanges) {
+                  const newLineNumber = computeNewLineNumber(change);
+                  if (newLineNumber <= 0) {
+                    continue;
+                  }
+                  const candidate = diffHeatmap.lineClasses.get(newLineNumber);
+                  if (!candidate) {
+                    continue;
+                  }
+                  if (!bestHeatmapClass) {
+                    bestHeatmapClass = candidate;
+                    continue;
+                  }
+                  const currentTier = extractHeatmapTier(bestHeatmapClass);
+                  const nextTier = extractHeatmapTier(candidate);
+                  if (nextTier > currentTier) {
+                    bestHeatmapClass = candidate;
+                  }
+                }
+
+                if (bestHeatmapClass) {
+                  classNames.push(bestHeatmapClass);
+                }
+              }
 
               if (hasInsert) {
-                classNames.push(
-                  "bg-emerald-50 text-emerald-900",
-                );
+                classNames.push("bg-emerald-50 text-emerald-900");
               } else if (hasDelete) {
-                classNames.push(
-                  "bg-rose-50 text-rose-900",
-                );
+                classNames.push("bg-rose-50 text-rose-900");
               } else {
-                classNames.push(
-                  "bg-white text-neutral-800",
-                );
+                classNames.push("bg-white text-neutral-800");
               }
 
               return cn(defaultClassName, classNames);
@@ -700,17 +996,185 @@ function FileDiffCard({
           </div>
         )
       ) : null}
-    </article>
+      </article>
+    </TooltipProvider>
   );
+}
+
+function HeatmapTooltipBody({
+  score,
+  reason,
+}: {
+  score: number;
+  reason: string | null;
+}) {
+  const theme = getHeatmapTooltipTheme(score);
+  return (
+    <div className="space-y-1 text-left text-xs leading-relaxed">
+      <p className={cn("font-semibold", theme.titleClass)}>Worth a closer look</p>
+      {reason ? (
+        <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
+      ) : null}
+    </div>
+  );
+}
+
+const HEATMAP_SCORE_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
+
+function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
+  const tier = (() => {
+    for (let index = HEATMAP_SCORE_TIERS.length - 1; index >= 0; index -= 1) {
+      if (score >= HEATMAP_SCORE_TIERS[index]!) {
+        return index + 1;
+      }
+    }
+    return score > 0 ? 1 : 0;
+  })();
+
+  switch (tier) {
+    case 4:
+      return {
+        contentClass:
+          "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
+        titleClass: "text-rose-100",
+        reasonClass: "text-rose-200",
+      };
+    case 3:
+      return {
+        contentClass:
+          "bg-rose-800/95 border-rose-400/40 text-rose-50 shadow-lg shadow-rose-950/30",
+        titleClass: "text-rose-100",
+        reasonClass: "text-rose-200",
+      };
+    case 2:
+      return {
+        contentClass:
+          "bg-amber-800/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/30",
+        titleClass: "text-amber-100",
+        reasonClass: "text-amber-200",
+      };
+    case 1:
+      return {
+        contentClass:
+          "bg-amber-900/95 border-amber-500/40 text-amber-50 shadow-lg shadow-amber-950/40",
+        titleClass: "text-amber-100",
+        reasonClass: "text-amber-200",
+      };
+    default:
+      return {
+        contentClass:
+          "bg-neutral-900/95 border-neutral-700/60 text-neutral-100 shadow-lg shadow-black/40",
+        titleClass: "text-neutral-100",
+        reasonClass: "text-neutral-300",
+      };
+  }
+}
+
+function extractHeatmapTier(className: string): number {
+  const match = className.match(/cmux-heatmap-tier-(\d+)/);
+  if (!match) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(match[1] ?? "0", 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractAutomatedReviewText(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === "object") {
+    if (
+      "response" in value &&
+      typeof (value as { response?: unknown }).response === "string"
+    ) {
+      return extractAutomatedReviewText(
+        (value as { response: string }).response
+      );
+    }
+
+    if (
+      "lines" in value &&
+      Array.isArray((value as { lines?: unknown }).lines)
+    ) {
+      const formatted = formatLineReviews(
+        (value as { lines: unknown[] }).lines
+      );
+      if (formatted) {
+        return formatted;
+      }
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+function formatLineReviews(entries: unknown[]): string | null {
+  const summaries: string[] = [];
+
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+
+    const record = entry as Record<string, unknown>;
+    const line = typeof record.line === "string" ? record.line.trim() : null;
+    if (!line) {
+      continue;
+    }
+
+    const reason =
+      typeof record.shouldReviewWhy === "string"
+        ? record.shouldReviewWhy.trim()
+        : null;
+
+    const score =
+      typeof record.shouldBeReviewedScore === "number"
+        ? record.shouldBeReviewedScore
+        : null;
+
+    const changeFlag = record.hasChanged === false ? null : "Changed";
+
+    const parts: string[] = [`Line ${line}`];
+    if (changeFlag) {
+      parts.push(changeFlag);
+    }
+    if (reason) {
+      parts.push(reason);
+    }
+    if (typeof score === "number" && Number.isFinite(score)) {
+      parts.push(`importance ${(score * 100).toFixed(0)}%`);
+    }
+
+    summaries.push(parts.join(" • "));
+  }
+
+  if (summaries.length === 0) {
+    return null;
+  }
+
+  return summaries.join("\n\n");
 }
 
 function buildDiffText(file: GithubPullRequestFile): string {
   const oldPath =
     file.status === "added"
       ? "/dev/null"
-      : file.previous_filename ?? file.filename;
-  const newPath =
-    file.status === "removed" ? "/dev/null" : file.filename;
+      : (file.previous_filename ?? file.filename);
+  const newPath = file.status === "removed" ? "/dev/null" : file.filename;
 
   const gitOldLabel = `a/${file.previous_filename ?? file.filename}`;
   const gitNewLabel = `b/${file.filename}`;
@@ -739,7 +1203,9 @@ function buildFileTree(files: GithubPullRequestFile[]): FileTreeNode[] {
 
     segments.forEach((segment, index) => {
       const path =
-        index === 0 ? segment : `${current.path ? `${current.path}/` : ""}${segment}`;
+        index === 0
+          ? segment
+          : `${current.path ? `${current.path}/` : ""}${segment}`;
 
       let child = current.children.find((node) => node.name === segment);
 
@@ -791,9 +1257,7 @@ function buildFileTree(files: GithubPullRequestFile[]): FileTreeNode[] {
     ) {
       const child = current.children[0];
       current = {
-        name: current.name
-          ? `${current.name}/${child.name}`
-          : child.name,
+        name: current.name ? `${current.name}/${child.name}` : child.name,
         path: child.path,
         children: child.children,
         file: child.file,

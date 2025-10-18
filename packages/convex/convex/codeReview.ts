@@ -34,7 +34,10 @@ function serializeJob(job: JobDoc) {
   };
 }
 
-function parseGithubLink(link: string): { repoFullName: string; repoUrl: string } {
+function parseGithubLink(link: string): {
+  repoFullName: string;
+  repoUrl: string;
+} {
   try {
     const url = new URL(link);
     if (url.hostname !== GITHUB_HOST) {
@@ -77,7 +80,7 @@ async function findExistingActiveJob(
   db: MutationCtx["db"],
   teamId: string | undefined,
   repoFullName: string,
-  prNumber: number,
+  prNumber: number
 ): Promise<JobDoc | null> {
   const teamFilter = teamId ?? undefined;
   const query = db
@@ -86,7 +89,7 @@ async function findExistingActiveJob(
       q
         .eq("teamId", teamFilter)
         .eq("repoFullName", repoFullName)
-        .eq("prNumber", prNumber),
+        .eq("prNumber", prNumber)
     )
     .order("desc");
 
@@ -107,9 +110,13 @@ async function schedulePauseMorphInstance(
   ctx: MutationCtx,
   sandboxInstanceId: string
 ): Promise<void> {
-  await ctx.scheduler.runAfter(0, internal.codeReviewActions.pauseMorphInstance, {
-    sandboxInstanceId,
-  });
+  await ctx.scheduler.runAfter(
+    0,
+    internal.codeReviewActions.pauseMorphInstance,
+    {
+      sandboxInstanceId,
+    }
+  );
 }
 
 export const reserveJob = authMutation({
@@ -131,10 +138,13 @@ export const reserveJob = authMutation({
     try {
       teamId = await getTeamId(ctx, teamKey);
     } catch (error) {
-      console.warn("[codeReview.reserveJob] Failed to resolve team, falling back", {
-        teamSlugOrId: teamKey,
-        error,
-      });
+      console.warn(
+        "[codeReview.reserveJob] Failed to resolve team, falling back",
+        {
+          teamSlugOrId: teamKey,
+          error,
+        }
+      );
       teamId = await resolveTeamIdLoose(ctx, teamKey);
       console.info("[codeReview.reserveJob] Using loose team identifier", {
         teamSlugOrId: teamKey,
@@ -146,7 +156,7 @@ export const reserveJob = authMutation({
       ctx.db,
       teamId,
       repoFullName,
-      args.prNumber,
+      args.prNumber
     );
     if (existing && !args.force) {
       console.info("[codeReview.reserveJob] Reusing existing active job", {
@@ -184,7 +194,7 @@ export const reserveJob = authMutation({
         q
           .eq("teamId", teamId)
           .eq("repoFullName", repoFullName)
-          .eq("number", args.prNumber),
+          .eq("number", args.prNumber)
       )
       .first();
 
@@ -242,7 +252,9 @@ export const markJobRunning = authMutation({
       return serializeJob(job);
     }
     if (job.state !== "pending") {
-      throw new ConvexError(`Cannot mark job ${job._id} as running from state ${job.state}`);
+      throw new ConvexError(
+        `Cannot mark job ${job._id} as running from state ${job.state}`
+      );
     }
 
     const now = Date.now();
@@ -329,7 +341,7 @@ export const upsertFileOutputFromCallback = mutation({
     const existing = await ctx.db
       .query("automatedCodeReviewFileOutputs")
       .withIndex("by_job_file", (q) =>
-        q.eq("jobId", job._id).eq("filePath", args.filePath),
+        q.eq("jobId", job._id).eq("filePath", args.filePath)
       )
       .first();
 
@@ -497,7 +509,7 @@ export const listFileOutputsForPr = authQuery({
         q
           .eq("teamId", teamId)
           .eq("repoFullName", args.repoFullName)
-          .eq("prNumber", args.prNumber),
+          .eq("prNumber", args.prNumber)
       )
       .order("desc");
 
