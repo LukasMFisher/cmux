@@ -229,7 +229,10 @@ type FocusNavigateOptions = {
   source?: "keyboard" | "pointer";
 };
 
-type KeyboardTooltipTarget = "previous" | "next";
+type ActiveTooltipTarget = {
+  filePath: string;
+  lineNumber: number;
+};
 
 type HeatmapTooltipTheme = {
   contentClass: string;
@@ -464,58 +467,47 @@ export function PullRequestDiffViewer({
   const [focusedErrorIndex, setFocusedErrorIndex] = useState<number | null>(
     null
   );
-  const [keyboardTooltip, setKeyboardTooltip] =
-    useState<KeyboardTooltipTarget | null>(null);
-  const keyboardTooltipTimeoutRef =
-    useRef<{ id: number; target: KeyboardTooltipTarget } | null>(null);
+  const [autoTooltipTarget, setAutoTooltipTarget] =
+    useState<ActiveTooltipTarget | null>(null);
+  const autoTooltipTimeoutRef = useRef<number | null>(null);
 
-  const clearKeyboardTooltip = useCallback(
-    (target?: KeyboardTooltipTarget) => {
-      setKeyboardTooltip((current) => {
-        if (target === undefined) {
-          return null;
-        }
-        if (current === target) {
+  const clearAutoTooltip = useCallback(() => {
+    if (typeof window !== "undefined" && autoTooltipTimeoutRef.current !== null) {
+      window.clearTimeout(autoTooltipTimeoutRef.current);
+      autoTooltipTimeoutRef.current = null;
+    }
+    setAutoTooltipTarget(null);
+  }, []);
+
+  const showAutoTooltipForTarget = useCallback((target: ReviewErrorTarget) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (autoTooltipTimeoutRef.current !== null) {
+      window.clearTimeout(autoTooltipTimeoutRef.current);
+      autoTooltipTimeoutRef.current = null;
+    }
+
+    setAutoTooltipTarget({
+      filePath: target.filePath,
+      lineNumber: target.lineNumber,
+    });
+
+    autoTooltipTimeoutRef.current = window.setTimeout(() => {
+      setAutoTooltipTarget((current) => {
+        if (
+          current &&
+          current.filePath === target.filePath &&
+          current.lineNumber === target.lineNumber
+        ) {
           return null;
         }
         return current;
       });
-
-      const timeoutEntry = keyboardTooltipTimeoutRef.current;
-      if (!timeoutEntry) {
-        return;
-      }
-
-      if (target === undefined || timeoutEntry.target === target) {
-        window.clearTimeout(timeoutEntry.id);
-        keyboardTooltipTimeoutRef.current = null;
-      }
-    },
-    []
-  );
-
-  const showKeyboardTooltip = useCallback(
-    (target: KeyboardTooltipTarget) => {
-      if (keyboardTooltipTimeoutRef.current) {
-        window.clearTimeout(keyboardTooltipTimeoutRef.current.id);
-        keyboardTooltipTimeoutRef.current = null;
-      }
-
-      setKeyboardTooltip(target);
-
-      const timeoutId = window.setTimeout(() => {
-        clearKeyboardTooltip(target);
-      }, 1800);
-      keyboardTooltipTimeoutRef.current = { id: timeoutId, target };
-    },
-    [clearKeyboardTooltip]
-  );
-  const handleKeyboardTooltipClear = useCallback(
-    (target: KeyboardTooltipTarget) => {
-      clearKeyboardTooltip(target);
-    },
-    [clearKeyboardTooltip]
-  );
+      autoTooltipTimeoutRef.current = null;
+    }, 1800);
+  }, []);
 
   useEffect(() => {
     if (targetCount === 0) {
@@ -535,15 +527,20 @@ export function PullRequestDiffViewer({
   }, [targetCount]);
   useEffect(() => {
     if (targetCount === 0) {
-      clearKeyboardTooltip();
+      clearAutoTooltip();
     }
-  }, [targetCount, clearKeyboardTooltip]);
+  }, [targetCount, clearAutoTooltip]);
 
   useEffect(() => {
     return () => {
-      clearKeyboardTooltip();
+      if (
+        typeof window !== "undefined" &&
+        autoTooltipTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(autoTooltipTimeoutRef.current);
+      }
     };
-  }, [clearKeyboardTooltip]);
+  }, []);
 
   const focusedError =
     focusedErrorIndex === null ? null : errorTargets[focusedErrorIndex] ?? null;
@@ -674,18 +671,29 @@ export function PullRequestDiffViewer({
         return;
       }
 
-      if (options?.source === "keyboard") {
-        showKeyboardTooltip("previous");
-      }
+      const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
-        if (previous === null) {
-          return targetCount - 1;
+        const nextIndex =
+          previous === null
+            ? targetCount - 1
+            : (previous - 1 + targetCount) % targetCount;
+        const target = errorTargets[nextIndex] ?? null;
+
+        if (isKeyboard) {
+          if (target) {
+            showAutoTooltipForTarget(target);
+          } else {
+            clearAutoTooltip();
+          }
+        } else {
+          clearAutoTooltip();
         }
-        return (previous - 1 + targetCount) % targetCount;
+
+        return nextIndex;
       });
     },
-    [targetCount, showKeyboardTooltip]
+    [targetCount, errorTargets, clearAutoTooltip, showAutoTooltipForTarget]
   );
 
   const handleFocusNext = useCallback(
@@ -694,18 +702,27 @@ export function PullRequestDiffViewer({
         return;
       }
 
-      if (options?.source === "keyboard") {
-        showKeyboardTooltip("next");
-      }
+      const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
-        if (previous === null) {
-          return 0;
+        const nextIndex =
+          previous === null ? 0 : (previous + 1) % targetCount;
+        const target = errorTargets[nextIndex] ?? null;
+
+        if (isKeyboard) {
+          if (target) {
+            showAutoTooltipForTarget(target);
+          } else {
+            clearAutoTooltip();
+          }
+        } else {
+          clearAutoTooltip();
         }
-        return (previous + 1) % targetCount;
+
+        return nextIndex;
       });
     },
-    [targetCount, showKeyboardTooltip]
+    [targetCount, errorTargets, clearAutoTooltip, showAutoTooltipForTarget]
   );
 
   const handleToggleDirectory = useCallback((path: string) => {
@@ -814,8 +831,6 @@ export function PullRequestDiffViewer({
                 currentIndex={focusedErrorIndex}
                 onPrevious={handleFocusPrevious}
                 onNext={handleFocusNext}
-                keyboardTooltip={keyboardTooltip}
-                onKeyboardTooltipClear={handleKeyboardTooltipClear}
               />
             </div>
           ) : null}
@@ -840,6 +855,12 @@ export function PullRequestDiffViewer({
             const focusedChangeKey = isFocusedFile
               ? focusedError?.changeKey ?? null
               : null;
+            const autoTooltipLineNumber =
+              isFocusedFile &&
+              autoTooltipTarget &&
+              autoTooltipTarget.filePath === entry.file.filename
+                ? autoTooltipTarget.lineNumber
+                : null;
 
             return (
               <FileDiffCard
@@ -850,6 +871,7 @@ export function PullRequestDiffViewer({
                 diffHeatmap={diffHeatmap}
                 focusedLineNumber={focusedLineNumber}
                 focusedChangeKey={focusedChangeKey}
+                autoTooltipLineNumber={autoTooltipLineNumber}
               />
             );
           })}
@@ -939,8 +961,6 @@ type ErrorNavigatorProps = {
   currentIndex: number | null;
   onPrevious: (options?: FocusNavigateOptions) => void;
   onNext: (options?: FocusNavigateOptions) => void;
-  keyboardTooltip: KeyboardTooltipTarget | null;
-  onKeyboardTooltipClear: (target: KeyboardTooltipTarget) => void;
 };
 
 function ErrorNavigator({
@@ -948,34 +968,10 @@ function ErrorNavigator({
   currentIndex,
   onPrevious,
   onNext,
-  keyboardTooltip,
-  onKeyboardTooltipClear,
 }: ErrorNavigatorProps) {
-  const [previousPointerOpen, setPreviousPointerOpen] = useState(false);
-  const [nextPointerOpen, setNextPointerOpen] = useState(false);
-
   if (totalCount === 0) {
     return null;
   }
-
-  const isPreviousKeyboardOpen = keyboardTooltip === "previous";
-  const isNextKeyboardOpen = keyboardTooltip === "next";
-  const previousOpen = isPreviousKeyboardOpen || previousPointerOpen;
-  const nextOpen = isNextKeyboardOpen || nextPointerOpen;
-
-  const handlePreviousOpenChange = (open: boolean) => {
-    setPreviousPointerOpen(open);
-    if (!open && isPreviousKeyboardOpen) {
-      onKeyboardTooltipClear("previous");
-    }
-  };
-
-  const handleNextOpenChange = (open: boolean) => {
-    setNextPointerOpen(open);
-    if (!open && isNextKeyboardOpen) {
-      onKeyboardTooltipClear("next");
-    }
-  };
 
   const hasSelection =
     typeof currentIndex === "number" && currentIndex >= 0 && currentIndex < totalCount;
@@ -1000,7 +996,7 @@ function ErrorNavigator({
           )}
         </span>
         <div className="flex items-center gap-1">
-          <Tooltip open={previousOpen} onOpenChange={handlePreviousOpenChange}>
+          <Tooltip delayDuration={120}>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -1025,7 +1021,7 @@ function ErrorNavigator({
               </span>
             </TooltipContent>
           </Tooltip>
-          <Tooltip open={nextOpen} onOpenChange={handleNextOpenChange}>
+          <Tooltip delayDuration={120}>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -1144,6 +1140,7 @@ function FileDiffCard({
   diffHeatmap,
   focusedLineNumber,
   focusedChangeKey,
+  autoTooltipLineNumber,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
@@ -1151,6 +1148,7 @@ function FileDiffCard({
   diffHeatmap: DiffHeatmap | null;
   focusedLineNumber: number | null;
   focusedChangeKey: string | null;
+  autoTooltipLineNumber: number | null;
 }) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
@@ -1310,8 +1308,16 @@ function FileDiffCard({
         return wrapInAnchor(content);
       }
 
+      const isAutoTooltipOpen =
+        autoTooltipLineNumber !== null &&
+        lineNumber === autoTooltipLineNumber;
+
       const tooltipNode = (
-        <Tooltip key={`heatmap-gutter-${lineNumber}`} delayDuration={120}>
+        <Tooltip
+          key={`heatmap-gutter-${lineNumber}`}
+          delayDuration={120}
+          open={isAutoTooltipOpen ? true : undefined}
+        >
           <TooltipTrigger asChild>
             <span className="cmux-heatmap-gutter">{content}</span>
           </TooltipTrigger>
@@ -1335,7 +1341,7 @@ function FileDiffCard({
     };
 
     return renderGutterWithTooltip;
-  }, [lineTooltips]);
+  }, [lineTooltips, autoTooltipLineNumber]);
 
   const tokens = useMemo<HunkTokens | null>(() => {
     if (!diff) {

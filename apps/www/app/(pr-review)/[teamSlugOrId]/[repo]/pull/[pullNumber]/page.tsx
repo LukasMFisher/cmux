@@ -257,71 +257,185 @@ function PullRequestHeaderContent({
   repo: string;
 }) {
   const statusBadge = getStatusBadge(pullRequest);
-  const createdAt = new Date(pullRequest.created_at);
-  const updatedAt = new Date(pullRequest.updated_at);
+  const createdAtLabel = formatRelativeTimeFromNow(
+    new Date(pullRequest.created_at)
+  );
+  const updatedAtLabel = formatRelativeTimeFromNow(
+    new Date(pullRequest.updated_at)
+  );
+  const authorLogin = pullRequest.user?.login ?? null;
 
   return (
     <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span
-              className={cn(
-                "rounded-md px-2 py-0.5 font-semibold uppercase tracking-wide",
-                statusBadge.className
-              )}
-            >
-              {statusBadge.label}
-            </span>
-            <span className="font-mono text-neutral-500">
-              #{pullRequest.number}
-            </span>
-            <span className="text-neutral-500">
-              {githubOwner}/{repo}
-            </span>
-          </div>
+        <PullRequestHeaderSummary
+          statusLabel={statusBadge.label}
+          statusClassName={statusBadge.className}
+          pullNumber={pullRequest.number}
+          githubOwner={githubOwner}
+          repo={repo}
+          title={pullRequest.title}
+          authorLogin={authorLogin}
+          createdAtLabel={createdAtLabel}
+          updatedAtLabel={updatedAtLabel}
+        />
 
-          <h1 className="mt-2 text-xl font-semibold leading-tight text-neutral-900">
-            {pullRequest.title}
-          </h1>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-600">
-            {pullRequest.user?.login ? (
-              <>
-                <span className="font-medium text-neutral-900">
-                  @{pullRequest.user.login}
-                </span>
-                <span className="text-neutral-400">•</span>
-              </>
-            ) : null}
-            <span>{formatRelativeTimeFromNow(createdAt)}</span>
-            <span className="text-neutral-400">•</span>
-            <span>Updated {formatRelativeTimeFromNow(updatedAt)}</span>
-          </div>
-        </div>
-
-        <aside className="flex flex-wrap items-center gap-3 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="text-neutral-600">
-              <GitPullRequest className="inline h-3 w-3" />{" "}
-              {pullRequest.changed_files}
-            </span>
-            <span className="text-neutral-400">•</span>
-            <span className="text-emerald-700">+{pullRequest.additions}</span>
-            <span className="text-rose-700">-{pullRequest.deletions}</span>
-          </div>
-          <a
-            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
-            href={pullRequest.html_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        </aside>
+        <PullRequestHeaderActions
+          changedFiles={pullRequest.changed_files}
+          additions={pullRequest.additions}
+          deletions={pullRequest.deletions}
+          githubUrl={pullRequest.html_url}
+        />
       </div>
     </section>
+  );
+}
+
+function PullRequestHeaderSummary({
+  statusLabel,
+  statusClassName,
+  pullNumber,
+  githubOwner,
+  repo,
+  title,
+  authorLogin,
+  createdAtLabel,
+  updatedAtLabel,
+}: {
+  statusLabel: string;
+  statusClassName: string;
+  pullNumber: number;
+  githubOwner: string;
+  repo: string;
+  title: string;
+  authorLogin: string | null;
+  createdAtLabel: string;
+  updatedAtLabel: string;
+}) {
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <PullRequestStatusBadge
+          label={statusLabel}
+          className={statusClassName}
+        />
+        <span className="font-mono text-neutral-500">#{pullNumber}</span>
+        <span className="text-neutral-500">
+          {githubOwner}/{repo}
+        </span>
+      </div>
+
+      <h1 className="mt-2 text-xl font-semibold leading-tight text-neutral-900">
+        {title}
+      </h1>
+
+      <PullRequestHeaderMeta
+        authorLogin={authorLogin}
+        createdAtLabel={createdAtLabel}
+        updatedAtLabel={updatedAtLabel}
+      />
+    </div>
+  );
+}
+
+function PullRequestStatusBadge({
+  label,
+  className,
+}: {
+  label: string;
+  className: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-md px-2 py-0.5 font-semibold uppercase tracking-wide",
+        className
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function PullRequestHeaderMeta({
+  authorLogin,
+  createdAtLabel,
+  updatedAtLabel,
+}: {
+  authorLogin: string | null;
+  createdAtLabel: string;
+  updatedAtLabel: string;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-600">
+      {authorLogin ? (
+        <>
+          <span className="font-medium text-neutral-900">@{authorLogin}</span>
+          <span className="text-neutral-400">•</span>
+        </>
+      ) : null}
+      <span>{createdAtLabel}</span>
+      <span className="text-neutral-400">•</span>
+      <span>Updated {updatedAtLabel}</span>
+    </div>
+  );
+}
+
+function PullRequestHeaderActions({
+  changedFiles,
+  additions,
+  deletions,
+  githubUrl,
+}: {
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  githubUrl?: string | null;
+}) {
+  return (
+    <aside className="flex flex-wrap items-center gap-3 text-xs">
+      <PullRequestChangeSummary
+        changedFiles={changedFiles}
+        additions={additions}
+        deletions={deletions}
+      />
+      {githubUrl ? <GitHubLinkButton href={githubUrl} /> : null}
+    </aside>
+  );
+}
+
+function PullRequestChangeSummary({
+  changedFiles,
+  additions,
+  deletions,
+}: {
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-neutral-600">
+        <GitPullRequest className="inline h-3 w-3" /> {changedFiles}
+      </span>
+      <span className="text-neutral-400">•</span>
+      <span className="text-emerald-700">+{additions}</span>
+      <span className="text-rose-700">-{deletions}</span>
+    </div>
+  );
+}
+
+function GitHubLinkButton({ href }: { href: string }) {
+  return (
+    <a
+      className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+    >
+      GitHub
+      <ExternalLink className="h-3 w-3" />
+    </a>
   );
 }
 
@@ -353,26 +467,16 @@ function PullRequestDiffSection({
     const commitRef = pullRequest.head?.sha ?? undefined;
 
     return (
-      <section className="flex flex-col gap-4">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-neutral-900">
-              Files changed
-            </h2>
-            <p className="text-sm text-neutral-600">
-              {totals.fileCount} file{totals.fileCount === 1 ? "" : "s"},{" "}
-              {totals.additions} additions, {totals.deletions} deletions
-            </p>
-          </div>
-        </header>
-        <PullRequestDiffViewer
-          files={files}
-          teamSlugOrId={teamSlugOrId}
-          repoFullName={fallbackRepoFullName}
-          prNumber={pullNumber}
-          commitRef={commitRef}
-        />
-      </section>
+      <PullRequestDiffContent
+        files={files}
+        fileCount={totals.fileCount}
+        additions={totals.additions}
+        deletions={totals.deletions}
+        teamSlugOrId={teamSlugOrId}
+        repoFullName={fallbackRepoFullName}
+        pullNumber={pullNumber}
+        commitRef={commitRef}
+      />
     );
   } catch (error) {
     if (isGithubApiError(error)) {
@@ -407,6 +511,91 @@ function summarizeFiles(files: GithubPullRequestFile[]): {
       return acc;
     },
     { fileCount: 0, additions: 0, deletions: 0 }
+  );
+}
+
+function PullRequestDiffContent({
+  files,
+  fileCount,
+  additions,
+  deletions,
+  teamSlugOrId,
+  repoFullName,
+  pullNumber,
+  commitRef,
+}: {
+  files: GithubPullRequestFile[];
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  teamSlugOrId: string;
+  repoFullName: string;
+  pullNumber: number;
+  commitRef?: string;
+}) {
+  return (
+    <section className="flex flex-col gap-4">
+      <PullRequestDiffSummary
+        fileCount={fileCount}
+        additions={additions}
+        deletions={deletions}
+      />
+      <PullRequestDiffViewerWrapper
+        files={files}
+        teamSlugOrId={teamSlugOrId}
+        repoFullName={repoFullName}
+        pullNumber={pullNumber}
+        commitRef={commitRef}
+      />
+    </section>
+  );
+}
+
+function PullRequestDiffSummary({
+  fileCount,
+  additions,
+  deletions,
+}: {
+  fileCount: number;
+  additions: number;
+  deletions: number;
+}) {
+  return (
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-semibold text-neutral-900">
+          Files changed
+        </h2>
+        <p className="text-sm text-neutral-600">
+          {fileCount} file{fileCount === 1 ? "" : "s"}, {additions} additions,{" "}
+          {deletions} deletions
+        </p>
+      </div>
+    </header>
+  );
+}
+
+function PullRequestDiffViewerWrapper({
+  files,
+  teamSlugOrId,
+  repoFullName,
+  pullNumber,
+  commitRef,
+}: {
+  files: GithubPullRequestFile[];
+  teamSlugOrId: string;
+  repoFullName: string;
+  pullNumber: number;
+  commitRef?: string;
+}) {
+  return (
+    <PullRequestDiffViewer
+      files={files}
+      teamSlugOrId={teamSlugOrId}
+      repoFullName={repoFullName}
+      prNumber={pullNumber}
+      commitRef={commitRef}
+    />
   );
 }
 
