@@ -248,6 +248,7 @@ export function RepositoryPicker({
 
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
+      const shouldResetInstanceId = nextSnapshotId !== selectedSnapshotId;
       setSelectedSnapshotId(nextSnapshotId);
       void navigate({
         to: "/$teamSlugOrId/environments/new",
@@ -255,7 +256,7 @@ export function RepositoryPicker({
         search: (prev) => ({
           step: prev.step ?? "select",
           selectedRepos: prev.selectedRepos ?? [],
-          instanceId: prev.instanceId,
+          instanceId: shouldResetInstanceId ? undefined : prev.instanceId,
           connectionLogin: prev.connectionLogin,
           repoSearch: prev.repoSearch,
           snapshotId: nextSnapshotId,
@@ -263,7 +264,7 @@ export function RepositoryPicker({
         replace: true,
       });
     },
-    [navigate, teamSlugOrId]
+    [navigate, selectedSnapshotId, teamSlugOrId]
   );
 
   const toggleRepo = useCallback((repo: string) => {
