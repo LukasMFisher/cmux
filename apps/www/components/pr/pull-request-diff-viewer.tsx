@@ -1638,7 +1638,7 @@ function HeatmapTooltipBody({
 }) {
   const theme = getHeatmapTooltipTheme(score);
   return (
-    <div className="space-y-1 text-left text-xs leading-relaxed">
+    <div className="text-left text-xs leading-relaxed">
       {reason ? (
         <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
       ) : null}
