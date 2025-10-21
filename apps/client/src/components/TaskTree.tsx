@@ -64,10 +64,15 @@ function sanitizeBranchName(input?: string | null): string | null {
   if (!input) return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
-  const idx = trimmed.lastIndexOf("-");
-  if (idx <= 0) return trimmed;
-  const candidate = trimmed.slice(0, idx);
-  return candidate || trimmed;
+  let normalized = trimmed;
+  if (normalized.startsWith("cmux/")) {
+    normalized = normalized.slice("cmux/".length).trim();
+    if (!normalized) return null;
+  }
+  const idx = normalized.lastIndexOf("-");
+  if (idx <= 0) return normalized;
+  const candidate = normalized.slice(0, idx);
+  return candidate || normalized;
 }
 
 function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
