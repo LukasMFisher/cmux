@@ -17,6 +17,7 @@ import type {
 } from "../../src/types/electron-webcontents";
 import type { WebContentsLayoutActualState } from "../../src/types/webcontents-debug";
 import { applyChromeCamouflage, type Logger } from "./chrome-camouflage";
+import { registerContextMenuForTarget } from "./context-menu";
 
 interface RegisterOptions {
   logger: Logger;
@@ -695,6 +696,7 @@ export function registerWebContentsViewHandlers({
         }
 
         const view = new WebContentsView();
+        const disposeContextMenu = registerContextMenuForTarget(view);
 
         applyChromeCamouflage(view, logger);
 
@@ -746,6 +748,7 @@ export function registerWebContentsViewHandlers({
         };
         viewEntries.set(id, entry);
         setupEventForwarders(entry, logger);
+        entry.eventCleanup.push(disposeContextMenu);
         sendState(entry, logger, "created");
 
         if (!windowCleanupRegistered.has(win.id)) {

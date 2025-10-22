@@ -20,6 +20,7 @@ import {
 } from "electron";
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
+import { registerGlobalContextMenu } from "./context-menu";
 // Auto-updater
 import electronUpdater, {
   type UpdateCheckResult,
@@ -688,6 +689,14 @@ app.on("open-url", (_event, url) => {
 app.whenReady().then(async () => {
   ensureLogFiles();
   setupConsoleFileMirrors();
+  const disposeContextMenu = registerGlobalContextMenu();
+  app.once("will-quit", () => {
+    try {
+      disposeContextMenu();
+    } catch {
+      // ignore cleanup failures
+    }
+  });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
   initCmdK({
