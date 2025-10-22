@@ -58,7 +58,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     timestamp: number;
   } | null = null;
   private static readonly PORT_CACHE_DURATION = 2000; // 2 seconds
-  private static readonly imagePullPromises = new Map<string, Promise<void>>();
   private static eventsStream: NodeJS.ReadableStream | null = null;
   private static dockerInstance: Docker | null = null;
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
@@ -90,96 +89,44 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       // Check if image exists locally
       await docker.getImage(this.imageName).inspect();
       dockerLogger.info(`Image ${this.imageName} found locally`);
-      return;
-    } catch (error) {
-      const statusCode =
-        typeof error === "object" && error !== null && "statusCode" in error
-          ? (error as { statusCode?: number }).statusCode
-          : undefined;
-      const message = error instanceof Error ? error.message : String(error);
-      const isMissing = statusCode === 404 || message.includes("no such image");
-      if (!isMissing) {
+    } catch (_error) {
+      // Image doesn't exist locally, try to pull it
+      dockerLogger.info(
+        `Image ${this.imageName} not found locally, pulling...`
+      );
+
+      try {
+        const stream = await docker.pull(this.imageName);
+        await new Promise((resolve, reject) => {
+          docker.modem.followProgress(
+            stream,
+            (err: Error | null, res: unknown[]) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve(res);
+              }
+            },
+            (event: { status: string; progress: string }) => {
+              // Log pull progress
+              if (event.status) {
+                dockerLogger.info(
+                  `Pull progress: ${event.status} ${event.progress || ""}`
+                );
+              }
+            }
+          );
+        });
+        dockerLogger.info(`Successfully pulled image ${this.imageName}`);
+      } catch (pullError) {
         dockerLogger.error(
-          `Failed to inspect Docker image ${this.imageName}:`,
-          error
+          `Failed to pull image ${this.imageName}:`,
+          pullError
         );
-        throw error;
-      }
-      dockerLogger.info(
-        `Image ${this.imageName} not found locally, ensuring single pull...`
-      );
-    }
-
-    let pullPromise = DockerVSCodeInstance.imagePullPromises.get(
-      this.imageName
-    );
-
-    if (!pullPromise) {
-      dockerLogger.info(`Starting pull for image ${this.imageName}`);
-      pullPromise = DockerVSCodeInstance.pullImage(docker, this.imageName);
-      DockerVSCodeInstance.imagePullPromises.set(this.imageName, pullPromise);
-    } else {
-      dockerLogger.info(
-        `Pull already in progress for ${this.imageName}, waiting for completion`
-      );
-    }
-
-    try {
-      await pullPromise;
-    } finally {
-      const current = DockerVSCodeInstance.imagePullPromises.get(
-        this.imageName
-      );
-      if (current === pullPromise) {
-        DockerVSCodeInstance.imagePullPromises.delete(this.imageName);
-      }
-    }
-
-    try {
-      await docker.getImage(this.imageName).inspect();
-      dockerLogger.info(`Image ${this.imageName} available after pull`);
-    } catch (inspectError) {
-      dockerLogger.error(
-        `Docker image ${this.imageName} still missing after pull attempt:`,
-        inspectError
-      );
-      throw new Error(
-        `Failed to make Docker image ${this.imageName} available after pull`
-      );
-    }
-  }
-
-  private static async pullImage(
-    docker: Docker,
-    imageName: string
-  ): Promise<void> {
-    try {
-      const stream = await docker.pull(imageName);
-      await new Promise<void>((resolve, reject) => {
-        docker.modem.followProgress(
-          stream,
-          (err: Error | null) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve();
-            }
-          },
-          (event: { status?: string; progress?: string }) => {
-            if (event.status) {
-              dockerLogger.info(
-                `Pull progress for ${imageName}: ${event.status} ${
-                  event.progress || ""
-                }`
-              );
-            }
-          }
+        throw new Error(
+          `Failed to pull Docker image ${this.imageName}: ${pullError}`
         );
-      });
-      dockerLogger.info(`Successfully pulled image ${imageName}`);
-    } catch (error) {
-      dockerLogger.error(`Failed to pull image ${imageName}:`, error);
-      throw new Error(`Failed to pull Docker image ${imageName}: ${error}`);
+      }
     }
   }
 
@@ -193,7 +140,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     if (
       this.portCache &&
       Date.now() - this.portCache.timestamp <
-        DockerVSCodeInstance.PORT_CACHE_DURATION
+      DockerVSCodeInstance.PORT_CACHE_DURATION
     ) {
       return this.portCache.ports?.[containerPort] || null;
     }
@@ -302,8 +249,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       const info = await existingContainer.inspect().catch(() => null);
       if (info) {
         dockerLogger.info(`Removing existing container ${this.containerName}`);
-        await existingContainer.stop().catch(() => {});
-        await existingContainer.remove().catch(() => {});
+        await existingContainer.stop().catch(() => { });
+        await existingContainer.remove().catch(() => { });
       }
     } catch (_error) {
       // Container doesn't exist, which is fine
@@ -1256,7 +1203,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         let buffer = "";
         stream.on("data", (chunk: Buffer | string) => {
           buffer += chunk.toString();
-          for (;;) {
+          for (; ;) {
             const idx = buffer.indexOf("\n");
             if (idx === -1) break;
             const line = buffer.slice(0, idx);
@@ -1305,9 +1252,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static logEventStreamError(message: string, error: unknown): void {
     const code =
       error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (typeof error.code === "string" || typeof error.code === "number")
+        typeof error === "object" &&
+        "code" in error &&
+        (typeof error.code === "string" || typeof error.code === "number")
         ? error.code
         : undefined;
     const isConnectionReset =
