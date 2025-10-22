@@ -206,7 +206,7 @@ export function PullRequestDetailView({
     if (hasPending) {
       return {
         checksAllowMerge: false,
-        checksDisabledReason: "Checks are still running",
+        checksDisabledReason: "Tests are still running. Wait for all required checks to finish before merging.",
       } as const;
     }
 
@@ -218,7 +218,7 @@ export function PullRequestDetailView({
     if (!allPassing) {
       return {
         checksAllowMerge: false,
-        checksDisabledReason: "All checks must pass before merging",
+        checksDisabledReason: "Some tests have not passed yet. Fix the failing checks before merging.",
       } as const;
     }
 
