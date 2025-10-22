@@ -9,7 +9,7 @@ import {
   type PersistentIframeStatus,
 } from "./persistent-iframe";
 
-interface PersistentWebViewProps {
+export interface PersistentWebViewProps {
   persistKey: string;
   src: string;
   className?: string;

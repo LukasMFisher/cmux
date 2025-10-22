@@ -10,7 +10,7 @@ import {
   type TerminalTabId,
 } from "@/queries/terminals";
 
-interface TaskRunTerminalPaneProps {
+export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
 }
 

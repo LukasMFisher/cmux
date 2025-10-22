@@ -6,7 +6,7 @@ export type WorkspaceLoadingStatus = "loading" | "error";
 
 type WorkspaceLoadingVariant = "vscode" | "browser";
 
-interface WorkspaceLoadingIndicatorProps {
+export interface WorkspaceLoadingIndicatorProps {
   status: WorkspaceLoadingStatus;
   variant?: WorkspaceLoadingVariant;
   className?: string;

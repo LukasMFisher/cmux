@@ -6,7 +6,7 @@ import { normalizeGitRef } from "@/lib/refWithOrigin";
 import type { TaskRunWithChildren } from "@/types/task";
 import type { Doc } from "@cmux/convex/dataModel";
 
-interface TaskRunGitDiffPanelProps {
+export interface TaskRunGitDiffPanelProps {
   task: Doc<"tasks"> | null | undefined;
   selectedRun: TaskRunWithChildren | null | undefined;
 }

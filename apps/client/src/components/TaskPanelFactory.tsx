@@ -6,6 +6,11 @@ import { PANEL_LABELS } from "@/lib/panel-config";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { TaskRunWithChildren } from "@/types/task";
+import type { TaskRunChatPaneProps } from "./TaskRunChatPane";
+import type { PersistentWebViewProps } from "./persistent-webview";
+import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
+import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
+import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
@@ -56,13 +61,11 @@ interface PanelFactoryProps {
   isMorphProvider?: boolean;
   isBrowserBusy?: boolean;
   // Additional components
-  /* eslint-disable @typescript-eslint/no-explicit-any */
-  TaskRunChatPane?: React.ComponentType<any>;
-  PersistentWebView?: React.ComponentType<any>;
-  WorkspaceLoadingIndicator?: React.ComponentType<any>;
-  TaskRunTerminalPane?: React.ComponentType<any>;
-  TaskRunGitDiffPanel?: React.ComponentType<any>;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+  TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
+  PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
+  WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
+  TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
+  TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
@@ -317,7 +320,10 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
         <div className="flex-1 bg-black">
-          <TaskRunTerminalPane key={rawWorkspaceUrl} workspaceUrl={rawWorkspaceUrl} />
+          <TaskRunTerminalPane
+            key={rawWorkspaceUrl ?? "no-workspace"}
+            workspaceUrl={rawWorkspaceUrl ?? null}
+          />
         </div>
       );
     }

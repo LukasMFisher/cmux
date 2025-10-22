@@ -4,7 +4,7 @@ import type { TaskRunWithChildren } from "@/types/task";
 import clsx from "clsx";
 import { MessageCircle, GripVertical, X } from "lucide-react";
 
-interface TaskRunChatPaneProps {
+export interface TaskRunChatPaneProps {
   task: Doc<"tasks"> | null | undefined;
   taskRuns: TaskRunWithChildren[] | null | undefined;
   crownEvaluation?: {
