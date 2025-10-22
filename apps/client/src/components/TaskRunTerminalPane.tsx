@@ -51,15 +51,9 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
   );
 
   const workspaceReadyAtRef = useRef<number | null>(null);
-  const autoCreateStateRef = useRef<{
-    context: string | null;
-    inFlight: boolean;
-    attempts: number;
-  }>({ context: null, inFlight: false, attempts: 0 });
   const retryTimeoutRef = useRef<number | null>(null);
-  const autoCreateAttemptRef = useRef<((options?: { manual?: boolean }) => void) | null>(
-    null
-  );
+  const inFlightRef = useRef(false);
+  const attemptsRef = useRef(0);
 
   const [autoCreateError, setAutoCreateError] = useState<string | null>(null);
   const [autoCreateAttemptCount, setAutoCreateAttemptCount] = useState(0);
@@ -81,14 +75,15 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
     };
   }, []);
 
-  const scheduleRetry = useCallback((delayMs: number) => {
+  const resetAutoCreate = useCallback(() => {
+    attemptsRef.current = 0;
+    inFlightRef.current = false;
+    setAutoCreateAttemptCount(0);
+    setAutoCreateError(null);
     if (retryTimeoutRef.current !== null) {
       window.clearTimeout(retryTimeoutRef.current);
-    }
-    retryTimeoutRef.current = window.setTimeout(() => {
       retryTimeoutRef.current = null;
-      autoCreateAttemptRef.current?.();
-    }, delayMs);
+    }
   }, []);
 
   const attemptAutoCreate = useCallback(
@@ -98,27 +93,11 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
       }
 
       if (terminalIds.length > 0) {
-        setAutoCreateError(null);
-        setAutoCreateAttemptCount(0);
-        const current = autoCreateStateRef.current;
-        current.inFlight = false;
-        current.attempts = 0;
-        if (retryTimeoutRef.current !== null) {
-          window.clearTimeout(retryTimeoutRef.current);
-          retryTimeoutRef.current = null;
-        }
+        resetAutoCreate();
         return;
       }
 
-      const contextIdentifier = `${baseUrl}|${workspaceUrl}`;
-      const state = autoCreateStateRef.current;
-
-      if (state.context !== contextIdentifier) {
-        state.context = contextIdentifier;
-        state.attempts = 0;
-      }
-
-      if (state.inFlight) {
+      if (inFlightRef.current) {
         return;
       }
 
@@ -127,19 +106,25 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
         if (readyAt) {
           const elapsed = Date.now() - readyAt;
           if (elapsed < INITIAL_AUTO_CREATE_DELAY_MS) {
-            scheduleRetry(INITIAL_AUTO_CREATE_DELAY_MS - elapsed);
+            if (retryTimeoutRef.current !== null) {
+              window.clearTimeout(retryTimeoutRef.current);
+            }
+            retryTimeoutRef.current = window.setTimeout(() => {
+              retryTimeoutRef.current = null;
+              attemptAutoCreate();
+            }, INITIAL_AUTO_CREATE_DELAY_MS - elapsed);
             return;
           }
         }
 
-        if (state.attempts >= MAX_AUTO_CREATE_ATTEMPTS) {
+        if (attemptsRef.current >= MAX_AUTO_CREATE_ATTEMPTS) {
           return;
         }
       }
 
-      state.inFlight = true;
-      state.attempts += 1;
-      setAutoCreateAttemptCount(state.attempts);
+      inFlightRef.current = true;
+      attemptsRef.current += 1;
+      setAutoCreateAttemptCount(attemptsRef.current);
       setAutoCreateError(null);
 
       (async () => {
@@ -162,22 +147,22 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
             return [...current, created.id];
           });
 
-          state.inFlight = false;
-          state.attempts = 0;
-          setAutoCreateAttemptCount(0);
-          setAutoCreateError(null);
-          if (retryTimeoutRef.current !== null) {
-            window.clearTimeout(retryTimeoutRef.current);
-            retryTimeoutRef.current = null;
-          }
+          resetAutoCreate();
         } catch (error) {
           console.error("Failed to auto-create tmux terminal", error);
-          state.inFlight = false;
+          inFlightRef.current = false;
 
-          const shouldRetryAutomatically = !options?.manual && state.attempts < MAX_AUTO_CREATE_ATTEMPTS;
+          const shouldRetryAutomatically =
+            !options?.manual && attemptsRef.current < MAX_AUTO_CREATE_ATTEMPTS;
           if (shouldRetryAutomatically) {
-            const delay = AUTO_RETRY_BASE_DELAY_MS * state.attempts;
-            scheduleRetry(delay);
+            const delay = AUTO_RETRY_BASE_DELAY_MS * attemptsRef.current;
+            if (retryTimeoutRef.current !== null) {
+              window.clearTimeout(retryTimeoutRef.current);
+            }
+            retryTimeoutRef.current = window.setTimeout(() => {
+              retryTimeoutRef.current = null;
+              attemptAutoCreate();
+            }, delay);
             return;
           }
 
@@ -191,7 +176,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
       baseUrl,
       hasTerminalBackend,
       queryClient,
-      scheduleRetry,
+      resetAutoCreate,
       tabsQueryKey,
       terminalIds.length,
       workspaceUrl,
@@ -199,8 +184,8 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
   );
 
   useEffect(() => {
-    autoCreateAttemptRef.current = attemptAutoCreate;
-  }, [attemptAutoCreate]);
+    resetAutoCreate();
+  }, [baseUrl, resetAutoCreate, workspaceUrl]);
 
   useEffect(() => {
     if (isTabsLoading || isTabsError) {
@@ -210,18 +195,10 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
   }, [attemptAutoCreate, isTabsError, isTabsLoading]);
 
   const handleManualRetry = useCallback(() => {
-    const state = autoCreateStateRef.current;
-    state.attempts = 0;
-    state.inFlight = false;
-    setAutoCreateError(null);
-    setAutoCreateAttemptCount(0);
-    if (retryTimeoutRef.current !== null) {
-      window.clearTimeout(retryTimeoutRef.current);
-      retryTimeoutRef.current = null;
-    }
+    resetAutoCreate();
     workspaceReadyAtRef.current = Date.now() - INITIAL_AUTO_CREATE_DELAY_MS;
     attemptAutoCreate({ manual: true });
-  }, [attemptAutoCreate]);
+  }, [attemptAutoCreate, resetAutoCreate]);
 
   const activeTerminalId = terminalIds[0] ?? null;
 
