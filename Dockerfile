@@ -251,33 +251,8 @@ COPY packages/shared/tsconfig.json ./packages/shared/
 # Copy convex package (needed by shared)
 COPY packages/convex ./packages/convex/
 
-# Copy worker source and scripts
-COPY apps/worker/src ./apps/worker/src
-COPY apps/worker/scripts ./apps/worker/scripts
-COPY apps/worker/tsconfig.json ./apps/worker/
-COPY apps/worker/wait-for-docker.sh ./apps/worker/
-
 # Copy Chrome DevTools proxy source
 COPY scripts/cdp-proxy ./scripts/cdp-proxy/
-
-# Copy VS Code extension source
-COPY packages/vscode-extension/src ./packages/vscode-extension/src
-COPY packages/vscode-extension/tsconfig.json ./packages/vscode-extension/
-COPY packages/vscode-extension/.vscodeignore ./packages/vscode-extension/
-COPY packages/vscode-extension/LICENSE.md ./packages/vscode-extension/
-
-# Build worker with bundling, using the installed node_modules
-RUN cd /cmux && \
-  bun build ./apps/worker/src/index.ts \
-  --target node \
-  --outdir ./apps/worker/build \
-  --external @cmux/convex \
-  --external convex \
-  --external node:* && \
-  echo "Built worker" && \
-  cp -r ./apps/worker/build /builtins/build && \
-  cp ./apps/worker/wait-for-docker.sh /usr/local/bin/ && \
-  chmod +x /usr/local/bin/wait-for-docker.sh
 
 # Build Chrome DevTools proxy binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
@@ -309,12 +284,40 @@ EOF
 # Verify bun is still working in builder
 RUN bun --version && bunx --version
 
+# Copy VS Code extension source
+COPY packages/vscode-extension/src ./packages/vscode-extension/src
+COPY packages/vscode-extension/tsconfig.json ./packages/vscode-extension/
+COPY packages/vscode-extension/.vscodeignore ./packages/vscode-extension/
+COPY packages/vscode-extension/LICENSE.md ./packages/vscode-extension/
+
 # Build vscode extension
 WORKDIR /cmux/packages/vscode-extension
 RUN bun run package && cp cmux-vscode-extension-0.0.1.vsix /tmp/cmux-vscode-extension-0.0.1.vsix
 
 # Install VS Code extensions (keep the .vsix for copying to runtime-base)
 RUN /app/openvscode-server/bin/openvscode-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+
+# Return to repo root before copying worker sources
+WORKDIR /cmux
+
+# Copy worker source and scripts
+COPY apps/worker/src ./apps/worker/src
+COPY apps/worker/scripts ./apps/worker/scripts
+COPY apps/worker/tsconfig.json ./apps/worker/
+COPY apps/worker/wait-for-docker.sh ./apps/worker/
+
+# Build worker with bundling, using the installed node_modules
+RUN cd /cmux && \
+  bun build ./apps/worker/src/index.ts \
+  --target node \
+  --outdir ./apps/worker/build \
+  --external @cmux/convex \
+  --external convex \
+  --external node:* && \
+  echo "Built worker" && \
+  cp -r ./apps/worker/build /builtins/build && \
+  cp ./apps/worker/wait-for-docker.sh /usr/local/bin/ && \
+  chmod +x /usr/local/bin/wait-for-docker.sh
 
 # Stage 2: Runtime base (shared between local and morph)
 FROM ubuntu:24.04 AS runtime-base

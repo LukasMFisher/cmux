@@ -63,6 +63,19 @@ cleanup_and_exit() {
 trap cleanup EXIT
 trap cleanup_and_exit INT TERM
 
+# Load environment variables (including OPENAI_API_KEY) if available
+if [ -f ".env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "Error: OPENAI_API_KEY not set. Add it to your environment or .env before running." >&2
+  exit 1
+fi
+
 echo "Building Docker image..."
 docker build -t "$IMAGE_NAME" .
 
@@ -87,7 +100,8 @@ docker run -d \
   -p 39380:39380 \
   -p 39381:39381 \
   -p 39382:39382 \
-  -p 39383:39383 \
+-p 39383:39383 \
+-e OPENAI_API_KEY="$OPENAI_API_KEY" \
   --name "$CONTAINER_NAME" \
   "$IMAGE_NAME"
 container_started=true
@@ -218,11 +232,14 @@ curl -s \
   --data-binary '40/management' \
   "${POLLING_BASE}&sid=${SID}&t=$(date +%s%3N)" >/dev/null
 
+# Prepare screenshot collection payload
+SOCKET_PAYLOAD=$(node -e 'const key = process.argv[1]; const payload = ["worker:start-screenshot-collection"]; if (key && key.length > 0) { payload.push({ openAiApiKey: key }); } process.stdout.write(JSON.stringify(payload));' "$OPENAI_API_KEY")
+
 echo "Triggering worker:start-screenshot-collection..."
 curl -s \
   -X POST \
   -H 'Content-Type: text/plain;charset=UTF-8' \
-  --data-binary '42/management,["worker:start-screenshot-collection"]' \
+  --data-binary "42/management,${SOCKET_PAYLOAD}" \
   "${POLLING_BASE}&sid=${SID}&t=$(date +%s%3N)" >/dev/null
 
 echo "Screenshot collection trigger sent. View logs via http://localhost:39378/?folder=/var/log/cmux"

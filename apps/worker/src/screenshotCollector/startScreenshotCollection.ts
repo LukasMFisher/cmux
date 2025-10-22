@@ -1,10 +1,6 @@
 import { log } from "../logger";
 import { runCommandCapture } from "../crown/utils";
-import {
-  filterTextFiles,
-  parseFileList,
-  resolveMergeBase,
-} from "./git";
+import { filterTextFiles, parseFileList, resolveMergeBase } from "./git";
 import {
   SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   SCREENSHOT_COLLECTOR_LOG_PATH,
@@ -12,12 +8,15 @@ import {
 } from "./logger";
 import { readPrDescription } from "./context";
 import { buildScreenshotPrompt, formatFileList } from "./prompt";
-import {
-  runScreenshotAnalysis,
-  type ScreenshotAnalysis,
-} from "./analysis";
+import { runScreenshotAnalysis } from "./analysis";
 
-export async function startScreenshotCollection(): Promise<void> {
+export interface StartScreenshotCollectionOptions {
+  openAiApiKey?: string | null;
+}
+
+export async function startScreenshotCollection(
+  options: StartScreenshotCollectionOptions = {}
+): Promise<void> {
   try {
     await logToScreenshotCollector("start-screenshot-collection triggered");
     log("INFO", "Screenshot collection trigger recorded", {
@@ -112,7 +111,21 @@ export async function startScreenshotCollection(): Promise<void> {
       });
     }
 
-    const openAiApiKey = process.env.OPENAI_API_KEY;
+    const suppliedKey = options.openAiApiKey?.trim();
+    const openAiApiKey =
+      suppliedKey && suppliedKey.length > 0
+        ? suppliedKey
+        : process.env.OPENAI_API_KEY;
+
+    await logToScreenshotCollector(
+      `OPENAI_API_KEY source: ${suppliedKey ? "payload" : "environment"}`
+    );
+    await logToScreenshotCollector(
+      `OPENAI_API_KEY (first 8 chars): ${
+        openAiApiKey ? openAiApiKey.slice(0, 8) : "<none>"
+      }`
+    );
+
     if (!openAiApiKey) {
       await logToScreenshotCollector(
         "OPENAI_API_KEY missing; skipping Codex screenshot instructions"
@@ -134,7 +147,7 @@ export async function startScreenshotCollection(): Promise<void> {
 
     await logToScreenshotCollector(`Codex prompt:\n${prompt}`);
 
-    const analysis: ScreenshotAnalysis = await runScreenshotAnalysis({
+    const analysis = await runScreenshotAnalysis({
       apiKey: openAiApiKey,
       workspaceDir,
       prompt,

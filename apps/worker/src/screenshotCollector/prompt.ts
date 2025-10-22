@@ -6,9 +6,7 @@ interface PromptConfig {
 }
 
 export function formatFileList(files: readonly string[]): string {
-  return files
-    .map((file, index) => `${index + 1}. ${file}`)
-    .join("\n");
+  return files.join("\n");
 }
 
 export function buildScreenshotPrompt({
@@ -21,10 +19,8 @@ export function buildScreenshotPrompt({
     "You are a release engineer evaluating repository changes to determine if screenshots need refreshing before sharing updates.",
     `Repository base branch: ${baseBranch}`,
     `Merge base commit: ${mergeBase}`,
-    prDescription
-      ? `Pull request description:\n${prDescription}`
-      : "Pull request description: <none provided>",
-    `Changed files since base:\n${formattedFileList}`,
+    `<pull_request_description>\n${prDescription ?? "<none provided>"}\n</pull_request_description>`,
+    `<changed_files>\n${formattedFileList}\n</changed_files>`,
     [
       "Return a JSON object matching { hasUiChanges: boolean; uiChangesToScreenshotInstructions: string }.",
       "Set hasUiChanges to true when the listed files imply UI changes that should be captured.",

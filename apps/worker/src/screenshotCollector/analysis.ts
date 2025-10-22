@@ -1,8 +1,5 @@
-import {
-  Codex,
-  type ThreadEvent,
-  type ThreadItem,
-} from "@openai/codex-sdk";
+import { Codex, type ThreadEvent, type ThreadItem } from "@openai/codex-sdk";
+import { existsSync } from "node:fs";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -57,7 +54,7 @@ function describeThreadEvent(event: ThreadEvent): string {
     case "error":
       return `[codex] error: ${event.message}`;
     default:
-      return "[codex] unknown-event";
+      return `[codex] unknown-event: ${JSON.stringify(event)}`;
   }
 }
 
@@ -68,6 +65,25 @@ interface ScreenshotAnalysisOptions {
   logEvent: LogFn;
 }
 
+function resolveCodexPath(): string | null {
+  const candidates = [
+    process.env.CODEX_PATH_OVERRIDE?.trim() ?? null,
+    "/root/.bun/bin/codex",
+    "/usr/local/bin/codex",
+    "/usr/bin/codex",
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export async function runScreenshotAnalysis({
   apiKey,
   workspaceDir,
@@ -75,7 +91,15 @@ export async function runScreenshotAnalysis({
   logEvent,
 }: ScreenshotAnalysisOptions): Promise<ScreenshotAnalysis> {
   await logEvent("Requesting Codex screenshot summary...");
-  const codex = new Codex({ apiKey });
+  const codexPath = resolveCodexPath();
+  if (codexPath) {
+    await logEvent(`Using Codex binary at ${codexPath}`);
+  }
+  console.log("apiKey", apiKey);
+  const codex = new Codex({
+    apiKey,
+    codexPathOverride: codexPath ?? undefined,
+  });
   const thread = codex.startThread({
     workingDirectory: workspaceDir,
     model: "gpt-5-codex",
@@ -117,9 +141,7 @@ export async function runScreenshotAnalysis({
 
   const parsed = screenshotAnalysisSchema.safeParse(parsedJson);
   if (!parsed.success) {
-    await logEvent(
-      `Codex response validation failed: ${parsed.error.message}`
-    );
+    await logEvent(`Codex response validation failed: ${parsed.error.message}`);
     throw new Error(
       `Codex response validation failed: ${parsed.error.message}`
     );
