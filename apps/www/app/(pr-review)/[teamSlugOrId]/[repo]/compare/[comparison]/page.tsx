@@ -409,6 +409,10 @@ function scheduleComparisonCodeReviewStart({
         const headCommit =
           commits.length > 0 ? commits[commits.length - 1] : null;
         const commitRef = headCommit?.sha ?? undefined;
+        const baseCommitRef =
+          comparison.base_commit?.sha ??
+          comparison.merge_base_commit?.sha ??
+          undefined;
 
         const callbackBaseUrl = getConvexHttpActionBaseUrl();
         if (!callbackBaseUrl) {
@@ -433,6 +437,16 @@ function scheduleComparisonCodeReviewStart({
           comparison.permalink_url ??
           comparisonDetails.compareUrl;
 
+        if (!commitRef || !baseCommitRef) {
+          console.error("[code-review] Comparison start missing commit refs; skipping", {
+            repoFullName: comparisonDetails.repoFullName,
+            comparisonSlug: comparisonDetails.slug,
+            commitRefPresent: Boolean(commitRef),
+            baseCommitRefPresent: Boolean(baseCommitRef),
+          });
+          return;
+        }
+
         const { backgroundTask } = await startCodeReviewJob({
           accessToken,
           callbackBaseUrl,
@@ -440,6 +454,8 @@ function scheduleComparisonCodeReviewStart({
             teamSlugOrId,
             githubLink,
             commitRef,
+            headCommitRef: commitRef,
+            baseCommitRef,
             force: false,
             comparison: {
               slug: comparisonDetails.slug,
