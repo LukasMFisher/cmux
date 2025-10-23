@@ -359,6 +359,10 @@ function ComparisonDiffSection({
     const commits = comparison.commits ?? [];
     const headCommit = commits.length > 0 ? commits[commits.length - 1] : null;
     const commitRef = headCommit?.sha ?? undefined;
+    const baseCommitRef =
+      comparison.base_commit?.sha ??
+      comparison.merge_base_commit?.sha ??
+      undefined;
 
     return (
       <ReviewDiffContent
@@ -370,6 +374,7 @@ function ComparisonDiffSection({
         repoFullName={repoFullName}
         reviewTarget={{ type: "comparison", slug: comparisonDetails.slug }}
         commitRef={commitRef}
+        baseCommitRef={baseCommitRef}
       />
     );
   } catch (error) {
