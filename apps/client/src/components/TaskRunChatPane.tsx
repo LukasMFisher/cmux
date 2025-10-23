@@ -37,7 +37,15 @@ export function TaskRunChatPane({
   return (
     <div className={clsx("flex h-full flex-col", className)}>
       {hideHeader ? null : (
-        <div className="flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800">
+        <div
+          className="flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800"
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            if (onToggleExpand) {
+              onToggleExpand();
+            }
+          }}
+        >
           <div
             draggable={Boolean(onDragStart)}
             onDragStart={onDragStart}
@@ -54,7 +62,7 @@ export function TaskRunChatPane({
               <MessageCircle className="size-3" aria-hidden />
             </div>
             <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
-              Chat &amp; Activity
+              Activity
             </h2>
           </div>
           {onToggleExpand ? (
@@ -64,6 +72,9 @@ export function TaskRunChatPane({
               className="flex size-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
               title={isExpanded ? "Exit expanded view" : "Expand panel"}
               aria-pressed={isExpanded}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+              }}
             >
               {isExpanded ? (
                 <Minimize2 className="size-3.5" />
@@ -78,6 +89,9 @@ export function TaskRunChatPane({
               onClick={onClose}
               className="flex items-center justify-center size-5 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
               title="Close panel"
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+              }}
             >
               <X className="size-3.5" />
             </button>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, type ReactNode, useCallback } from "react";
+import type { CSSProperties } from "react";
 import {
   Code2,
   Globe2,
@@ -125,6 +126,36 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     };
   }, []);
 
+  // Control iframe wrapper visibility based on this panel's expansion state
+  useEffect(() => {
+    if (typeof document === "undefined" || !type) return;
+
+    // Find the container div for this panel's content
+    const container = document.querySelector(`[data-panel-position="${position}"]`);
+    if (!container) return;
+
+    // Find any iframe target within this panel
+    const iframeTarget = container.querySelector('[data-iframe-target]') as HTMLElement;
+    if (!iframeTarget) return;
+
+    const iframeKey = iframeTarget.getAttribute('data-iframe-target');
+    if (!iframeKey) return;
+
+    // Find the corresponding iframe wrapper
+    const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement;
+    if (!wrapper) return;
+
+    if (isAnyPanelExpanded && !isExpanded) {
+      // Another panel is expanded - hide this iframe
+      wrapper.style.visibility = "hidden";
+      wrapper.style.pointerEvents = "none";
+    } else {
+      // This panel is expanded OR no panel is expanded - show iframe
+      wrapper.style.visibility = "visible";
+      wrapper.style.pointerEvents = "auto";
+    }
+  }, [type, position, isExpanded, isAnyPanelExpanded]);
+
   const handleDragStart = useCallback((e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", position);
@@ -201,15 +232,18 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   };
 
   const panelClassName = clsx(
-    "flex h-full flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition-all duration-150 dark:bg-neutral-950",
+    "flex h-full flex-col rounded-lg border bg-white shadow-sm transition-all duration-150 dark:bg-neutral-950",
     isDragOver
       ? "border-blue-500 dark:border-blue-400 ring-2 ring-blue-500/30 dark:ring-blue-400/30"
       : "border-neutral-200 dark:border-neutral-800",
     isExpanded
-      ? "absolute inset-1 sm:inset-2 md:inset-3 lg:inset-4 z-50 pointer-events-auto shadow-2xl ring-2 ring-blue-500/20 backdrop-blur-sm dark:ring-blue-400/20"
-      : "relative pointer-events-auto",
+      ? "absolute inset-0 z-[999999] pointer-events-auto shadow-2xl ring-2 ring-blue-500/20 overflow-visible dark:ring-blue-400/20"
+      : "relative pointer-events-auto overflow-hidden",
     isAnyPanelExpanded && !isExpanded ? "pointer-events-none opacity-40" : undefined,
   );
+
+  const panelStyle: CSSProperties | undefined =
+    isAnyPanelExpanded && !isExpanded ? { visibility: "hidden" } : undefined;
 
   const renderExpandButton = () => {
     if (!onToggleExpand) {
@@ -224,6 +258,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         className="flex size-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
         title={label}
         aria-pressed={isExpanded}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+        }}
       >
         <Icon className="size-3.5" />
       </button>
@@ -233,13 +270,32 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   const panelWrapper = (icon: ReactNode, title: string, content: ReactNode) => (
     <div
       className={panelClassName}
+      style={panelStyle}
+      data-panel-position={position}
+      aria-hidden={isAnyPanelExpanded && !isExpanded ? true : undefined}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onDoubleClick={() => {
+        if (onToggleExpand) {
+          onToggleExpand(position);
+        }
+      }}
     >
       {renderDropOverlay()}
-      <div className="flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800">
+      <div
+        className={clsx(
+          "flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800",
+          isExpanded && "relative z-[100000000] pointer-events-auto"
+        )}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          if (onToggleExpand) {
+            onToggleExpand(position);
+          }
+        }}
+      >
         <div
           draggable
           onDragStart={handleDragStart}
@@ -264,6 +320,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             onClick={() => onClose(position)}
             className="flex size-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
             title="Close panel"
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+            }}
           >
             <X className="size-3.5" />
           </button>
@@ -280,10 +339,18 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return (
         <div
           className={panelClassName}
+          style={panelStyle}
+          data-panel-position={position}
+          aria-hidden={isAnyPanelExpanded && !isExpanded ? true : undefined}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          onDoubleClick={() => {
+            if (onToggleExpand) {
+              onToggleExpand(position);
+            }
+          }}
         >
           {renderDropOverlay()}
           <TaskRunChatPane
@@ -327,7 +394,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return panelWrapper(
         <Code2 className="size-3" aria-hidden />,
         PANEL_LABELS.workspace,
-        <div className="relative flex-1" aria-busy={isEditorBusy}>
+        <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isEditorBusy}>
           {workspaceUrl && workspacePersistKey ? (
             <PersistentWebView
               key={workspacePersistKey}
@@ -347,6 +414,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
               onStatusChange={setEditorStatus}
               loadTimeoutMs={60_000}
+              isExpanded={isExpanded}
+              isAnyPanelExpanded={isAnyPanelExpanded}
             />
           ) : shouldShowWorkspaceLoader ? (
             <div className="flex h-full items-center justify-center">
@@ -405,7 +474,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,
         PANEL_LABELS.browser,
-        <div className="relative flex-1" aria-busy={isBrowserBusy}>
+        <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isBrowserBusy}>
           {browserUrl && browserPersistKey ? (
             <PersistentWebView
               key={browserPersistKey}
@@ -426,6 +495,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               }
               errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
               loadTimeoutMs={45_000}
+              isExpanded={isExpanded}
+              isAnyPanelExpanded={isAnyPanelExpanded}
             />
           ) : shouldShowBrowserLoader ? (
             <div className="flex h-full items-center justify-center">

@@ -111,7 +111,7 @@ class PersistentIframeManager {
         width: 0;
         height: 0;
         pointer-events: none;
-        z-index: var(--z-iframe, 9998);
+        z-index: var(--z-floating-high, 999999);
       `;
       document.body.appendChild(this.container);
     };
@@ -167,6 +167,7 @@ class PersistentIframeManager {
       height: 100vh;
       will-change: transform;
       backface-visibility: hidden;
+      z-index: var(--z-floating-high, 999999);
     `;
     wrapper.setAttribute("data-iframe-key", key);
 
@@ -256,6 +257,7 @@ class PersistentIframeManager {
       entry.wrapper.style.willChange = "transform";
       entry.wrapper.style.backfaceVisibility = "hidden";
 
+      // Apply custom styles (including z-index if provided)
       if (options?.style) {
         for (const [styleKey, styleValue] of Object.entries(options.style)) {
           if (styleValue === undefined || styleValue === null) {
@@ -268,11 +270,16 @@ class PersistentIframeManager {
           );
           const cssValue =
             typeof styleValue === "number" &&
-            !UNITLESS_CSS_PROPERTIES.has(cssKey)
+              !UNITLESS_CSS_PROPERTIES.has(cssKey)
               ? `${styleValue}px`
               : String(styleValue);
           entry.wrapper.style.setProperty(cssKey, cssValue);
         }
+      }
+
+      // Set default z-index if not provided in options
+      if (!options?.style?.zIndex) {
+        entry.wrapper.style.zIndex = "var(--z-floating-high, 999999)";
       }
 
       // Ensure the iframe wrapper reflects any layout changes triggered by new styles

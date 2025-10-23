@@ -35,6 +35,8 @@ interface PersistentIframeProps {
   forcedStatus?: PersistentIframeStatus | null;
   loadTimeoutMs?: number;
   preflight?: boolean;
+  isExpanded?: boolean;
+  isAnyPanelExpanded?: boolean;
 }
 
 type ScrollTarget = HTMLElement | Window;
@@ -83,6 +85,8 @@ export function PersistentIframe({
   forcedStatus,
   loadTimeoutMs = 30_000,
   preflight = true,
+  isExpanded = false,
+  isAnyPanelExpanded = false,
 }: PersistentIframeProps) {
   const [status, setStatus] = useState<PersistentIframeStatus>("loading");
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -234,6 +238,22 @@ export function PersistentIframe({
     onError: handleError,
   });
 
+  // Hide non-expanded iframes when another panel is expanded
+  useEffect(() => {
+    const wrapper = document.querySelector(`[data-iframe-key="${persistKey}"]`) as HTMLElement;
+    if (!wrapper) return;
+
+    if (isAnyPanelExpanded && !isExpanded) {
+      // Another panel is expanded - hide this iframe completely
+      wrapper.style.visibility = "hidden";
+      wrapper.style.pointerEvents = "none";
+    } else {
+      // This panel is expanded OR no panel is expanded - show normally
+      wrapper.style.visibility = "visible";
+      wrapper.style.pointerEvents = "auto";
+    }
+  }, [persistKey, isExpanded, isAnyPanelExpanded]);
+
   const effectiveStatus = forcedStatus ?? status;
 
   useEffect(() => {
@@ -296,7 +316,7 @@ export function PersistentIframe({
       overlay.style.top = "0";
       overlay.style.left = "0";
       overlay.style.pointerEvents = "none";
-      overlay.style.zIndex = "var(--z-overlay, 9999)";
+      overlay.style.zIndex = "var(--z-floating-high, 999999)";
       overlay.style.visibility = "hidden";
       overlayRef.current = overlay;
       document.body.appendChild(overlay);
