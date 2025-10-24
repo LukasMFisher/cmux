@@ -918,9 +918,7 @@ async function createTerminal(
     });
   }
 
-  const shell =
-    command || (platform() === "win32" ? "powershell.exe" : "bash");
-  const sanitizedTerminalId = sanitizeTmuxSessionName(terminalId);
+  const shell = command || (platform() === "win32" ? "powershell.exe" : "bash");
 
   log("INFO", `[createTerminal] Creating terminal ${terminalId}:`, {
     cols,
@@ -947,7 +945,12 @@ async function createTerminal(
   } else {
     // Create tmux session with command
     spawnCommand = "tmux";
-    spawnArgs = ["new-session", "-A", "-s", sanitizedTerminalId];
+    spawnArgs = [
+      "new-session",
+      "-A",
+      "-s",
+      sanitizeTmuxSessionName(terminalId),
+    ];
     spawnArgs.push("-x", cols.toString(), "-y", rows.toString());
 
     if (command) {
@@ -963,14 +966,6 @@ async function createTerminal(
       spawnArgs,
     });
   }
-
-  const isTmuxNewSessionCommand =
-    spawnCommand === "tmux" &&
-    spawnArgs.length > 0 &&
-    spawnArgs[0] === "new-session";
-  const tmuxReadyChannel = isTmuxNewSessionCommand
-    ? `${sanitizedTerminalId}:ready`
-    : null;
 
   const inheritedEnvEntries = Object.entries(process.env).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string"
@@ -1075,92 +1070,6 @@ async function createTerminal(
       pid: childProcess.pid,
       terminalId,
     });
-
-    if (tmuxReadyChannel) {
-      const waitForSessionReady = async () => {
-        const MAX_ATTEMPTS = 50;
-        const DELAY_MS = 100;
-
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-          const sessionExists = await new Promise<boolean>((resolve) => {
-            const checkProcess = spawn(
-              "tmux",
-              ["has-session", "-t", sanitizedTerminalId],
-              {
-                cwd,
-                env: processEnv,
-                stdio: ["ignore", "ignore", "ignore"],
-                shell: false,
-              }
-            );
-
-            checkProcess.on("exit", (code) => {
-              resolve(code === 0);
-            });
-
-            checkProcess.on("error", () => {
-              resolve(false);
-            });
-          });
-
-          if (sessionExists) {
-            log("INFO", "Signaling tmux readiness", {
-              terminalId,
-              channel: tmuxReadyChannel,
-            });
-
-            const signalProcess = spawn(
-              "tmux",
-              ["wait-for", "-S", tmuxReadyChannel],
-              {
-                cwd,
-                env: processEnv,
-                stdio: ["ignore", "ignore", "ignore"],
-                shell: false,
-              }
-            );
-
-            signalProcess.on("exit", (code, signal) => {
-              if (code !== 0) {
-                log("ERROR", "Failed to signal tmux readiness", {
-                  terminalId,
-                  channel: tmuxReadyChannel,
-                  exitCode: code,
-                  signal,
-                });
-              }
-            });
-
-            signalProcess.on("error", (error) => {
-              log("ERROR", "Error while signaling tmux readiness", {
-                terminalId,
-                channel: tmuxReadyChannel,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            });
-
-            return;
-          }
-
-          await new Promise((resolve) => {
-            setTimeout(resolve, DELAY_MS);
-          });
-        }
-
-        log("ERROR", "Timed out waiting for tmux session readiness", {
-          terminalId,
-          channel: tmuxReadyChannel,
-        });
-      };
-
-      waitForSessionReady().catch((error) => {
-        log("ERROR", "Error waiting for tmux session readiness", {
-          terminalId,
-          channel: tmuxReadyChannel,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }
   } catch (error) {
     log("ERROR", "Failed to spawn process", error);
     return;
