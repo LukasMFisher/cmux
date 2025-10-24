@@ -77,29 +77,6 @@ export function toMorphVncUrl(sourceUrl: string): string | null {
   return vncUrl.toString();
 }
 
-export function toWorkspaceServiceUrl(
-  workspaceUrl: string,
-  options: { port: number; path?: string; protocol?: "http" | "https" },
-): string | null {
-  const { port, protocol, path = "/" } = options;
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const components = parseMorphUrl(workspaceUrl);
-
-  if (components) {
-    const serviceUrl = new URL(components.url.toString());
-    serviceUrl.hostname = `cmux-${components.morphId}-base-${port}.cmux.app`;
-    serviceUrl.port = "";
-    serviceUrl.pathname = normalizedPath;
-    serviceUrl.search = "";
-    serviceUrl.hash = "";
-    if (protocol) {
-      serviceUrl.protocol = protocol;
-    }
-    return serviceUrl.toString();
-  }
-
-  return null;
-}
 export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
   const components = parseMorphUrl(sourceUrl);
 
