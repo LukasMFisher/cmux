@@ -26,7 +26,7 @@ import type {
   PostApiIntegrationsGithubPrsOpenData,
   PostApiIntegrationsGithubPrsOpenResponse,
 } from "@cmux/www-openapi-client";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useLocation } from "@tanstack/react-router";
 import clsx from "clsx";
 import {
   Check,
@@ -208,6 +208,7 @@ export function TaskDetailHeader({
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const clipboard = useClipboard({ timeout: 2000 });
   const prIsOpen = selectedRun?.pullRequestState === "open";
   const prIsMerged = selectedRun?.pullRequestState === "merged";
@@ -502,14 +503,30 @@ export function TaskDetailHeader({
                                 return;
                               }
                               if (!isSelected) {
-                                navigate({
-                                  to: "/$teamSlugOrId/task/$taskId",
-                                  params: {
-                                    teamSlugOrId,
-                                    taskId: task._id,
-                                  },
-                                  search: { runId: run._id },
-                                });
+                                // Check if we're currently on the git diff viewer
+                                const isOnDiffPage = location.pathname.endsWith("/diff");
+
+                                if (isOnDiffPage) {
+                                  // Navigate to the selected agent's git diff viewer
+                                  navigate({
+                                    to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+                                    params: {
+                                      teamSlugOrId,
+                                      taskId: task._id,
+                                      runId: run._id,
+                                    },
+                                  });
+                                } else {
+                                  // Navigate to the task index page with the runId search param
+                                  navigate({
+                                    to: "/$teamSlugOrId/task/$taskId",
+                                    params: {
+                                      teamSlugOrId,
+                                      taskId: task._id,
+                                    },
+                                    search: { runId: run._id },
+                                  });
+                                }
                               }
                               // Close dropdown after selection
                               setAgentMenuOpen(false);
