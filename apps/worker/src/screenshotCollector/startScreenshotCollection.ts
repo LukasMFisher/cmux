@@ -1,4 +1,6 @@
 import { startBrowserAgent } from "magnitude-core";
+
+import { ACTION_FORMAT_PROMPT } from "../agentActionPrompt";
 import { log } from "../logger";
 import { runCommandCapture } from "../crown/utils";
 import { filterTextFiles, parseFileList, resolveMergeBase } from "./git";
@@ -280,6 +282,7 @@ export async function startScreenshotCollection(
       browser: {
         cdp: cdpWebSocketUrl,
       },
+      prompt: ACTION_FORMAT_PROMPT,
     });
 
     try {

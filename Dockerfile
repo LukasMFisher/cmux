@@ -319,34 +319,124 @@ bun build ./apps/worker/src/index.ts \
   --external @cmux/convex \
   --external convex \
   --external node:*
+bun build ./apps/worker/src/runBrowserAgentFromPrompt.ts \
+  --target node \
+  --outdir ./apps/worker/build/browser-agent \
+  --external magnitude-core \
+  --external @cmux/convex \
+  --external convex \
+  --external node:*
+mv ./apps/worker/build/browser-agent/runBrowserAgentFromPrompt.js ./apps/worker/build/runBrowserAgentFromPrompt.js
+rm -rf ./apps/worker/build/browser-agent
 echo "Built worker"
 mkdir -p ./apps/worker/build/node_modules
 shopt -s nullglob
-copied_sharp=false
-for dir in node_modules/.bun/sharp@*/node_modules/sharp; do
-  if [ -d "$dir" ]; then
-    rm -rf ./apps/worker/build/node_modules/sharp
-    cp -RL "$dir" ./apps/worker/build/node_modules/
-    copied_sharp=true
-    break
+declare -A COPIED_PACKAGES=()
+
+sanitize_package_name() {
+  local package="$1"
+  if [[ "$package" == @*/* ]]; then
+    local scope="${package%%/*}"
+    local name="${package#*/}"
+    printf '%s+%s' "$scope" "$name"
+  else
+    printf '%s' "$package"
   fi
-done
-if [ "$copied_sharp" = false ]; then
-  echo "Warning: sharp binary directory not found during build" >&2
-fi
-mkdir -p ./apps/worker/build/node_modules/@img
-for dir in node_modules/.bun/@img+sharp-*/node_modules/@img/*; do
-  base=$(basename "$dir")
-  rm -rf "./apps/worker/build/node_modules/@img/$base"
-  cp -RL "$dir" "./apps/worker/build/node_modules/@img/$base"
-done
-for dir in node_modules/.bun/patchright-core@*/node_modules/patchright-core; do
-  if [ -d "$dir" ]; then
-    rm -rf ./apps/worker/build/node_modules/patchright-core
-    cp -RL "$dir" ./apps/worker/build/node_modules/
-    break
+}
+
+copy_scope_directory() {
+  local source_dir="$1"
+  local scope_name
+  scope_name="$(basename "$source_dir")"
+  mkdir -p "./apps/worker/build/node_modules/$scope_name"
+  for scoped_entry in "$source_dir"/*; do
+    if [ ! -e "$scoped_entry" ]; then
+      continue
+    fi
+    local scoped_name
+    scoped_name="$(basename "$scoped_entry")"
+    rm -rf "./apps/worker/build/node_modules/$scope_name/$scoped_name"
+    cp -RL "$scoped_entry" "./apps/worker/build/node_modules/$scope_name/$scoped_name"
+  done
+}
+
+copy_bundle_directory() {
+  local bundle_dir="$1"
+  for entry in "$bundle_dir"/*; do
+    if [ ! -d "$entry" ]; then
+      continue
+    fi
+    local entry_name
+    entry_name="$(basename "$entry")"
+    if [[ "$entry_name" == @* ]]; then
+      copy_scope_directory "$entry"
+    else
+      rm -rf "./apps/worker/build/node_modules/$entry_name"
+      cp -RL "$entry" "./apps/worker/build/node_modules/$entry_name"
+    fi
+  done
+}
+
+copy_dependency_tree() {
+  local package="$1"
+  if [[ -n "${COPIED_PACKAGES[$package]:-}" ]]; then
+    return
   fi
-done
+  COPIED_PACKAGES["$package"]=1
+
+  local sanitized
+  sanitized="$(sanitize_package_name "$package")"
+  local found=false
+
+  for bundle_dir in node_modules/.bun/"${sanitized}"@*/node_modules; do
+    if [ ! -d "$bundle_dir" ]; then
+      continue
+    fi
+    found=true
+    copy_bundle_directory "$bundle_dir"
+    local module_path="$bundle_dir/$package"
+    if [ ! -d "$module_path" ] || [ ! -f "$module_path/package.json" ]; then
+      continue
+    fi
+    mapfile -t dependency_specs < <(jq -r '
+      [
+        (.dependencies // {} | to_entries[] | "\(.key)\t\(.value)"),
+        (.optionalDependencies // {} | to_entries[] | "\(.key)\t\(.value)"),
+        (.peerDependencies // {} | to_entries[] | "\(.key)\t\(.value)")
+      ]
+      | flatten
+      | unique
+      | .[]
+    ' "$module_path/package.json" 2>/dev/null || true)
+    for spec in "${dependency_specs[@]}"; do
+      IFS=$'\t' read -r dependency_name dependency_version <<<"$spec"
+      if [[ -z "$dependency_name" ]]; then
+        continue
+      fi
+      if [[ "$dependency_name" == "fsevents" ]]; then
+        continue
+      fi
+      local resolved_name="$dependency_name"
+      if [[ "$dependency_version" == npm:* ]]; then
+        local remainder="${dependency_version#npm:}"
+        if [[ "$remainder" == *@* ]]; then
+          resolved_name="${remainder%@*}"
+        else
+          resolved_name="$remainder"
+        fi
+      elif [[ "$dependency_version" == "workspace:"* || "$dependency_version" == "file:"* ]]; then
+        continue
+      fi
+      copy_dependency_tree "$resolved_name"
+    done
+  done
+
+  if [ "$found" = false ]; then
+    echo "Warning: package $package not found in Bun cache" >&2
+  fi
+}
+
+copy_dependency_tree "magnitude-core"
 cp -r ./apps/worker/build /builtins/build
 cp ./apps/worker/wait-for-docker.sh /usr/local/bin/
 chmod +x /usr/local/bin/wait-for-docker.sh
