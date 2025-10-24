@@ -316,10 +316,13 @@ jobs:
 
   # New: build & publish a macOS Universal app by merging the x64 and arm64 zips
   mac-universal:
-    name: macOS universal (single-runner)
+    name: macOS universal
     needs: prepare-release
     environment: electron
     runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: ./
     steps:
       - uses: actions/checkout@v4
         with:
