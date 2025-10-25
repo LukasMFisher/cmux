@@ -37,8 +37,6 @@ type ScriptResult = {
   devError: string | null;
 };
 
-// Embedded orchestrator script template
-// This will be uploaded to the sandbox with placeholders replaced
 const ORCHESTRATOR_TEMPLATE = `#!/usr/bin/env bun
 /**
  * Orchestrator script for running maintenance and dev scripts in sequence.
@@ -59,6 +57,9 @@ const DEV_SCRIPT_PATH = "{{DEV_SCRIPT_PATH}}";
 const MAINTENANCE_WINDOW_NAME = "{{MAINTENANCE_WINDOW_NAME}}";
 const DEV_WINDOW_NAME = "{{DEV_WINDOW_NAME}}";
 const MAINTENANCE_EXIT_CODE_PATH = "{{MAINTENANCE_EXIT_CODE_PATH}}";
+const MAINTENANCE_ERROR_LOG_PATH = "{{MAINTENANCE_ERROR_LOG_PATH}}";
+const DEV_EXIT_CODE_PATH = "{{DEV_EXIT_CODE_PATH}}";
+const DEV_ERROR_LOG_PATH = "{{DEV_ERROR_LOG_PATH}}";
 const HAS_MAINTENANCE_SCRIPT = "{{HAS_MAINTENANCE_SCRIPT}}" === "true";
 const HAS_DEV_SCRIPT = "{{HAS_DEV_SCRIPT}}" === "true";
 const CONVEX_URL = "{{CONVEX_URL}}";
@@ -121,17 +122,8 @@ async function runMaintenanceScript(): Promise<{ exitCode: number; error: string
   try {
     console.log("[MAINTENANCE] Starting maintenance script...");
 
-    const scriptCommand = \`zsh "\${MAINTENANCE_SCRIPT_PATH}"
-EXIT_CODE=$?
-echo "$EXIT_CODE" > "\${MAINTENANCE_EXIT_CODE_PATH}"
-if [ "$EXIT_CODE" -ne 0 ]; then
-  echo "[MAINTENANCE] Script exited with code $EXIT_CODE" >&2
-else
-  echo "[MAINTENANCE] Script completed successfully"
-fi
-exec zsh\`;
-
-    await $\`tmux send-keys -t cmux:\${MAINTENANCE_WINDOW_NAME} \${scriptCommand} C-m\`;
+    // Run the script, capture exit code, then exec into new shell
+    await $\`tmux send-keys -t cmux:\${MAINTENANCE_WINDOW_NAME} "zsh '\${MAINTENANCE_SCRIPT_PATH}' 2>&1 | tee '\${MAINTENANCE_ERROR_LOG_PATH}'; echo \\\${pipestatus[1]} > '\${MAINTENANCE_EXIT_CODE_PATH}'; exec zsh" C-m\`;
 
     await Bun.sleep(2000);
 
@@ -164,9 +156,26 @@ exec zsh\`;
     console.log(\`[MAINTENANCE] Script completed with exit code \${exitCode}\`);
 
     if (exitCode !== 0) {
+      // Read the error log to get actual error details
+      let errorDetails = "";
+      try {
+        const errorLogFile = Bun.file(MAINTENANCE_ERROR_LOG_PATH);
+        if (await errorLogFile.exists()) {
+          const logContent = await errorLogFile.text();
+          // Get the last 100 lines of output to capture the command and error context
+          const lines = logContent.trim().split("\\n");
+          const relevantLines = lines.slice(-100);
+          errorDetails = relevantLines.join("\\n");
+        }
+      } catch (logError) {
+        console.error("[MAINTENANCE] Failed to read error log:", logError);
+      }
+
+      const errorMessage = errorDetails || \`Maintenance script failed with exit code \${exitCode}\`;
+
       return {
         exitCode,
-        error: \`Maintenance script finished with exit code \${exitCode}\`
+        error: errorMessage
       };
     }
 
@@ -239,19 +248,57 @@ async function startDevScript(): Promise<{ error: string | null }> {
   try {
     console.log("[DEV] Starting dev script...");
 
-    await $\`tmux send-keys -t cmux:\${DEV_WINDOW_NAME} "zsh \\"\${DEV_SCRIPT_PATH}\\"" C-m\`;
+    // Run the script and capture exit code (don't exec zsh after since dev script may be long-running)
+    await $\`tmux send-keys -t cmux:\${DEV_WINDOW_NAME} "zsh '\${DEV_SCRIPT_PATH}' 2>&1 | tee '\${DEV_ERROR_LOG_PATH}'; echo \\\${pipestatus[1]} > '\${DEV_EXIT_CODE_PATH}'" C-m\`;
 
     await Bun.sleep(2000);
 
     const windowCheck = await $\`tmux list-windows -t cmux\`.text();
-    if (windowCheck.includes(DEV_WINDOW_NAME)) {
-      console.log("[DEV] Script started successfully");
-      return { error: null };
-    } else {
+    if (!windowCheck.includes(DEV_WINDOW_NAME)) {
       const error = "Dev window not found after starting script";
       console.error(\`[DEV] ERROR: \${error}\`);
       return { error };
     }
+
+    console.log("[DEV] Checking for early exit...");
+
+    // Wait a bit for the script to potentially error out
+    await Bun.sleep(5000);
+
+    // Check if an exit code was written (indicating the script finished)
+    const exitCodeFile = Bun.file(DEV_EXIT_CODE_PATH);
+    if (await exitCodeFile.exists()) {
+      const exitCodeText = await exitCodeFile.text();
+      const exitCode = parseInt(exitCodeText.trim()) || 0;
+
+      await $\`rm -f \${DEV_EXIT_CODE_PATH}\`;
+
+      if (exitCode !== 0) {
+        console.error(\`[DEV] Script exited early with code \${exitCode}\`);
+
+        // Read the error log to get actual error details
+        let errorDetails = "";
+        try {
+          const errorLogFile = Bun.file(DEV_ERROR_LOG_PATH);
+          if (await errorLogFile.exists()) {
+            const logContent = await errorLogFile.text();
+            // Get the last 100 lines of output to capture the command and error context
+            const lines = logContent.trim().split("\\n");
+            const relevantLines = lines.slice(-100);
+            errorDetails = relevantLines.join("\\n");
+          }
+        } catch (logError) {
+          console.error("[DEV] Failed to read error log:", logError);
+        }
+
+        const errorMessage = errorDetails || \`Dev script failed with exit code \${exitCode}\`;
+
+        return { error: errorMessage };
+      }
+    }
+
+    console.log("[DEV] Script started successfully");
+    return { error: null };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(\`[DEV] Error: \${errorMessage}\`);
@@ -339,6 +386,9 @@ export async function runMaintenanceAndDevScripts({
     .slice(2, 10)}`;
   const orchestratorScriptPath = `${CMUX_RUNTIME_DIR}/orchestrator_${runId}.ts`;
   const maintenanceExitCodePath = `${CMUX_RUNTIME_DIR}/maintenance_${runId}.exit-code`;
+  const maintenanceErrorLogPath = `${CMUX_RUNTIME_DIR}/maintenance_${runId}.log`;
+  const devExitCodePath = `${CMUX_RUNTIME_DIR}/dev_${runId}.exit-code`;
+  const devErrorLogPath = `${CMUX_RUNTIME_DIR}/dev_${runId}.log`;
 
   // Create maintenance script if provided
   const maintenanceScriptContent = maintenanceScript && maintenanceScript.trim().length > 0
@@ -372,6 +422,9 @@ ${devScript}
     .replace(/{{MAINTENANCE_WINDOW_NAME}}/g, ids.maintenance.windowName)
     .replace(/{{DEV_WINDOW_NAME}}/g, ids.dev.windowName)
     .replace(/{{MAINTENANCE_EXIT_CODE_PATH}}/g, maintenanceExitCodePath)
+    .replace(/{{MAINTENANCE_ERROR_LOG_PATH}}/g, maintenanceErrorLogPath)
+    .replace(/{{DEV_EXIT_CODE_PATH}}/g, devExitCodePath)
+    .replace(/{{DEV_ERROR_LOG_PATH}}/g, devErrorLogPath)
     .replace(/{{HAS_MAINTENANCE_SCRIPT}}/g, String(maintenanceScriptContent !== null))
     .replace(/{{HAS_DEV_SCRIPT}}/g, String(devScriptContent !== null))
     .replace(/{{CONVEX_URL}}/g, convexUrl || '')
