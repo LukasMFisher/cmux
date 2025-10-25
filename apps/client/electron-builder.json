@@ -24,7 +24,6 @@
     "!**/node_modules/@electron/**"
   ],
   "asar": true,
-  "afterPack": "./electron-builder.after-pack.cjs",
   "compression": "maximum",
   "npmRebuild": false,
   "nodeGypRebuild": false,
@@ -64,7 +63,7 @@
       "dmg",
       "zip"
     ],
-    "x64ArchFiles": "Resources/native/**/*.node",
+    "x64ArchFiles": "Contents/Resources/native/**/*.node",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }
