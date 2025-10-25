@@ -24,6 +24,7 @@
     "!**/node_modules/@electron/**"
   ],
   "asar": true,
+  "afterPack": "./electron-builder.after-pack.cjs",
   "compression": "maximum",
   "npmRebuild": false,
   "nodeGypRebuild": false,
