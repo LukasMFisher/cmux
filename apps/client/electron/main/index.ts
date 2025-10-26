@@ -1,7 +1,6 @@
 import path, { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { request as httpRequest } from "node:http";
 import { is } from "@electron-toolkit/utils";
 import {
   app,
@@ -22,11 +21,6 @@ import {
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
 import { registerGlobalContextMenu } from "./context-menu";
-import {
-  LOCAL_VSCODE_HOST_WITH_PORT,
-  VSCODE_SERVE_WEB_PORT,
-  VSCODE_FRAME_ANCESTORS_HEADER,
-} from "@cmux/server/vscode/serveWeb";
 import electronUpdater, {
   type UpdateCheckResult,
   type UpdateInfo,
@@ -517,19 +511,15 @@ function setupAutoUpdates(): void {
     )
   );
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
-    const updateInfo: UpdateInfo | null =
-      info ??
-      ((autoUpdater as unknown as { updateInfo?: UpdateInfo | null })
-        .updateInfo ?? null);
     const version =
-      updateInfo &&
-      typeof updateInfo === "object" &&
-      "version" in updateInfo &&
-      typeof updateInfo.version === "string"
-        ? updateInfo.version
+      info &&
+      typeof info === "object" &&
+      "version" in info &&
+      typeof info.version === "string"
+        ? info.version
         : null;
 
-    if (!isUpdateNewerThanCurrent(updateInfo)) {
+    if (!isUpdateNewerThanCurrent(info)) {
       mainLog(
         "Ignoring downloaded update that is not newer than current build",
         {
@@ -844,17 +834,6 @@ app.whenReady().then(async () => {
     const electronReq = request as unknown as Electron.ProtocolRequest;
     const url = new URL(electronReq.url);
 
-    if (url.host === LOCAL_VSCODE_HOST_WITH_PORT) {
-      try {
-        return await proxyVSCodeHttp(electronReq, ses);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error ?? "Unknown error");
-        mainWarn("VS Code HTTP proxy failed", error);
-        return new Response(message, { status: 502 });
-      }
-    }
-
     if (url.hostname !== APP_HOST) {
       return net.fetch(request);
     }
@@ -879,156 +858,6 @@ app.whenReady().then(async () => {
 
   ses.protocol.handle("https", handleCmuxProtocol);
   ses.protocol.handle("http", handleCmuxProtocol);
-
-  async function proxyVSCodeHttp(
-    req: Electron.ProtocolRequest,
-    currentSession: Electron.Session
-  ): Promise<Response> {
-    const targetUrl = new URL(req.url);
-    const targetPath = `${targetUrl.pathname}${targetUrl.search}` || "/";
-
-    const headers: Record<string, string> = {};
-    for (const [key, value] of Object.entries(req.headers ?? {})) {
-      if (typeof value === "undefined") continue;
-      headers[key] = Array.isArray(value) ? value.join(", ") : value;
-    }
-    headers.host = LOCAL_VSCODE_HOST_WITH_PORT;
-    if (req.referrer && !hasHeader(headers, "referer")) {
-      headers.referer = req.referrer;
-    }
-
-    const body = await readProtocolRequestBody(req, currentSession);
-    if (body && !hasHeader(headers, "content-length")) {
-      headers["content-length"] = String(body.length);
-    }
-
-    if (!hasHeader(headers, "connection")) {
-      headers.connection = "keep-alive";
-    }
-
-    return await new Promise<Response>((resolve, reject) => {
-      const upstream = httpRequest(
-        {
-          host: "127.0.0.1",
-          port: VSCODE_SERVE_WEB_PORT,
-          method: req.method ?? "GET",
-          path: targetPath || "/",
-          headers,
-        },
-        (proxyRes) => {
-          const responseHeaders = new Headers();
-          for (const [headerKey, headerValue] of Object.entries(
-            proxyRes.headers
-          )) {
-            if (typeof headerValue === "undefined") continue;
-            if (Array.isArray(headerValue)) {
-              for (const entry of headerValue) {
-                responseHeaders.append(headerKey, entry);
-              }
-            } else {
-              responseHeaders.append(headerKey, headerValue);
-            }
-          }
-
-          responseHeaders.set(
-            "content-security-policy",
-            VSCODE_FRAME_ANCESTORS_HEADER
-          );
-          responseHeaders.set("access-control-allow-origin", "*");
-          responseHeaders.set("access-control-allow-credentials", "true");
-
-          if (req.method?.toUpperCase() === "HEAD") {
-            upstream.destroy();
-            resolve(
-              new Response(null, {
-                status: proxyRes.statusCode ?? 200,
-                statusText: proxyRes.statusMessage,
-                headers: responseHeaders,
-              })
-            );
-            return;
-          }
-
-          const stream = new ReadableStream<Uint8Array>({
-            start(controller) {
-              proxyRes.on("data", (chunk: Buffer) => {
-                controller.enqueue(new Uint8Array(chunk));
-              });
-              proxyRes.on("end", () => controller.close());
-              proxyRes.on("error", (error) => controller.error(error));
-            },
-            cancel(reason) {
-              proxyRes.destroy(
-                reason instanceof Error
-                  ? reason
-                  : new Error(String(reason ?? "Stream cancelled"))
-              );
-            },
-          });
-
-          resolve(
-            new Response(stream, {
-              status: proxyRes.statusCode ?? 200,
-              statusText: proxyRes.statusMessage,
-              headers: responseHeaders,
-            })
-          );
-        }
-      );
-
-      upstream.on("error", reject);
-
-      if (body) {
-        upstream.write(body);
-      }
-
-      upstream.end();
-    });
-  }
-
-  async function readProtocolRequestBody(
-    req: Electron.ProtocolRequest,
-    currentSession: Electron.Session
-  ): Promise<Buffer | null> {
-    const uploads = req.uploadData ?? [];
-    if (!uploads.length) {
-      return null;
-    }
-
-    const parts: Buffer[] = [];
-    for (const item of uploads) {
-      if (item.bytes) {
-        parts.push(Buffer.from(item.bytes));
-      } else if (item.file) {
-        try {
-          parts.push(await fs.readFile(item.file));
-        } catch (error) {
-          mainWarn("Failed to read upload file", { file: item.file, error });
-        }
-      } else if (item.blobUUID) {
-        try {
-          const blob = await currentSession.getBlobData(item.blobUUID);
-          parts.push(Buffer.from(blob));
-        } catch (error) {
-          mainWarn("Failed to read upload blob", {
-            blobUUID: item.blobUUID,
-            error,
-          });
-        }
-      }
-    }
-
-    if (!parts.length) {
-      return null;
-    }
-
-    return parts.length === 1 ? parts[0] : Buffer.concat(parts);
-  }
-
-  function hasHeader(headers: Record<string, string>, name: string): boolean {
-    const lower = name.toLowerCase();
-    return Object.keys(headers).some((key) => key.toLowerCase() === lower);
-  }
 
   // Create the initial window.
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
