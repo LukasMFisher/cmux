@@ -1038,7 +1038,7 @@ export function EnvironmentConfiguration({
 
   return (
     <ResizableColumns
-      storageKey="envConfigWidth"
+      storageKey={null}
       defaultLeftWidth={360}
       minLeft={220}
       maxLeft={700}
