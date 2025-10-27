@@ -142,9 +142,18 @@ async function runMaintenanceScript(): Promise<{ exitCode: number; error: string
 
     const exitCodeFile = Bun.file(MAINTENANCE_EXIT_CODE_PATH);
     const exitCodeText = await exitCodeFile.text();
-    const exitCode = parseInt(exitCodeText.trim()) || 0;
+    const exitCodeRaw = exitCodeText.trim();
+    const exitCode = Number.parseInt(exitCodeRaw, 10);
 
     await $\`rm -f \${MAINTENANCE_EXIT_CODE_PATH}\`;
+
+    if (Number.isNaN(exitCode)) {
+      console.error(\`[MAINTENANCE] Invalid exit code value: \${exitCodeRaw}\`);
+      return {
+        exitCode: 1,
+        error: "Maintenance script exit code missing or invalid",
+      };
+    }
 
     console.log(\`[MAINTENANCE] Script completed with exit code \${exitCode}\`);
 
@@ -259,9 +268,15 @@ async function startDevScript(): Promise<{ error: string | null }> {
     const exitCodeFile = Bun.file(DEV_EXIT_CODE_PATH);
     if (await exitCodeFile.exists()) {
       const exitCodeText = await exitCodeFile.text();
-      const exitCode = parseInt(exitCodeText.trim()) || 0;
+      const exitCodeRaw = exitCodeText.trim();
+      const exitCode = Number.parseInt(exitCodeRaw, 10);
 
       await $\`rm -f \${DEV_EXIT_CODE_PATH}\`;
+
+      if (Number.isNaN(exitCode)) {
+        console.error(\`[DEV] Invalid exit code value: \${exitCodeRaw}\`);
+        return { error: "Dev script exit code missing or invalid" };
+      }
 
       if (exitCode !== 0) {
         console.error(\`[DEV] Script exited early with code \${exitCode}\`);
@@ -320,15 +335,15 @@ async function startDevScript(): Promise<{ error: string | null }> {
       console.log("[ORCHESTRATOR] Dev script started successfully");
     }
 
-    // Report any errors to Convex
+    const hasError = Boolean(maintenanceResult.error || devResult.error);
     console.log(\`[ORCHESTRATOR] Checking if should report errors - maintenance: \${!!maintenanceResult.error}, dev: \${!!devResult.error}\`);
-    if (maintenanceResult.error || devResult.error) {
+    if (hasError) {
       await reportErrorToConvex(maintenanceResult.error, devResult.error);
     } else {
       console.log("[ORCHESTRATOR] No errors to report");
     }
 
-    if (devResult.error) {
+    if (hasError) {
       process.exit(1);
     }
 
@@ -364,7 +379,8 @@ export async function runMaintenanceAndDevScripts({
   const hasDevScript = Boolean(devScript && devScript.trim().length > 0);
 
   if (!hasMaintenanceScript && !hasDevScript) {
-    throw new Error("Both maintenance and dev scripts are empty");
+    console.log("[runMaintenanceAndDevScripts] No maintenance or dev scripts provided; skipping start");
+    return;
   }
 
   // Generate unique run IDs for this execution
