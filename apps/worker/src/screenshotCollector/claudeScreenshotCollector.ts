@@ -88,7 +88,7 @@ Please:
 Focus on capturing visual changes. If no UI changes are present, just let me know.
 Do not close the browser after you're done, since I will want to click around the final page you navigated to.
 Do not create summary documents.
-If you can't install dependencies/start the dev server, just let me know. Do not create fake html mocks.
+If you can't install dependencies/start the dev server, just let me know. Do not create fake html mocks. We must take screenshots of the actual ground truth UI.
 </IMPORTANT>`;
 
   await logToScreenshotCollector(
