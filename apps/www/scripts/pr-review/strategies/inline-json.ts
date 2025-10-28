@@ -145,7 +145,7 @@ async function process(
       lineContent: entry.content,
       shouldBeReviewedScore: entry.score,
       highlightPhrase: entry.phrase,
-      mostImportantCharacterIndex: null,
+      mostImportantWord: null,
       comment: entry.comment,
     }));
 

@@ -57,6 +57,29 @@ function extractFirstAddedLine(diffText: string): string | null {
   return null;
 }
 
+function extractFirstWord(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const tokens = normalized.split(/\s+/);
+  for (const token of tokens) {
+    const sanitized = token
+      .replace(/^[^A-Za-z0-9_$]+/, "")
+      .replace(/[^A-Za-z0-9_$]+$/, "");
+    if (sanitized.length > 0) {
+      return sanitized;
+    }
+  }
+
+  return null;
+}
+
 function extractFirstChangedDiffLine(diffText: string): string | null {
   const lines = diffText.split("\n");
   for (const line of lines) {
@@ -224,7 +247,7 @@ async function runStrategyDemo(): Promise<void> {
                     line: sample.trim(),
                     shouldBeReviewedScore: 0.8,
                     shouldReviewWhy: "example comment",
-                    mostImportantCharacterIndex: 5,
+                    mostImportantWord: extractFirstWord(sample) ?? "example",
                   },
                 ]
               : [],
@@ -242,7 +265,7 @@ async function runStrategyDemo(): Promise<void> {
                     line: sample,
                     shouldBeReviewedScore: sample.startsWith("-") ? 0.4 : 0.1,
                     shouldReviewWhy: null,
-                    mostImportantCharacterIndex: 0,
+                    mostImportantWord: extractFirstWord(sample) ?? "line",
                   },
                 ]
               : [],
@@ -261,7 +284,8 @@ async function runStrategyDemo(): Promise<void> {
                     line: sample.content,
                     shouldBeReviewedScore: 0.9,
                     shouldReviewWhy: "line needs attention",
-                    mostImportantCharacterIndex: 0,
+                    mostImportantWord:
+                      extractFirstWord(sample.content) ?? "line",
                   },
                 ]
               : [],

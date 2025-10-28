@@ -106,7 +106,8 @@ export async function runHeatmapReview(
         const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
         const streamStart = Date.now();
         const stream = streamObject({
-          model: openai("gpt-5-nano"),
+          // model: openai("gpt-5-nano"),
+          model: openai("gpt-5"),
           schema: heatmapSchema,
           prompt,
           temperature: 0,

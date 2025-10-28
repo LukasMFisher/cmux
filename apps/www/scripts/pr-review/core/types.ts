@@ -56,7 +56,7 @@ export interface StrategyAnnotation {
   lineNumber?: number | null;
   lineContent?: string | null;
   shouldBeReviewedScore: number;
-  mostImportantCharacterIndex?: number | null;
+  mostImportantWord?: string | null;
   highlightPhrase?: string | null;
   comment?: string | null;
 }

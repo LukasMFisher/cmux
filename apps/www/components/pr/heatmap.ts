@@ -10,7 +10,7 @@ export type ReviewHeatmapLine = {
   lineText: string | null;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 export type DiffHeatmap = {
@@ -31,7 +31,7 @@ export type ResolvedHeatmapLine = {
   lineNumber: number;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 type DiffLineSide = "new" | "old";
@@ -83,8 +83,8 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
     }
 
     const reason = parseNullableString(record.shouldReviewWhy);
-    const mostImportantCharacterIndex = parseNullableInteger(
-      record.mostImportantCharacterIndex
+    const mostImportantWord = parseNullableString(
+      record.mostImportantWord
     );
 
     parsed.push({
@@ -92,7 +92,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
       lineText,
       score: normalizedScore,
       reason,
-      mostImportantCharacterIndex,
+      mostImportantWord,
     });
   }
 
@@ -151,7 +151,7 @@ export function buildDiffHeatmap(
 
     if (
       entry.side === "old" ||
-      entry.mostImportantCharacterIndex === null
+      !entry.mostImportantWord
     ) {
       continue;
     }
@@ -161,10 +161,20 @@ export function buildDiffHeatmap(
       continue;
     }
 
+    const highlight = deriveHighlightRange(content, entry.mostImportantWord);
+    if (!highlight) {
+      continue;
+    }
+
     const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
+      highlight.start,
       0,
       Math.max(content.length - 1, 0)
+    );
+    const highlightLength = clamp(
+      Math.floor(highlight.length),
+      1,
+      Math.max(content.length - highlightIndex, 1)
     );
 
     const charTier = tier > 0 ? tier : 1;
@@ -172,7 +182,7 @@ export function buildDiffHeatmap(
       type: "span",
       lineNumber: entry.lineNumber,
       start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
+      length: highlightLength,
       className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
     };
     characterRanges.push(range);
@@ -219,8 +229,8 @@ function aggregateEntries(
       side: entry.side,
       score: shouldReplaceScore ? entry.score : current.score,
       reason: entry.reason ?? current.reason,
-      mostImportantCharacterIndex:
-        entry.mostImportantCharacterIndex ?? current.mostImportantCharacterIndex,
+      mostImportantWord:
+        entry.mostImportantWord ?? current.mostImportantWord,
     });
   }
 
@@ -258,7 +268,7 @@ function resolveLineNumbers(
         lineNumber: directMatch.lineNumber,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
@@ -279,7 +289,7 @@ function resolveLineNumbers(
         lineNumber: newCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
@@ -295,7 +305,7 @@ function resolveLineNumbers(
         lineNumber: oldCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
     }
   }
@@ -429,6 +439,117 @@ function collectLineContent(diff: FileData): CollectedLineContent {
   };
 }
 
+function deriveHighlightRange(
+  rawContent: string,
+  mostImportantWord: string | null
+): { start: number; length: number } | null {
+  if (!rawContent || !mostImportantWord) {
+    return null;
+  }
+
+  const trimmedWord = mostImportantWord.trim();
+  if (!trimmedWord) {
+    return null;
+  }
+
+  const { content, offset } = stripDiffMarker(rawContent);
+  if (!content) {
+    return null;
+  }
+
+  const candidates = buildHighlightCandidates(trimmedWord);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const lowerContent = content.toLowerCase();
+
+  for (const candidate of candidates) {
+    const directIndex = content.indexOf(candidate);
+    if (directIndex >= 0) {
+      return {
+        start: directIndex + offset,
+        length: Math.max(candidate.length, 1),
+      };
+    }
+
+    const lowerCandidate = candidate.toLowerCase();
+    const lowerIndex = lowerContent.indexOf(lowerCandidate);
+    if (lowerIndex >= 0) {
+      return {
+        start: lowerIndex + offset,
+        length: Math.max(candidate.length, 1),
+      };
+    }
+  }
+
+  const fallbackIndex = content.search(/\S/);
+  if (fallbackIndex >= 0) {
+    return {
+      start: fallbackIndex + offset,
+      length: 1,
+    };
+  }
+
+  return null;
+}
+
+function stripDiffMarker(value: string): { content: string; offset: number } {
+  if (!value) {
+    return { content: "", offset: 0 };
+  }
+
+  const firstChar = value[0] ?? "";
+  if (firstChar === "+" || firstChar === "-" || firstChar === " ") {
+    return { content: value.slice(1), offset: 1 };
+  }
+
+  return { content: value, offset: 0 };
+}
+
+function buildHighlightCandidates(word: string): string[] {
+  const candidates = new Set<string>();
+
+  const addCandidate = (value: string | null | undefined): void => {
+    if (!value) {
+      return;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    candidates.add(trimmed);
+  };
+
+  const base = stripSurroundingQuotes(word.trim());
+  addCandidate(word);
+  addCandidate(base);
+  addCandidate(sanitizeHighlightToken(base));
+
+  const tokens = base.split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    addCandidate(token);
+    addCandidate(sanitizeHighlightToken(token));
+
+    if (token.includes(".")) {
+      for (const segment of token.split(".").filter(Boolean)) {
+        addCandidate(segment);
+        addCandidate(sanitizeHighlightToken(segment));
+      }
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function stripSurroundingQuotes(value: string): string {
+  return value.replace(/^["'`]+|["'`]+$/g, "");
+}
+
+function sanitizeHighlightToken(value: string): string {
+  return value.replace(/^[^A-Za-z0-9_$]+/, "").replace(/[^A-Za-z0-9_$]+$/, "");
+}
+
 function computeHeatmapTier(score: number | null): number {
   if (score === null) {
     return 0;
@@ -471,23 +592,6 @@ function parseNullableNumber(value: unknown): number | null {
       return null;
     }
     const parsed = Number.parseFloat(match[0] ?? "");
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function parseNullableInteger(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.floor(value);
-  }
-
-  if (typeof value === "string") {
-    const match = value.match(/-?\d+/);
-    if (!match) {
-      return null;
-    }
-    const parsed = Number.parseInt(match[0] ?? "", 10);
     return Number.isFinite(parsed) ? parsed : null;
   }
 

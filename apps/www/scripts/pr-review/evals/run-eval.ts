@@ -209,7 +209,7 @@ async function main(): Promise<void> {
           lineNumber: 1,
           shouldBeReviewedScore: 0.7,
           shouldReviewWhy: "Mock review comment",
-          mostImportantCharacterIndex: 0,
+          mostImportantWord: "mock",
         },
       ],
     });

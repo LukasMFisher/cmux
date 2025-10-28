@@ -11,7 +11,7 @@ interface ModelLineEntry {
   line?: string | null;
   shouldBeReviewedScore?: unknown;
   shouldReviewWhy?: unknown;
-  mostImportantCharacterIndex?: unknown;
+  mostImportantWord?: unknown;
 }
 
 interface ModelResponseShape {
@@ -97,12 +97,12 @@ function buildPrompt(context: StrategyPrepareContext): string {
 
   return `You are a meticulous senior engineer performing a comprehensive pull request review.
 File path: ${context.filePath}
-Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
+Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number, shouldReviewWhy: string | null, mostImportantWord: string }[] }.
 You MUST include one entry for every changed diff line (additions and deletions) in order.
 - The "line" property must contain the exact diff line including the leading "+" or "-" prefix (do not trim, do not summarize, do not add line numbers).
 - If a line looks safe, still include it with shouldBeReviewedScore 0.0 and shouldReviewWhy null.
 - shouldBeReviewedScore is required for every line (range 0.0-1.0). Use higher scores for lines that warrant attention.
-- mostImportantCharacterIndex must always be provided and reference the most critical character (0-based within the line content, ignoring the leading diff prefix).
+- mostImportantWord must always be provided and reference the most critical word or identifier within the line content (ignore the leading diff prefix).
 - shouldReviewWhy should be a concise (4-10 words) hint for reviewers; use null when there is nothing noteworthy.
 Do not skip any changed lines. Do not add extra properties. Respond with valid JSON only.
 
@@ -121,13 +121,13 @@ const outputSchema = {
           line: { type: "string" },
           shouldBeReviewedScore: { type: "number" },
           shouldReviewWhy: { type: ["string", "null"] as const },
-          mostImportantCharacterIndex: { type: "number" },
+          mostImportantWord: { type: "string" },
         },
         required: [
           "line",
           "shouldBeReviewedScore",
           "shouldReviewWhy",
-          "mostImportantCharacterIndex",
+          "mostImportantWord",
         ],
         additionalProperties: false,
       },
@@ -179,6 +179,29 @@ function coerceOptionalString(value: unknown): string | null {
   return null;
 }
 
+function deriveFallbackWord(content: string | null): string | null {
+  if (!content) {
+    return null;
+  }
+
+  const normalized = content.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const tokens = normalized.split(/\s+/);
+  for (const token of tokens) {
+    const sanitized = token
+      .replace(/^[^A-Za-z0-9_$]+/, "")
+      .replace(/[^A-Za-z0-9_$]+$/, "");
+    if (sanitized.length > 0) {
+      return sanitized;
+    }
+  }
+
+  return null;
+}
+
 function buildAnnotationForLine(
   diffLine: ChangedDiffLine,
   entry: ModelLineEntry | null
@@ -189,15 +212,9 @@ function buildAnnotationForLine(
       : diffLine.rawDiffLine;
 
   const score = coerceNumber(entry?.shouldBeReviewedScore, 0);
-  const baseIndex = Math.max(
-    0,
-    Math.floor(coerceNumber(entry?.mostImportantCharacterIndex, 0))
-  );
-  const diffPrefixOffset =
-    resolvedLineContent.startsWith("+") || resolvedLineContent.startsWith("-")
-      ? 1
-      : 0;
-  const index = baseIndex + diffPrefixOffset;
+  const importantWord =
+    coerceOptionalString(entry?.mostImportantWord) ??
+    deriveFallbackWord(diffLine.content);
   const comment = coerceOptionalString(entry?.shouldReviewWhy);
 
   const lineNumber =
@@ -209,9 +226,9 @@ function buildAnnotationForLine(
     lineNumber,
     lineContent: resolvedLineContent,
     shouldBeReviewedScore: score,
-    mostImportantCharacterIndex: index,
+    mostImportantWord: importantWord ?? undefined,
     comment: comment ?? undefined,
-    highlightPhrase: null,
+    highlightPhrase: importantWord ?? null,
   };
 }
 

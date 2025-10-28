@@ -4,7 +4,7 @@ const heatmapLineSchema = z.object({
   line: z.string(),
   shouldBeReviewedScore: z.number().min(0).max(1).optional(),
   shouldReviewWhy: z.string().optional(),
-  mostImportantCharacterIndex: z.number(),
+  mostImportantWord: z.string().min(1),
 });
 
 export const heatmapSchema = z.object({
@@ -25,7 +25,7 @@ Return structured data matching the provided schema. Rules:
 - Include one entry per diff row that matters. Always cover every line that begins with "+" or "-".
 - When shouldBeReviewedScore is set, provide a short shouldReviewWhy hint (6-12 words). Leave both absent when the line is fine.
 - shouldBeReviewedScore is a number from 0.00 to 1.00 that indicates how careful the reviewer should be when reviewing this line of code.
-- mostImportantCharacterIndex must always be set. Count characters from the first code character (ignore any leading diff marker).
+- mostImportantWord must always be set. Provide the most critical word or identifier from the line (ignore any leading diff marker).
 - Keep explanations concise; do not invent code that is not in the diff.
 - Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
 - In most cases, the shouldReviewWhy should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
@@ -72,7 +72,10 @@ function isHeatmapLineCandidate(value: unknown): value is Record<string, unknown
     return false;
   }
 
-  if (typeof value.mostImportantCharacterIndex !== "number") {
+  if (
+    typeof value.mostImportantWord !== "string" ||
+    value.mostImportantWord.trim().length === 0
+  ) {
     return false;
   }
 
