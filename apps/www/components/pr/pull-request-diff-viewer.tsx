@@ -1229,7 +1229,7 @@ function ErrorNavigator({
 
   return (
     <TooltipProvider delayDuration={120} skipDelayDuration={120}>
-      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
+      <div className="flex items-center gap-3 border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
         <span aria-live="polite" className="flex items-center gap-1">
           {hasSelection && displayIndex !== null ? (
             <>
@@ -1251,7 +1251,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onPrevious()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to previous highlight (Shift+K)"
                 disabled={totalCount === 0}
               >
@@ -1274,7 +1274,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onNext()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to next highlight (Shift+J)"
                 disabled={totalCount === 0}
               >
@@ -1638,7 +1638,7 @@ function FileDiffCard({
   }, [review]);
 
   // const showReview = Boolean(reviewContent);
-  const showReview = true;
+  const showReview = false;
 
   return (
     <TooltipProvider
@@ -1911,30 +1911,30 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
     case 4:
       return {
         contentClass:
-          "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-orange-100 border-orange-300 text-neutral-900 shadow-lg shadow-orange-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 3:
       return {
         contentClass:
-          "bg-rose-800/95 border-rose-400/40 text-rose-50 shadow-lg shadow-rose-950/30",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-amber-100 border-amber-300 text-neutral-900 shadow-lg shadow-amber-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 2:
       return {
         contentClass:
-          "bg-amber-800/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/30",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-100 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/60",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 1:
       return {
         contentClass:
-          "bg-amber-900/95 border-amber-500/40 text-amber-50 shadow-lg shadow-amber-950/40",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-50 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/50",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-700",
       };
     default:
       return {

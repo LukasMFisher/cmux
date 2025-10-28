@@ -462,14 +462,6 @@ function toSearchableText(value: string | null | undefined): string | null {
   return normalized ? normalized.toLowerCase() : null;
 }
 
-function isLikelyCodeFragment(value: string | null | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  return /[A-Za-z_]/.test(value);
-}
-
 function collectLineContent(diff: FileData): CollectedLineContent {
   const newLines = new Map<number, string>();
   const oldLines = new Map<number, string>();
