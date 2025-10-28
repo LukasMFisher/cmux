@@ -184,14 +184,11 @@ function formatResultAsMarkdown(
   sections.push("```diff");
 
   for (const line of result.lines) {
-    // Reconstruct the diff line with the proper marker
-    const marker =
-      line.changeType === "addition"
-        ? "+"
-        : line.changeType === "deletion"
-          ? "-"
-          : " ";
-    let diffLine = `${marker}${line.line}`;
+    // Use the original diff text when available; ensure we still output a valid diff line.
+    const rawLine = line.line;
+    const hasDiffMarker =
+      rawLine.startsWith("+") || rawLine.startsWith("-") || rawLine.startsWith(" ");
+    let diffLine = hasDiffMarker ? rawLine : ` ${rawLine}`;
 
     // Add inline comment if should review
     if (

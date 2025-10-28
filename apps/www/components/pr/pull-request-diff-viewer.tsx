@@ -20,6 +20,8 @@ import {
   FileText,
   Folder,
   Sparkles,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   Decoration,
@@ -358,6 +360,41 @@ function getFileStatusMeta(
         label: "File change",
       };
   }
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+      aria-label={copied ? "Copied to clipboard" : "Copy to clipboard"}
+    >
+      {copied ? (
+        <>
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          <span>Copied!</span>
+        </>
+      ) : (
+        <>
+          <Copy className="h-3.5 w-3.5" aria-hidden />
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
 }
 
 export function PullRequestDiffViewer({
@@ -1576,11 +1613,12 @@ function FileDiffCard({
       return null;
     }
 
-    return extractAutomatedReviewText(review.codexReviewOutput);
+    return JSON.stringify(review.codexReviewOutput, null, 2);
+    // return extractAutomatedReviewText(review.codexReviewOutput);
   }, [review]);
 
   // const showReview = Boolean(reviewContent);
-  const showReview = false;
+  const showReview = true;
 
   return (
     <TooltipProvider
@@ -1642,13 +1680,16 @@ function FileDiffCard({
             </div>
           </button>
 
-          {showReview ? (
-            <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                <Sparkles className="h-4 w-4" aria-hidden />
-                Automated review
+          {showReview && reviewContent ? (
+            <div className="border-b border-neutral-200 bg-sky-50 px-4 py-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                  Automated review
+                </div>
+                <CopyButton text={reviewContent} />
               </div>
-              <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+              <pre className="mt-2 max-h-[9.5rem] overflow-auto whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
                 {reviewContent}
               </pre>
             </div>
@@ -1895,7 +1936,7 @@ function extractHeatmapTier(className: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function extractAutomatedReviewText(value: unknown): string | null {
+function _extractAutomatedReviewText(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
   }
@@ -1910,7 +1951,7 @@ function extractAutomatedReviewText(value: unknown): string | null {
       "response" in value &&
       typeof (value as { response?: unknown }).response === "string"
     ) {
-      return extractAutomatedReviewText(
+      return _extractAutomatedReviewText(
         (value as { response: string }).response
       );
     }
@@ -1946,7 +1987,8 @@ function formatLineReviews(entries: unknown[]): string | null {
     }
 
     const record = entry as Record<string, unknown>;
-    const line = typeof record.line === "string" ? record.line.trim() : null;
+    const rawLine = typeof record.line === "string" ? record.line : null;
+    const line = rawLine?.trim() ?? null;
     if (!line) {
       continue;
     }
@@ -1961,7 +2003,14 @@ function formatLineReviews(entries: unknown[]): string | null {
         ? record.shouldBeReviewedScore
         : null;
 
-    const changeFlag = record.hasChanged === false ? null : "Changed";
+    let changeFlag: string | null = null;
+    if (typeof rawLine === "string") {
+      if (rawLine.startsWith("+")) {
+        changeFlag = "Added";
+      } else if (rawLine.startsWith("-")) {
+        changeFlag = "Removed";
+      }
+    }
 
     const parts: string[] = [`Line ${line}`];
     if (changeFlag) {

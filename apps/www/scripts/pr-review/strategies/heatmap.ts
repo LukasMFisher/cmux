@@ -15,13 +15,11 @@ function buildPrompt(context: StrategyPrepareContext): string {
 
   return `You are preparing a review heatmap for the file "${context.filePath}".
 Return structured data matching the provided schema. Rules:
-- Strip the leading "+", "-", or " " marker from each diff line and put the rest in the "line" field.
-- Set changeType to "addition" for "+" lines, "deletion" for "-" lines, and "context" for " " lines.
+- Keep the original diff text in the "line" field; it may begin with "+", "-", or " ".
 - Include one entry per diff row that matters. Always cover every line that begins with "+" or "-".
-- Use hasChanged=true for "+" or "-" rows and false for context rows that you still want to mention.
 - When shouldBeReviewedScore is set, provide a short shouldReviewWhy hint (6-12 words). Leave both absent when the line is fine.
 - shouldBeReviewedScore is a number from 0.00 to 1.00 that indicates how careful the reviewer should be when reviewing this line of code.
-- mostImportantCharacterIndex must always be set. Count characters from the start of the line content (after stripping the marker).
+- mostImportantCharacterIndex must always be set. Count characters from the first code character (ignore any leading diff marker).
 - Keep explanations concise; do not invent code that is not in the diff.
 - Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
 - In most cases, the shouldReviewWhy should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
@@ -43,21 +41,11 @@ const outputSchema = {
         type: "object",
         properties: {
           line: { type: "string" },
-          changeType: {
-            type: "string",
-            enum: ["addition", "deletion", "context"],
-          },
-          hasChanged: { type: "boolean" },
           shouldBeReviewedScore: { type: "number" },
-          shouldReviewWhy: { type: ["string", "null"] as const },
+          shouldReviewWhy: { type: "string" },
           mostImportantCharacterIndex: { type: "number" },
         },
-        required: [
-          "line",
-          "changeType",
-          "hasChanged",
-          "mostImportantCharacterIndex",
-        ],
+        required: ["line", "mostImportantCharacterIndex"],
         additionalProperties: false,
       },
     },
@@ -82,10 +70,8 @@ async function process(
   let parsedResponse: {
     lines: Array<{
       line: string;
-      changeType: "addition" | "deletion" | "context";
-      hasChanged: boolean;
       shouldBeReviewedScore?: number;
-      shouldReviewWhy?: string | null;
+      shouldReviewWhy?: string;
       mostImportantCharacterIndex: number;
     }>;
   };
