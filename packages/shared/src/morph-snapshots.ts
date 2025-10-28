@@ -18,7 +18,7 @@ export const MORPH_SNAPSHOT_PRESETS = [
       "Great default for day-to-day work. Balanced CPU, memory, and storage.",
   },
   {
-    id: "snapshot_38ptvidq",
+    id: "snapshot_wxrixtw7",
     label: "Performance workspace",
     cpu: "8 vCPU",
     memory: "32 GB RAM",

@@ -115,7 +115,7 @@ Screenshot output directory: ${outputDir}
 
 Please:
 0. Read CLAUDE.md or AGENTS.md (they may be one level deeper) and install dependencies if needed
-1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed)
+1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed. check tmux panes comprehensively to see if the server is running.)
 2. Wait for the server to be ready
 3. Navigate to the pages/components that were modified in the PR
 4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed

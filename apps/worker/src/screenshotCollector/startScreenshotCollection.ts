@@ -2,13 +2,14 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
 import { log } from "../logger";
-import { runCommandCapture } from "../crown/utils";
+import { runCommandCapture, WORKSPACE_ROOT } from "../crown/utils";
 import { filterTextFiles, parseFileList, resolveMergeBase } from "./git";
 import {
   SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   SCREENSHOT_COLLECTOR_LOG_PATH,
   logToScreenshotCollector,
 } from "./logger";
+import { detectGitRepoPath, listGitRepoPaths } from "../crown/git";
 import { readPrDescription } from "./context";
 import {
   SCREENSHOT_STORAGE_ROOT,
@@ -135,17 +136,122 @@ export async function startScreenshotCollection(
     openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   });
 
-  const workspaceDir = "/root/workspace";
+  const workspaceRoot = WORKSPACE_ROOT;
+  const repoCandidates: string[] = [];
+  const repoCandidateSet = new Set<string>();
+  const addCandidate = (candidate?: string | null) => {
+    if (!candidate) {
+      return;
+    }
+    const normalized = path.resolve(candidate);
+    if (!repoCandidateSet.has(normalized)) {
+      repoCandidateSet.add(normalized);
+      repoCandidates.push(normalized);
+    }
+  };
+
+  try {
+    addCandidate(await detectGitRepoPath());
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "unknown");
+    log("WARN", "Failed to detect primary git repository for screenshots", {
+      error: message,
+    });
+  }
+
+  try {
+    const discoveredRepos = await listGitRepoPaths();
+    discoveredRepos.forEach(addCandidate);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? "unknown");
+    log("WARN", "Failed to enumerate git repositories for screenshots", {
+      error: message,
+    });
+  }
+
+  addCandidate(workspaceRoot);
+
+  if (repoCandidates.length === 0) {
+    const reason = `No git repositories detected within ${workspaceRoot}`;
+    await logToScreenshotCollector(reason);
+    log("ERROR", reason, { workspaceRoot });
+    return { status: "failed", error: reason };
+  }
+
+  await logToScreenshotCollector(
+    `Evaluating ${repoCandidates.length} git repo(s) for screenshots`
+  );
+
+  const repoSelectionErrors: { path: string; error: string }[] = [];
+  let workspaceDir = "";
+  let mergeBaseInfo: { baseBranch: string; mergeBase: string } | null = null;
+
+  for (const candidate of repoCandidates) {
+    try {
+      const info = await resolveMergeBase(
+        candidate,
+        options.baseBranch ?? null
+      );
+      workspaceDir = candidate;
+      mergeBaseInfo = info;
+      break;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error ?? "unknown");
+      repoSelectionErrors.push({ path: candidate, error: message });
+      await logToScreenshotCollector(
+        `Unable to resolve merge base in ${candidate}: ${message}`
+      );
+    }
+  }
+
+  if (!workspaceDir || !mergeBaseInfo) {
+    const reason =
+      repoSelectionErrors.length > 0
+        ? `Unable to determine a merge base for any repository candidate: ${repoSelectionErrors
+            .map(({ path: repoPath, error }) => `${repoPath}: ${error}`)
+            .join("; ")}`
+        : `Unable to determine a git repository within ${workspaceRoot}`;
+    await logToScreenshotCollector(reason);
+    log("ERROR", reason, {
+      workspaceRoot,
+      repoCandidates,
+      repoSelectionErrors,
+    });
+    return { status: "failed", error: reason };
+  }
+
+  const { baseBranch, mergeBase } = mergeBaseInfo;
+
+  await logToScreenshotCollector(
+    `Git repository selected for screenshots: ${workspaceDir}`
+  );
+  if (repoCandidates.length > 1) {
+    const otherRepos = repoCandidates.filter(
+      (candidate) => candidate !== workspaceDir
+    );
+    if (otherRepos.length > 0) {
+      await logToScreenshotCollector(
+        `Additional repositories detected: ${otherRepos.join(", ")}`
+      );
+    }
+  }
 
   await logToScreenshotCollector(
     "Determining merge base from origin HEAD branch..."
   );
-  const { baseBranch: detectedBaseBranch, mergeBase } =
-    await resolveMergeBase(workspaceDir);
-  const baseBranch = options.baseBranch ?? detectedBaseBranch;
   await logToScreenshotCollector(
     `Using merge base ${mergeBase} from ${baseBranch}`
   );
+  log("INFO", "Git repository selected for screenshots", {
+    workspaceRoot,
+    selectedRepository: workspaceDir,
+    repositoryCandidates: repoCandidates,
+    baseBranch,
+    mergeBase,
+  });
 
   let changedFiles =
     options.changedFiles && options.changedFiles.length > 0
@@ -244,28 +350,42 @@ export async function startScreenshotCollection(
 
   let prDescription = options.prDescription ?? null;
   if (!prDescription) {
-    try {
-      prDescription = await readPrDescription(workspaceDir);
-      if (prDescription) {
+    const descriptionSearchPaths =
+      workspaceDir === workspaceRoot
+        ? [workspaceDir]
+        : [workspaceDir, workspaceRoot];
+    let descriptionFound = false;
+
+    for (const descriptionPath of descriptionSearchPaths) {
+      try {
+        const candidateDescription = await readPrDescription(descriptionPath);
+        if (candidateDescription) {
+          prDescription = candidateDescription;
+          descriptionFound = true;
+          await logToScreenshotCollector(
+            `PR description detected (${candidateDescription.length} characters)`
+          );
+          break;
+        }
+      } catch (descriptionError) {
+        const message =
+          descriptionError instanceof Error
+            ? descriptionError.message
+            : String(descriptionError ?? "unknown PR description error");
         await logToScreenshotCollector(
-          `PR description detected (${prDescription.length} characters)`
+          `Failed to read PR description from ${descriptionPath}: ${message}`
         );
-      } else {
-        await logToScreenshotCollector(
-          "No PR description found; proceeding without additional context"
-        );
+        log("ERROR", "Failed to read PR description for screenshots", {
+          path: descriptionPath,
+          error: message,
+        });
       }
-    } catch (descriptionError) {
-      const message =
-        descriptionError instanceof Error
-          ? descriptionError.message
-          : String(descriptionError ?? "unknown PR description error");
+    }
+
+    if (!descriptionFound) {
       await logToScreenshotCollector(
-        `Failed to read PR description: ${message}`
+        "No PR description found; proceeding without additional context"
       );
-      log("ERROR", "Failed to read PR description for screenshots", {
-        error: message,
-      });
     }
   }
 

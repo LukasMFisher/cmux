@@ -129,9 +129,47 @@ export async function detectRemoteHead(
 }
 
 export async function resolveMergeBase(
-  workspaceDir: string
+  workspaceDir: string,
+  baseBranchOverride?: string | null
 ): Promise<{ baseBranch: string; mergeBase: string }> {
-  const baseBranch = await detectRemoteHead(workspaceDir);
+  const normalizedOverride = baseBranchOverride?.trim();
+  const candidateBranches: string[] = [];
+
+  if (normalizedOverride) {
+    candidateBranches.push(normalizedOverride);
+    if (!normalizedOverride.startsWith("origin/")) {
+      candidateBranches.push(`origin/${normalizedOverride}`);
+    }
+    if (!normalizedOverride.startsWith("refs/heads/")) {
+      candidateBranches.push(`refs/heads/${normalizedOverride}`);
+    }
+    if (
+      !normalizedOverride.startsWith("refs/remotes/") &&
+      !normalizedOverride.startsWith("origin/")
+    ) {
+      candidateBranches.push(`refs/remotes/origin/${normalizedOverride}`);
+    }
+  }
+
+  let baseBranch = "";
+  for (const candidate of candidateBranches) {
+    try {
+      await runCommandCapture(
+        "git",
+        ["rev-parse", "--verify", "--quiet", `${candidate}^{}`],
+        { cwd: workspaceDir }
+      );
+      baseBranch = candidate;
+      break;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  if (!baseBranch) {
+    baseBranch = await detectRemoteHead(workspaceDir);
+  }
+
   const mergeBaseRaw = await runCommandCapture(
     "git",
     ["merge-base", "HEAD", baseBranch],
