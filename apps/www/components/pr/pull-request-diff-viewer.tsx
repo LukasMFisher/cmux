@@ -1563,12 +1563,6 @@ function FileDiffCard({
     () => getFileStatusMeta(file.status),
     [file.status]
   );
-  const renameLabel = useMemo(() => {
-    if (!file.previous_filename) {
-      return null;
-    }
-    return createRenameLabel(file.filename, file.previous_filename);
-  }, [file.filename, file.previous_filename]);
 
   useEffect(() => {
     if (isActive) {
@@ -2430,81 +2424,6 @@ function getParentPaths(path: string): string[] {
     parents.push(segments.slice(0, index).join("/"));
   }
   return parents;
-}
-
-function createRenameLabel(
-  currentPath: string,
-  previousPath: string
-): { display: string; full: string } {
-  if (currentPath === previousPath) {
-    return { display: previousPath, full: previousPath };
-  }
-
-  const currentSegments = currentPath.split("/");
-  const previousSegments = previousPath.split("/");
-
-  let prefixLength = 0;
-  const maxPrefix = Math.min(currentSegments.length, previousSegments.length);
-  while (
-    prefixLength < maxPrefix &&
-    currentSegments[prefixLength] === previousSegments[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  const remainingCurrent = currentSegments.slice(prefixLength);
-  const remainingPrevious = previousSegments.slice(prefixLength);
-
-  let suffixLength = 0;
-  const maxSuffix = Math.min(remainingCurrent.length, remainingPrevious.length);
-  while (
-    suffixLength < maxSuffix &&
-    remainingCurrent[remainingCurrent.length - 1 - suffixLength] ===
-      remainingPrevious[remainingPrevious.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const diffSegments = previousSegments.slice(
-    prefixLength,
-    previousSegments.length - suffixLength
-  );
-
-  let displaySegments = diffSegments;
-
-  if (displaySegments.length <= 1 && suffixLength > 0) {
-    const suffixStart = previousSegments.length - suffixLength;
-    const suffixSegment = previousSegments[suffixStart];
-    if (suffixSegment) {
-      displaySegments = [...displaySegments, suffixSegment];
-    }
-  }
-
-  if (displaySegments.length > 3) {
-    displaySegments = displaySegments.slice(displaySegments.length - 3);
-  }
-
-  if (displaySegments.length === 0) {
-    const fallbackStart = Math.max(
-      0,
-      previousSegments.length - Math.max(1, suffixLength)
-    );
-    displaySegments = previousSegments.slice(fallbackStart);
-  }
-
-  let display = displaySegments.join("/");
-  if (prefixLength > 0 && display) {
-    display = `…/${display}`;
-  }
-
-  if (!display) {
-    display = previousPath;
-  }
-
-  return {
-    display,
-    full: previousPath,
-  };
 }
 
 function buildRenameMissingDiffMessage(file: GithubFileChange): string {
