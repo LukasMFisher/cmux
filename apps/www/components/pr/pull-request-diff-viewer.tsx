@@ -258,6 +258,11 @@ type HeatmapTooltipTheme = {
   reasonClass: string;
 };
 
+type NavigateOptions = {
+  updateAnchor?: boolean;
+  updateHash?: boolean;
+};
+
 type DiffLineSide = "new" | "old";
 
 type DiffLineLocation = {
@@ -560,6 +565,7 @@ export function PullRequestDiffViewer({
   const [autoTooltipTarget, setAutoTooltipTarget] =
     useState<ActiveTooltipTarget | null>(null);
   const autoTooltipTimeoutRef = useRef<number | null>(null);
+  const focusChangeOriginRef = useRef<"user" | "auto">("auto");
 
   const clearAutoTooltip = useCallback(() => {
     if (
@@ -613,16 +619,18 @@ export function PullRequestDiffViewer({
 
   useEffect(() => {
     if (targetCount === 0) {
+      focusChangeOriginRef.current = "auto";
       setFocusedErrorIndex(null);
       return;
     }
 
+    focusChangeOriginRef.current = "auto";
     setFocusedErrorIndex((previous) => {
       if (previous === null) {
-        return 0;
+        return previous;
       }
       if (previous >= targetCount) {
-        return 0;
+        return targetCount - 1;
       }
       return previous;
     });
@@ -758,16 +766,26 @@ export function PullRequestDiffViewer({
     };
   }, [parsedDiffs]);
 
-  const handleNavigate = useCallback((path: string) => {
-    setActivePath(path);
-    setActiveAnchor(path);
+  const handleNavigate = useCallback(
+    (path: string, options?: NavigateOptions) => {
+      setActivePath(path);
 
-    if (typeof window === "undefined") {
-      return;
-    }
+      const shouldUpdateAnchor = options?.updateAnchor ?? true;
+      if (shouldUpdateAnchor) {
+        setActiveAnchor(path);
+      }
 
-    window.location.hash = encodeURIComponent(path);
-  }, []);
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const shouldUpdateHash = options?.updateHash ?? true;
+      if (shouldUpdateHash) {
+        window.location.hash = encodeURIComponent(path);
+      }
+    },
+    []
+  );
 
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
@@ -775,6 +793,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -806,6 +825,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -909,7 +929,18 @@ export function PullRequestDiffViewer({
       return;
     }
 
-    handleNavigate(focusedError.filePath);
+    const origin = focusChangeOriginRef.current;
+    focusChangeOriginRef.current = "auto";
+    const isUserInitiated = origin === "user";
+
+    handleNavigate(focusedError.filePath, {
+      updateAnchor: isUserInitiated,
+      updateHash: isUserInitiated,
+    });
+
+    if (!isUserInitiated) {
+      return;
+    }
 
     if (focusedError.changeKey) {
       return;
