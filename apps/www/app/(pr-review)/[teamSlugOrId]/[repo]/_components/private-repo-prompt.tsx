@@ -100,7 +100,7 @@ export function PrivateRepoPrompt({
                 <span className="font-mono font-medium text-neutral-900">
                   {githubOwner}/{repo}
                 </span>{" "}
-                appears to be private or you don't have access to view it.
+                appears to be private or you don&apos;t have access to view it.
               </p>
 
               <div className="mt-6 space-y-4">
@@ -130,7 +130,7 @@ export function PrivateRepoPrompt({
                         3.
                       </span>
                       <span>
-                        You'll be redirected back to this page automatically
+                        You&apos;ll be redirected back to this page automatically
                       </span>
                     </li>
                   </ol>
@@ -161,7 +161,7 @@ export function PrivateRepoPrompt({
                 </button>
 
                 <p className="text-xs text-center text-neutral-500">
-                  By continuing, you'll be redirected to GitHub to authorize the
+                  By continuing, you&apos;ll be redirected to GitHub to authorize the
                   cmux-agent application.
                 </p>
               </div>
