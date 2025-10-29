@@ -305,11 +305,14 @@ function buildMetadata(
   };
 }
 
-async function fetchPrMetadataTask(prUrl: string): Promise<PrMetadata> {
+async function fetchPrMetadataTask(
+  prUrl: string,
+  accessToken?: string
+): Promise<PrMetadata> {
   console.log("Fetching PR metadata...");
   const finishFetchMetadata = startTiming("fetch PR metadata");
   try {
-    return await fetchPrMetadata(prUrl);
+    return await fetchPrMetadata(prUrl, { accessToken });
   } finally {
     finishFetchMetadata();
   }
@@ -385,9 +388,7 @@ export async function startAutomatedPrReview(
       instance = startedInstance;
       return startedInstance;
     });
-    const prMetadataPromise = config.comparison
-      ? Promise.resolve(buildComparisonMetadata(config))
-      : fetchPrMetadataTask(config.prUrl);
+    const prMetadataPromise = fetchPrMetadataTask(config.prUrl, config.githubAccessToken);
 
     const [prMetadata, startedInstance] = await Promise.all([
       prMetadataPromise,
