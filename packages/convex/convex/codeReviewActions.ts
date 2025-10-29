@@ -18,6 +18,14 @@ export const pauseMorphInstance = internalAction({
       return;
     }
 
+    if (!args.sandboxInstanceId.startsWith("morphvm_")) {
+      console.info(
+        "[codeReview] Skipping Morph pause request for non-Morph instance",
+        { sandboxInstanceId: args.sandboxInstanceId }
+      );
+      return;
+    }
+
     const url = `${MORPH_API_BASE_URL}/api/instance/${args.sandboxInstanceId
       }/pause`;
     try {
