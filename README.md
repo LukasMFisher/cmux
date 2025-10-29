@@ -1,7 +1,11 @@
 <h1 align="center">cmux</h1>
 <p align="center">open source Claude Code manager that supports Codex/Gemini/Cursor/OpenCode/Amp CLI</p>
 
-<p align="center"><code>bunx cmux</code> or <code>npx cmux</code></p>
+<p align="center">
+  <a href="https://www.cmux.dev/direct-download-macos">
+    <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
+  </a>
+</p>
 
 cmux lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
 

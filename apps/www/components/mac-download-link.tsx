@@ -8,6 +8,10 @@ import {
 } from "react";
 
 import type { MacArchitecture, MacDownloadUrls } from "@/lib/releases";
+import {
+  inferMacArchitectureFromUserAgent,
+  normalizeMacArchitecture,
+} from "@/lib/utils/mac-architecture";
 
 type MacDownloadLinkProps = Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
@@ -19,43 +23,15 @@ type MacDownloadLinkProps = Omit<
   architecture?: MacArchitecture;
 };
 
-const normalizeArchitecture = (
-  value?: string | null,
-): MacArchitecture | null => {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.toLowerCase();
-
-  if (normalized === "universal" || normalized === "universal2") {
-    return "universal";
-  }
-
-  if (normalized === "arm" || normalized === "arm64" || normalized === "aarch64") {
-    return "arm64";
-  }
-
-  if (
-    normalized === "x86" ||
-    normalized === "x86_64" ||
-    normalized === "amd64" ||
-    normalized === "x64"
-  ) {
-    return "x64";
-  }
-
-  return null;
-};
-
-const detectMacArchitecture = async (): Promise<MacArchitecture | null> => {
+const getNavigatorArchitectureHint = (): MacArchitecture | null => {
   if (typeof navigator === "undefined") {
     return null;
   }
 
   const platform = navigator.platform?.toLowerCase() ?? "";
-  const userAgent = navigator.userAgent.toLowerCase();
-  const isMac = platform.includes("mac") || userAgent.includes("macintosh");
+  const userAgent = navigator.userAgent;
+  const normalizedUserAgent = userAgent.toLowerCase();
+  const isMac = platform.includes("mac") || normalizedUserAgent.includes("macintosh");
 
   if (!isMac) {
     return null;
@@ -73,35 +49,58 @@ const detectMacArchitecture = async (): Promise<MacArchitecture | null> => {
   const uaData = navigatorWithUAData.userAgentData;
 
   if (uaData) {
-    let architectureHint = normalizeArchitecture(uaData.architecture ?? null);
-
-    if (!architectureHint && typeof uaData.getHighEntropyValues === "function") {
-      const details = await uaData
-        .getHighEntropyValues(["architecture"])
-        .catch(() => null);
-
-      if (details && typeof details === "object") {
-        const maybeValue = (details as Record<string, unknown>).architecture;
-        architectureHint = normalizeArchitecture(
-          typeof maybeValue === "string" ? maybeValue : null,
-        );
-      }
-    }
+    const architectureHint = normalizeMacArchitecture(uaData.architecture);
 
     if (architectureHint) {
       return architectureHint;
     }
   }
 
-  if (userAgent.includes("arm") || userAgent.includes("aarch64")) {
-    return "arm64";
+  return inferMacArchitectureFromUserAgent(userAgent);
+};
+
+const detectMacArchitecture = async (): Promise<MacArchitecture | null> => {
+  const immediateHint = getNavigatorArchitectureHint();
+
+  if (immediateHint) {
+    return immediateHint;
   }
 
-  if (userAgent.includes("x86_64") || userAgent.includes("intel")) {
-    return "x64";
+  if (typeof navigator === "undefined") {
+    return null;
   }
 
-  return null;
+  const navigatorWithUAData = navigator as Navigator & {
+    userAgentData?: {
+      architecture?: string;
+      getHighEntropyValues?: (
+        hints: readonly string[],
+      ) => Promise<Record<string, unknown>>;
+    };
+  };
+
+  const uaData = navigatorWithUAData.userAgentData;
+
+  if (!uaData || typeof uaData.getHighEntropyValues !== "function") {
+    return inferMacArchitectureFromUserAgent(navigator.userAgent);
+  }
+
+  const details = await uaData
+    .getHighEntropyValues(["architecture"])
+    .catch(() => null);
+
+  if (details && typeof details === "object") {
+    const maybeValue = (details as Record<string, unknown>).architecture;
+    const normalizedArchitecture = normalizeMacArchitecture(
+      typeof maybeValue === "string" ? maybeValue : null,
+    );
+
+    if (normalizedArchitecture) {
+      return normalizedArchitecture;
+    }
+  }
+
+  return inferMacArchitectureFromUserAgent(navigator.userAgent);
 };
 
 const resolveUrl = (
@@ -164,8 +163,16 @@ export function MacDownloadLink({
       return resolveUrl(sanitizedUrls, architecture, fallbackUrl);
     }
 
+    if (autoDetect) {
+      const detected = getNavigatorArchitectureHint();
+
+      if (detected) {
+        return resolveUrl(sanitizedUrls, detected, fallbackUrl);
+      }
+    }
+
     return autoDefaultUrl;
-  }, [architecture, autoDefaultUrl, fallbackUrl, sanitizedUrls]);
+  }, [architecture, autoDefaultUrl, autoDetect, fallbackUrl, sanitizedUrls]);
 
   const [href, setHref] = useState<string>(explicitDefaultUrl);
 
@@ -178,9 +185,10 @@ export function MacDownloadLink({
       return;
     }
 
-    // When a universal build is available, prefer it over per-arch detection.
-    if (sanitizedUrls.universal) {
-      return;
+    const synchronousHint = getNavigatorArchitectureHint();
+
+    if (synchronousHint) {
+      setHref(resolveUrl(sanitizedUrls, synchronousHint, fallbackUrl));
     }
 
     let isMounted = true;
