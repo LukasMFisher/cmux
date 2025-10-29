@@ -53,9 +53,11 @@ export function PublicRepoAnonymousPrompt({
         return;
       }
 
-      // Successfully created anonymous user, reload to pick up cookies
+      // Successfully created anonymous user, redirect back to PR page
       console.log("[PublicRepoAnonymousPrompt] Anonymous user created successfully");
-      window.location.reload();
+      // Remove /auth from the path to go back to PR page
+      const prPath = window.location.pathname.replace(/\/auth$/, "");
+      window.location.href = prPath;
     } catch (err) {
       console.error(
         "[PublicRepoAnonymousPrompt] Failed to create anonymous user",

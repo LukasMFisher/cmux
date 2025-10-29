@@ -1,6 +1,7 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
 
@@ -27,7 +28,6 @@ import {
   ReviewGitHubLinkButton,
 } from "../../_components/review-diff-content";
 import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
-import { PublicRepoAnonymousPrompt } from "../../_components/public-repo-anonymous-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 
@@ -73,44 +73,6 @@ async function resolveGithubAccessToken(
   return accessToken;
 }
 
-function buildPullRequestPath({
-  teamSlugOrId,
-  repo,
-  pullNumber,
-}: PageParams): string {
-  return `/${encodeURIComponent(teamSlugOrId)}/${encodeURIComponent(repo)}/pull/${encodeURIComponent(pullNumber)}`;
-}
-
-function redirectToSignIn(returnPath: string): never {
-  const normalizedPath = returnPath.startsWith("/")
-    ? returnPath
-    : `/${returnPath}`;
-  const searchParams = new URLSearchParams({
-    after_auth_return_to: normalizedPath,
-  });
-  const signInUrl = `${stackServerApp.urls.signIn}?${searchParams.toString()}`;
-
-  redirect(signInUrl);
-}
-
-async function requireSignedInUser(returnPath: string) {
-  const user = await stackServerApp.getUser({ or: "return-null" });
-
-  if (!user) {
-    redirectToSignIn(returnPath);
-  }
-
-  return user;
-}
-
-async function getUserOrAnonymous() {
-  const user = await stackServerApp.getUser({
-    or: "anonymous"
-  });
-
-  return user;
-}
-
 async function getFirstTeam(): Promise<Team | null> {
   const teams = await stackServerApp.listTeams();
   const firstTeam = teams[0];
@@ -141,7 +103,7 @@ export async function generateMetadata({
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
   // Get user if available
-  const user = await getUserOrAnonymous();
+  const user = await stackServerApp.getUser({ or: "return-null" });
 
   // For private repos without user, or if user doesn't have a team, return basic metadata
   if (!repoIsPublic && !user) {
@@ -174,7 +136,6 @@ export async function generateMetadata({
 
 export default async function PullRequestPage({ params }: PageProps) {
   const resolvedParams = await params;
-  const returnPath = buildPullRequestPath(resolvedParams);
 
   const {
     teamSlugOrId: githubOwner,
@@ -190,25 +151,24 @@ export default async function PullRequestPage({ params }: PageProps) {
   // Check if the repository is public
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
-  // For public repos, check if there's an existing user first (don't create anonymous yet)
-  // For private repos, require authentication
-  const user = repoIsPublic
-    ? await stackServerApp.getUser({ or: "anonymous" })
-    : await requireSignedInUser(returnPath);
+  // Check if Stack Auth cookies exist (indicates user has authenticated or gone through guest flow)
+  const cookieStore = await cookies();
+  const hasStackAuthCookies = cookieStore.has("stack-access") || cookieStore.has(`stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`);
 
-  // For public repos without an existing user, show anonymous prompt
-  if (repoIsPublic && !user) {
-    return (
-      <PublicRepoAnonymousPrompt
-        teamSlugOrId={githubOwner}
-        repo={repo}
-        githubOwner={githubOwner}
-        pullNumber={pullNumber}
-        stackProjectId={env.NEXT_PUBLIC_STACK_PROJECT_ID}
-        stackPublishableKey={env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY}
-      />
-    );
+  console.log("[PullRequestPage] hasStackAuthCookies:", hasStackAuthCookies);
+
+  // If no cookies, redirect to auth page to authenticate
+  if (!hasStackAuthCookies) {
+    console.log("[PullRequestPage] No Stack Auth cookies found, redirecting to auth page");
+    redirect(`/${githubOwner}/${repo}/pull/${pullNumber}/auth`);
   }
+
+  // Get user (including anonymous users) now that we know cookies exist
+  const user = await stackServerApp.getUser({
+    or: "anonymous"
+  });
+
+  console.log("[PullRequestPage] After getUser - user:", user?.id, "repoIsPublic:", repoIsPublic);
 
   // For private repos, require a team. For public repos, teams are optional.
   let selectedTeam: Team | null = null;

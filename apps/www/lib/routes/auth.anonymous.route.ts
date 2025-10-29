@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { setCookie } from "hono/cookie";
 import { stackServerApp } from "@/lib/utils/stack";
 import { env } from "@/lib/utils/www-env";
-import { cookies } from "next/headers";
 
 export const authAnonymousRouter = new OpenAPIHono();
 
@@ -84,34 +84,30 @@ authAnonymousRouter.openapi(
 
       const data = JSON.parse(responseText);
 
-      // Set the Stack Auth cookies with proper format using Next.js cookies API
+      // Set the Stack Auth cookies with proper format using Hono's cookie helper
       if (data.access_token && data.refresh_token) {
         // Stack Auth cookie format: stack-access (no project ID) and stack-refresh-{projectId}
         const projectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
-        const cookieStore = await cookies();
 
         const cookieOptions = {
           path: "/",
           maxAge: 31536000, // 1 year
-          sameSite: "lax" as const,
+          sameSite: "Lax" as const,
           secure: process.env.NODE_ENV === "production",
           httpOnly: false, // Stack Auth needs client-side access
         };
 
         // Set access token cookie - format: stack-access (no project ID!)
         console.log("[authAnonymous] Setting stack-access cookie");
-        cookieStore.set("stack-access", data.access_token, cookieOptions);
+        setCookie(c, "stack-access", data.access_token, cookieOptions);
 
         // Set refresh token cookie - format: stack-refresh-{projectId}
         console.log("[authAnonymous] Setting stack-refresh cookie");
-        cookieStore.set(`stack-refresh-${projectId}`, data.refresh_token, cookieOptions);
+        setCookie(c, `stack-refresh-${projectId}`, data.refresh_token, cookieOptions);
 
         // Set the HTTPS indicator cookie (required by Stack Auth)
         console.log("[authAnonymous] Setting stack-is-https cookie");
-        cookieStore.set("stack-is-https", "true", {
-          ...cookieOptions,
-          maxAge: 31536000, // 1 year
-        });
+        setCookie(c, "stack-is-https", "true", cookieOptions);
 
         // Fetch teams for the specific anonymous user
         try {
