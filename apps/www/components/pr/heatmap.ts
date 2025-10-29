@@ -22,6 +22,21 @@ export type DiffHeatmap = {
   totalEntries: number;
 };
 
+export type HeatmapEntryArtifact = ResolvedHeatmapLine & {
+  tier: number;
+  highlight: { start: number; length: number } | null;
+};
+
+export type DiffHeatmapArtifacts = {
+  entries: Map<number, HeatmapEntryArtifact>;
+  oldEntries: Map<number, HeatmapEntryArtifact>;
+  totalEntries: number;
+};
+
+export type BuildDiffHeatmapOptions = {
+  scoreThreshold?: number;
+};
+
 export type HeatmapRangeNode = RangeTokenNode & {
   className: string;
 };
@@ -109,8 +124,22 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 
 export function buildDiffHeatmap(
   diff: FileData | null,
-  reviewHeatmap: ReviewHeatmapLine[]
+  reviewHeatmap: ReviewHeatmapLine[],
+  options: BuildDiffHeatmapOptions = {}
 ): DiffHeatmap | null {
+  const artifacts = prepareDiffHeatmapArtifacts(diff, reviewHeatmap);
+  if (!artifacts) {
+    return null;
+  }
+
+  const threshold = options.scoreThreshold ?? SCORE_CLAMP_MIN;
+  return renderDiffHeatmapFromArtifacts(artifacts, threshold);
+}
+
+export function prepareDiffHeatmapArtifacts(
+  diff: FileData | null,
+  reviewHeatmap: ReviewHeatmapLine[]
+): DiffHeatmapArtifacts | null {
   if (!diff || reviewHeatmap.length === 0) {
     return null;
   }
@@ -127,72 +156,142 @@ export function buildDiffHeatmap(
     return null;
   }
 
-  const lineClasses = new Map<number, string>();
-  const oldLineClasses = new Map<number, string>();
-  const characterRanges: HeatmapRangeNode[] = [];
-  const entries = new Map<number, ResolvedHeatmapLine>();
-  const oldEntries = new Map<number, ResolvedHeatmapLine>();
+  const entries = new Map<number, HeatmapEntryArtifact>();
+  const oldEntries = new Map<number, HeatmapEntryArtifact>();
 
   for (const entry of aggregated.values()) {
-    const targetEntries = entry.side === "new" ? entries : oldEntries;
-    targetEntries.set(entry.lineNumber, entry);
-
     const normalizedScore =
       entry.score === null
         ? null
         : clamp(entry.score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
     const tier = computeHeatmapTier(normalizedScore);
 
-    if (tier > 0) {
-      const targetClassMap =
-        entry.side === "new" ? lineClasses : oldLineClasses;
-      targetClassMap.set(entry.lineNumber, `cmux-heatmap-tier-${tier}`);
+    let highlight: { start: number; length: number } | null = null;
+
+    if (entry.side === "new" && entry.mostImportantWord) {
+      const content = lineContent.newLines.get(entry.lineNumber);
+      if (content && content.length > 0) {
+        const rawHighlight = deriveHighlightRange(
+          content,
+          entry.mostImportantWord
+        );
+        if (rawHighlight) {
+          const highlightIndex = clamp(
+            rawHighlight.start,
+            0,
+            Math.max(content.length - 1, 0)
+          );
+          const highlightLength = clamp(
+            Math.floor(rawHighlight.length),
+            1,
+            Math.max(content.length - highlightIndex, 1)
+          );
+
+          highlight = {
+            start: highlightIndex,
+            length: highlightLength,
+          };
+        }
+      }
     }
 
-    if (
-      entry.side === "old" ||
-      !entry.mostImportantWord
-    ) {
-      continue;
-    }
-
-    const content = lineContent.newLines.get(entry.lineNumber);
-    if (!content || content.length === 0) {
-      continue;
-    }
-
-    const highlight = deriveHighlightRange(content, entry.mostImportantWord);
-    if (!highlight) {
-      continue;
-    }
-
-    const highlightIndex = clamp(
-      highlight.start,
-      0,
-      Math.max(content.length - 1, 0)
-    );
-    const highlightLength = clamp(
-      Math.floor(highlight.length),
-      1,
-      Math.max(content.length - highlightIndex, 1)
-    );
-
-    const charTier = tier > 0 ? tier : 1;
-    const range: HeatmapRangeNode = {
-      type: "span",
+    const artifact: HeatmapEntryArtifact = {
       lineNumber: entry.lineNumber,
-      start: highlightIndex,
-      length: highlightLength,
-      className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
+      side: entry.side,
+      score: normalizedScore,
+      reason: entry.reason,
+      mostImportantWord: entry.mostImportantWord,
+      tier,
+      highlight,
     };
-    characterRanges.push(range);
+
+    const targetMap = entry.side === "new" ? entries : oldEntries;
+    targetMap.set(entry.lineNumber, artifact);
   }
+
+  if (entries.size === 0 && oldEntries.size === 0) {
+    return null;
+  }
+
+  return {
+    entries,
+    oldEntries,
+    totalEntries: aggregated.size,
+  };
+}
+
+export function renderDiffHeatmapFromArtifacts(
+  artifacts: DiffHeatmapArtifacts,
+  threshold: number
+): DiffHeatmap | null {
+  const normalizedThreshold = clamp(
+    threshold,
+    SCORE_CLAMP_MIN,
+    SCORE_CLAMP_MAX
+  );
+
+  const lineClasses = new Map<number, string>();
+  const oldLineClasses = new Map<number, string>();
+  const characterRanges: HeatmapRangeNode[] = [];
+  const entries = new Map<number, ResolvedHeatmapLine>();
+  const oldEntries = new Map<number, ResolvedHeatmapLine>();
+
+  const applyArtifacts = (
+    source: Map<number, HeatmapEntryArtifact>,
+    target: Map<number, ResolvedHeatmapLine>,
+    classMap: Map<number, string>,
+    { allowHighlight }: { allowHighlight: boolean }
+  ) => {
+    for (const [lineNumber, artifact] of source.entries()) {
+      const score = artifact.score ?? SCORE_CLAMP_MIN;
+      if (score < normalizedThreshold) {
+        continue;
+      }
+
+      target.set(lineNumber, {
+        side: artifact.side,
+        lineNumber: artifact.lineNumber,
+        score: artifact.score,
+        reason: artifact.reason,
+        mostImportantWord: artifact.mostImportantWord,
+      });
+
+      if (artifact.tier > 0) {
+        classMap.set(lineNumber, `cmux-heatmap-tier-${artifact.tier}`);
+      }
+
+      if (allowHighlight && artifact.highlight) {
+        const charTier = artifact.tier > 0 ? artifact.tier : 1;
+        characterRanges.push({
+          type: "span",
+          lineNumber,
+          start: artifact.highlight.start,
+          length: artifact.highlight.length,
+          className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
+        });
+      }
+    }
+  };
+
+  applyArtifacts(artifacts.entries, entries, lineClasses, {
+    allowHighlight: true,
+  });
+  applyArtifacts(artifacts.oldEntries, oldEntries, oldLineClasses, {
+    allowHighlight: false,
+  });
 
   if (
     lineClasses.size === 0 &&
     oldLineClasses.size === 0 &&
     characterRanges.length === 0
   ) {
+    if (entries.size === 0 && oldEntries.size === 0) {
+      return null;
+    }
+  }
+
+  const totalEntries = entries.size + oldEntries.size;
+  if (totalEntries === 0) {
     return null;
   }
 
@@ -202,7 +301,7 @@ export function buildDiffHeatmap(
     newRanges: characterRanges,
     entries,
     oldEntries,
-    totalEntries: aggregated.size,
+    totalEntries,
   };
 }
 

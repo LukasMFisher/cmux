@@ -45,11 +45,6 @@ export function ReviewDiffContent({
 }) {
   return (
     <section className="flex flex-col gap-1">
-      <ReviewDiffSummary
-        fileCount={fileCount}
-        additions={additions}
-        deletions={deletions}
-      />
       <ReviewDiffViewerWrapper
         files={files}
         teamSlugOrId={teamSlugOrId}
