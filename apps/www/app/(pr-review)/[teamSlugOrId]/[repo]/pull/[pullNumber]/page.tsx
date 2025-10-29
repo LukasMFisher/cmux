@@ -44,6 +44,36 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
+type GithubAccountAccessor = {
+  getAccessToken: () => Promise<{ accessToken?: string | null }>;
+};
+
+type GithubConnectedUser = {
+  getConnectedAccount: (
+    provider: "github",
+  ) => Promise<GithubAccountAccessor | null>;
+};
+
+async function resolveGithubAccessToken(
+  user: GithubConnectedUser | null,
+): Promise<string | null> {
+  if (!user) {
+    return null;
+  }
+
+  const account = await user.getConnectedAccount("github");
+  if (!account) {
+    return null;
+  }
+
+  const { accessToken } = await account.getAccessToken();
+  if (!accessToken || accessToken.trim().length === 0) {
+    return null;
+  }
+
+  return accessToken;
+}
+
 function buildPullRequestPath({
   teamSlugOrId,
   repo,
@@ -124,8 +154,12 @@ export async function generateMetadata({
     };
   }
 
+  const githubAccessToken = await resolveGithubAccessToken(user);
+
   try {
-    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber);
+    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber, {
+      authToken: githubAccessToken,
+    });
 
     return {
       title: `${pullRequest.title} · #${pullRequest.number} · ${githubOwner}/${repo}`,
@@ -181,16 +215,21 @@ export default async function PullRequestPage({ params }: PageProps) {
   // If user doesn't have a team, show onboarding
   // (handled above)
 
+  const githubAccessToken = await resolveGithubAccessToken(user);
+
   // Check if the PR is accessible
   try {
-    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber);
+    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber, {
+      authToken: githubAccessToken,
+    });
 
     // If we can fetch the PR, proceed with normal rendering
     const pullRequestPromise = Promise.resolve(pullRequest);
     const pullRequestFilesPromise = fetchPullRequestFiles(
       githubOwner,
       repo,
-      pullNumber
+      pullNumber,
+      { authToken: githubAccessToken }
     ).then((files) => files.map(toGithubFileChange));
 
     scheduleCodeReviewStart({

@@ -1,6 +1,9 @@
 import { GithubApiError } from "./errors";
 import { createGitHubClient } from "./octokit";
-import { generateGitHubInstallationToken, getInstallationForRepo } from "../utils/github-app-token";
+import {
+  generateGitHubInstallationToken,
+  getInstallationForRepo,
+} from "../utils/github-app-token";
 
 type RequestErrorShape = {
   status?: number;
@@ -66,90 +69,152 @@ function isRequestErrorShape(error: unknown): error is RequestErrorShape {
   );
 }
 
+type FetchPullRequestOptions = {
+  authToken?: string | null;
+};
+
+function buildAuthCandidates(
+  token: string | null | undefined,
+): (string | undefined)[] {
+  const candidates: (string | undefined)[] = [];
+  if (typeof token === "string" && token.trim().length > 0) {
+    candidates.push(token);
+  }
+  candidates.push(undefined);
+  return candidates.filter(
+    (candidate, index) =>
+      candidates.findIndex((value) => value === candidate) === index,
+  );
+}
+
+function shouldRetryWithAlternateAuth(error: unknown): boolean {
+  if (!isRequestErrorShape(error)) {
+    return false;
+  }
+  return [401, 403, 404].includes(error.status ?? 0);
+}
+
 export async function fetchPullRequest(
   owner: string,
   repo: string,
   pullNumber: number,
+  options: FetchPullRequestOptions = {},
 ): Promise<GithubPullRequest> {
   try {
-    // Try to use GitHub App installation token for private repos
-    let octokit = createGitHubClient();
+    const authCandidates = buildAuthCandidates(options.authToken);
+    let lastError: unknown;
 
-    // First attempt with basic token
-    try {
-      const response = await octokit.rest.pulls.get({
-        owner,
-        repo,
-        pull_number: pullNumber,
-      });
-      return response.data;
-    } catch (firstError) {
-      // If 404, try with GitHub App token
-      if (isRequestErrorShape(firstError) && firstError.status === 404) {
-        console.log(`[fetchPullRequest] Got 404, trying with GitHub App token for ${owner}/${repo}`);
+    for (const candidate of authCandidates) {
+      try {
+        const octokit = createGitHubClient(candidate);
+        const response = await octokit.rest.pulls.get({
+          owner,
+          repo,
+          pull_number: pullNumber,
+        });
+        return response.data;
+      } catch (error) {
+        lastError = error;
+        if (shouldRetryWithAlternateAuth(error)) {
+          continue;
+        }
+        throw toGithubApiError(error);
+      }
+    }
 
-        const installationId = await getInstallationForRepo(`${owner}/${repo}`);
-        if (installationId) {
-          const appToken = await generateGitHubInstallationToken({
-            installationId,
-            permissions: {
-              contents: "read",
-              metadata: "read",
-              pull_requests: "read",
-            },
-          });
+    if (isRequestErrorShape(lastError) && lastError.status === 404) {
+      console.log(
+        `[fetchPullRequest] Got 404, trying with GitHub App token for ${owner}/${repo}`,
+      );
 
-          octokit = createGitHubClient(appToken);
+      const installationId = await getInstallationForRepo(`${owner}/${repo}`);
+      if (installationId) {
+        const appToken = await generateGitHubInstallationToken({
+          installationId,
+          permissions: {
+            contents: "read",
+            metadata: "read",
+            pull_requests: "read",
+          },
+        });
+
+        try {
+          const octokit = createGitHubClient(appToken);
           const response = await octokit.rest.pulls.get({
             owner,
             repo,
             pull_number: pullNumber,
           });
           return response.data;
+        } catch (appError) {
+          throw toGithubApiError(appError);
         }
       }
-      throw firstError;
     }
+
+    if (lastError) {
+      throw toGithubApiError(lastError);
+    }
+
+    throw new GithubApiError("Unable to fetch pull request", {
+      status: 500,
+    });
   } catch (error) {
     throw toGithubApiError(error);
   }
 }
 
+type FetchPullRequestFilesOptions = {
+  authToken?: string | null;
+};
+
 export async function fetchPullRequestFiles(
   owner: string,
   repo: string,
   pullNumber: number,
+  options: FetchPullRequestFilesOptions = {},
 ): Promise<GithubPullRequestFile[]> {
   try {
-    // Try to use GitHub App installation token for private repos
-    let octokit = createGitHubClient();
+    const authCandidates = buildAuthCandidates(options.authToken);
+    let lastError: unknown;
 
-    // First attempt with basic token
-    try {
-      const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
-        owner,
-        repo,
-        pull_number: pullNumber,
-        per_page: 100,
-      });
-      return files;
-    } catch (firstError) {
-      // If 404, try with GitHub App token
-      if (isRequestErrorShape(firstError) && firstError.status === 404) {
-        console.log(`[fetchPullRequestFiles] Got 404, trying with GitHub App token for ${owner}/${repo}`);
+    for (const candidate of authCandidates) {
+      try {
+        const octokit = createGitHubClient(candidate);
+        const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+          owner,
+          repo,
+          pull_number: pullNumber,
+          per_page: 100,
+        });
+        return files;
+      } catch (error) {
+        lastError = error;
+        if (shouldRetryWithAlternateAuth(error)) {
+          continue;
+        }
+        throw toGithubApiError(error);
+      }
+    }
 
-        const installationId = await getInstallationForRepo(`${owner}/${repo}`);
-        if (installationId) {
-          const appToken = await generateGitHubInstallationToken({
-            installationId,
-            permissions: {
-              contents: "read",
-              metadata: "read",
-              pull_requests: "read",
-            },
-          });
+    if (isRequestErrorShape(lastError) && lastError.status === 404) {
+      console.log(
+        `[fetchPullRequestFiles] Got 404, trying with GitHub App token for ${owner}/${repo}`,
+      );
 
-          octokit = createGitHubClient(appToken);
+      const installationId = await getInstallationForRepo(`${owner}/${repo}`);
+      if (installationId) {
+        const appToken = await generateGitHubInstallationToken({
+          installationId,
+          permissions: {
+            contents: "read",
+            metadata: "read",
+            pull_requests: "read",
+          },
+        });
+
+        try {
+          const octokit = createGitHubClient(appToken);
           const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
             owner,
             repo,
@@ -157,10 +222,19 @@ export async function fetchPullRequestFiles(
             per_page: 100,
           });
           return files;
+        } catch (appError) {
+          throw toGithubApiError(appError);
         }
       }
-      throw firstError;
     }
+
+    if (lastError) {
+      throw toGithubApiError(lastError);
+    }
+
+    throw new GithubApiError("Unable to fetch pull request files", {
+      status: 500,
+    });
   } catch (error) {
     throw toGithubApiError(error);
   }
