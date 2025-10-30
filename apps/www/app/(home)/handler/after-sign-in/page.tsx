@@ -1,4 +1,4 @@
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { env } from "@/lib/utils/www-env";
@@ -33,33 +33,21 @@ function isRelativePath(target: string): boolean {
 }
 
 /**
- * Check if a URL is same-origin (safe to redirect to).
- * Returns the pathname if safe, null otherwise.
+ * Check if a URL is safe to redirect to.
+ * Only allows relative paths (starting with /).
+ * Returns the path if safe, null otherwise.
  */
-function getSafeRedirectPath(target: string, currentOrigin: string): string | null {
+function getSafeRedirectPath(target: string): string | null {
   if (!target) {
     return null;
   }
 
-  // Relative paths are always safe
+  // Only allow relative paths for security
   if (isRelativePath(target)) {
     return target;
   }
 
-  // Check if it's an absolute URL pointing to the same origin
-  try {
-    const targetUrl = new URL(target);
-
-    // Only allow same-origin redirects
-    if (targetUrl.origin === currentOrigin) {
-      // Return the pathname + search + hash (not the full URL)
-      return targetUrl.pathname + targetUrl.search + targetUrl.hash;
-    }
-  } catch {
-    // Invalid URL, not safe
-    return null;
-  }
-
+  // Reject absolute URLs
   return null;
 }
 
@@ -88,17 +76,8 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   const searchParams = await searchParamsPromise;
   const afterAuthReturnToRaw = getSingleValue(searchParams?.after_auth_return_to ?? undefined);
 
-  // Get current origin from request headers or env
-  const headersList = await headers();
-  const host = headersList.get("host");
-  const protocol = headersList.get("x-forwarded-proto") || "https";
-  const currentOrigin = env.NEXT_PUBLIC_BASE_APP_URL
-    ? new URL(env.NEXT_PUBLIC_BASE_APP_URL).origin
-    : (host ? `${protocol}://${host}` : "https://localhost:3000");
-
   console.log("[After Sign In] Processing redirect:", {
     afterAuthReturnTo: afterAuthReturnToRaw,
-    currentOrigin,
     hasRefreshToken: !!stackRefreshToken,
     hasAccessToken: !!stackAccessToken,
   });
@@ -112,9 +91,9 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
     }
   }
 
-  // Handle web redirects (relative paths or same-origin absolute URLs)
+  // Handle web redirects (relative paths only)
   if (afterAuthReturnToRaw) {
-    const safePath = getSafeRedirectPath(afterAuthReturnToRaw, currentOrigin);
+    const safePath = getSafeRedirectPath(afterAuthReturnToRaw);
     if (safePath) {
       console.log("[After Sign In] Redirecting to web path:", safePath);
       redirect(safePath);

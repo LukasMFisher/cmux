@@ -19,6 +19,7 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import { getInstallationForRepo } from "@/lib/utils/github-app-token";
 import {
   DiffViewerSkeleton,
   ErrorPanel,
@@ -191,20 +192,29 @@ export default async function PullRequestPage({ params }: PageProps) {
     });
   } catch (error) {
     if (isGithubApiError(error) && error.status === 404) {
-      // For private repos, show the install prompt
-      // For public repos without a team, we can't do anything
+      // For private repos, check if app is installed
       if (!repoIsPublic && selectedTeam) {
-        return (
-          <PrivateRepoPrompt
-            teamSlugOrId={selectedTeam.id}
-            repo={repo}
-            githubOwner={githubOwner}
-            githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
-          />
+        // Check if GitHub app is installed for this repo
+        const installationId = await getInstallationForRepo(
+          `${githubOwner}/${repo}`
         );
+
+        // If app is NOT installed, show install prompt
+        // If app IS installed, the PR simply doesn't exist
+        if (!installationId) {
+          return (
+            <PrivateRepoPrompt
+              teamSlugOrId={selectedTeam.id}
+              repo={repo}
+              githubOwner={githubOwner}
+              githubAppSlug={env.NEXT_PUBLIC_GITHUB_APP_SLUG}
+            />
+          );
+        }
       }
-      // For public repos or when no team, just throw - shouldn't happen for public repos
-      throw error;
+
+      // App is installed but PR doesn't exist, or public repo PR not found
+      notFound();
     }
     throw error;
   }
