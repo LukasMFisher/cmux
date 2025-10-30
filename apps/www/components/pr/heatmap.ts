@@ -62,6 +62,16 @@ const SCORE_CLAMP_MAX = 1;
 
 const HEATMAP_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
 
+const HEATMAP_SIDE_CLASS: Record<DiffLineSide, string> = {
+  new: "cmux-heatmap-char-new",
+  old: "cmux-heatmap-char-old",
+};
+
+function cnHeatmapCharClass(side: DiffLineSide, tier: number): string {
+  const tierClass = `cmux-heatmap-char-tier-${tier}`;
+  return `cmux-heatmap-char ${HEATMAP_SIDE_CLASS[side]} ${tierClass}`;
+}
+
 export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
   const payload = unwrapCodexPayload(raw);
   if (!payload || typeof payload !== "object") {
@@ -244,7 +254,8 @@ export function renderDiffHeatmapFromArtifacts(
     source: Map<number, HeatmapEntryArtifact>,
     target: Map<number, ResolvedHeatmapLine>,
     classMap: Map<number, string>,
-    rangeCollector?: HeatmapRangeNode[]
+    rangeCollector: HeatmapRangeNode[] | undefined,
+    side: DiffLineSide
   ) => {
     for (const [lineNumber, artifact] of source.entries()) {
       const score = artifact.score ?? SCORE_CLAMP_MIN;
@@ -271,18 +282,25 @@ export function renderDiffHeatmapFromArtifacts(
           lineNumber,
           start: artifact.highlight.start,
           length: artifact.highlight.length,
-          className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
+          className: cnHeatmapCharClass(side, charTier),
         });
       }
     }
   };
 
-  applyArtifacts(artifacts.entries, entries, lineClasses, newCharacterRanges);
+  applyArtifacts(
+    artifacts.entries,
+    entries,
+    lineClasses,
+    newCharacterRanges,
+    "new"
+  );
   applyArtifacts(
     artifacts.oldEntries,
     oldEntries,
     oldLineClasses,
-    oldCharacterRanges
+    oldCharacterRanges,
+    "old"
   );
 
   if (

@@ -316,6 +316,17 @@ const SIDEBAR_DEFAULT_WIDTH = 330;
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 520;
 
+function selectTooltipMeta(
+  className: string,
+  lineNumber: number,
+  tooltipMap: LineTooltipMap
+): HeatmapTooltipMeta | undefined {
+  const isOldToken = className.includes("cmux-heatmap-char-old");
+  const primarySource = isOldToken ? tooltipMap.old : tooltipMap.new;
+  const fallbackSource = isOldToken ? tooltipMap.new : tooltipMap.old;
+  return primarySource.get(lineNumber) ?? fallbackSource.get(lineNumber);
+}
+
 function mergeHeatmapLines(
   primary: ReviewHeatmapLine[],
   fallback: ReviewHeatmapLine[]
@@ -2595,7 +2606,10 @@ function FileDiffCard({
   }, [diffHeatmap]);
 
   const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
-    if (!lineTooltips || lineTooltips.new.size === 0) {
+    if (
+      !lineTooltips ||
+      (lineTooltips.new.size === 0 && lineTooltips.old.size === 0)
+    ) {
       return undefined;
     }
 
@@ -2621,7 +2635,11 @@ function FileDiffCard({
           (className.includes("cmux-heatmap-char") ||
             className.includes("cmux-heatmap-char-tier"))
         ) {
-          const tooltipMeta = lineTooltips.new.get(lineNumber);
+          const tooltipMeta = selectTooltipMeta(
+            className,
+            lineNumber,
+            lineTooltips
+          );
           if (tooltipMeta) {
             const rendered = renderDefault(token, index);
             return (
