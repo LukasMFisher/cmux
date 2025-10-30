@@ -6,6 +6,8 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
 
+  console.log("hostname:", hostname);
+
   if (hostname === "github0.com" && pathname === "/") {
     const url = request.nextUrl.clone();
     url.pathname = "/heatmap";
@@ -47,7 +49,9 @@ export function middleware(request: NextRequest) {
 
   // If no cookies, redirect to auth page
   if (!hasStackAuthCookies) {
-    console.log("[middleware] No Stack Auth cookies found, redirecting to auth page");
+    console.log(
+      "[middleware] No Stack Auth cookies found, redirecting to auth page"
+    );
     const url = request.nextUrl.clone();
     url.pathname = `${pathname}/auth`;
     return NextResponse.redirect(url);
