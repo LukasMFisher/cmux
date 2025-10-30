@@ -243,7 +243,7 @@ export default async function PullRequestPage({ params }: PageProps) {
           <PullRequestDiffSection
             filesPromise={pullRequestFilesPromise}
             pullRequestPromise={pullRequestPromise}
-            teamSlugOrId={selectedTeam?.id ?? githubOwner}
+            teamSlugOrId={selectedTeam?.id ?? ""}
             githubOwner={githubOwner}
             repo={repo}
             pullNumber={pullNumber}

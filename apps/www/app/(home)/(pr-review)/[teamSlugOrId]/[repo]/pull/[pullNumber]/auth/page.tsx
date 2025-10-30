@@ -46,16 +46,14 @@ export default async function AuthPage({ params }: PageProps) {
   // Check if repository is public
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
-  // For private repos, use Stack Auth's automatic redirect for non-authenticated users
-  // For public repos, allow anonymous users by using return-null
+  // Always use return-null to handle redirects manually (so we can preserve return URL)
   const user = await stackServerApp.getUser({
-    or: repoIsPublic ? "return-null" : "redirect"
+    or: "return-null"
   });
 
-  // For private repos with anonymous users (no email), show sign-in prompt
-  // Stack Auth's "redirect" may not catch anonymous users since they have valid sessions
-  if (!repoIsPublic && user && !user.primaryEmail) {
-    console.log("[AuthPage] Anonymous user attempting private repo, showing sign-in prompt");
+  // For private repos without authenticated user, show sign-in prompt
+  if (!repoIsPublic && (!user || !user.primaryEmail)) {
+    console.log("[AuthPage] Private repo requires authentication, showing sign-in prompt");
     return (
       <AnonymousToSignInPrompt
         returnUrl={`/${githubOwner}/${repo}/pull/${pullNumber}`}
@@ -81,8 +79,7 @@ export default async function AuthPage({ params }: PageProps) {
     );
   }
 
-  // For private repos, if we got here, user is authenticated (Stack Auth handled redirect)
-  // Show GitHub app install prompt
+  // Fallback: show GitHub app install prompt (shouldn't reach here normally)
   return (
     <PrivateRepoPrompt
       teamSlugOrId={githubOwner}
