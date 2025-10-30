@@ -7,8 +7,16 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
+  useDeferredValue,
 } from "react";
-import type { ReactElement, ReactNode } from "react";
+import type {
+  ReactElement,
+  ReactNode,
+  KeyboardEvent as ReactKeyboardEvent,
+  CSSProperties,
+  ChangeEvent,
+} from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -18,10 +26,10 @@ import {
   FileMinus,
   FilePlus,
   FileText,
-  Folder,
   Sparkles,
   Copy,
   Check,
+  Loader2,
 } from "lucide-react";
 import {
   Decoration,
@@ -55,13 +63,24 @@ import {
 import { refractor } from "refractor/all";
 
 import {
-  buildDiffHeatmap,
+  MaterialSymbolsFolderOpenSharp,
+  MaterialSymbolsFolderSharp,
+} from "../icons/material-symbols";
+import {
   parseReviewHeatmap,
+  prepareDiffHeatmapArtifacts,
+  renderDiffHeatmapFromArtifacts,
   type DiffHeatmap,
+  type DiffHeatmapArtifacts,
   type ReviewHeatmapLine,
   type ResolvedHeatmapLine,
 } from "./heatmap";
+import {
+  ReviewCompletionNotificationCard,
+  type ReviewCompletionNotificationCardState,
+} from "./review-completion-notification-card";
 import clsx from "clsx";
+import { kitties } from "./kitty";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -83,14 +102,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-      type: "text";
-      value: string;
-    }
+    type: "text";
+    value: string;
+  }
   | {
-      type: string;
-      children?: RefractorNode[];
-      [key: string]: unknown;
-    };
+    type: string;
+    children?: RefractorNode[];
+    [key: string]: unknown;
+  };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -216,8 +235,8 @@ const refractorAdapter = createRefractorAdapter(refractor);
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
   | FunctionReturnType<
-      typeof api.codeReview.listFileOutputsForComparison
-    >[number];
+    typeof api.codeReview.listFileOutputsForComparison
+  >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -228,7 +247,7 @@ type FileDiffViewModel = {
   entry: ParsedFileDiff;
   review: FileOutput | null;
   reviewHeatmap: ReviewHeatmapLine[];
-  diffHeatmap: DiffHeatmap | null;
+  diffHeatmapArtifacts: DiffHeatmapArtifacts | null;
   changeKeyByLine: Map<string, string>;
 };
 
@@ -277,6 +296,18 @@ type DiffLineLocation = {
 
 type LineTooltipMap = Record<DiffLineSide, Map<number, HeatmapTooltipMeta>>;
 
+const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:pr-diff-viewer:file-tree-width";
+const SIDEBAR_DEFAULT_WIDTH = 330;
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 520;
+
+function clampSidebarWidth(value: number): number {
+  if (Number.isNaN(value)) {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
+}
+
 function inferLanguage(filename: string): string | null {
   const lowerPath = filename.toLowerCase();
   const segments = lowerPath.split("/");
@@ -308,6 +339,7 @@ type FileTreeNode = {
   path: string;
   children: FileTreeNode[];
   file?: GithubFileChange;
+  isLoading?: boolean;
 };
 
 type FileStatusMeta = {
@@ -413,16 +445,16 @@ export function PullRequestDiffViewer({
   const prQueryArgs = useMemo(
     () =>
       normalizedJobType !== "pull_request" ||
-      prNumber === null ||
-      prNumber === undefined
+        prNumber === null ||
+        prNumber === undefined
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            prNumber,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          prNumber,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -438,12 +470,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            comparisonSlug,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          comparisonSlug,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -533,15 +565,170 @@ export function PullRequestDiffViewer({
 
   const isLoadingFileOutputs = fileOutputs === undefined;
 
+  const pendingFileCount = useMemo(() => {
+    if (processedFileCount === null) {
+      return Math.max(totalFileCount, 0);
+    }
+    return Math.max(totalFileCount - processedFileCount, 0);
+  }, [processedFileCount, totalFileCount]);
+
+  const [heatmapThresholdInput, setHeatmapThresholdInput] = useState(0);
+  const heatmapThreshold = useDeferredValue(heatmapThresholdInput);
+
+  const [isNotificationSupported, setIsNotificationSupported] = useState(false);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission | null>(null);
+  const [shouldNotifyOnCompletion, setShouldNotifyOnCompletion] =
+    useState(false);
+  const [isRequestingNotification, setIsRequestingNotification] =
+    useState(false);
+  const previousPendingCountRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const supported = "Notification" in window;
+    setIsNotificationSupported(supported);
+
+    if (!supported) {
+      return;
+    }
+
+    setNotificationPermission(Notification.permission);
+  }, []);
+
+  useEffect(() => {
+    if (notificationPermission === "denied") {
+      setShouldNotifyOnCompletion(false);
+    }
+  }, [notificationPermission]);
+
+  useEffect(() => {
+    const previousPending = previousPendingCountRef.current;
+    previousPendingCountRef.current = pendingFileCount;
+
+    if (
+      !isNotificationSupported ||
+      notificationPermission !== "granted" ||
+      !shouldNotifyOnCompletion
+    ) {
+      return;
+    }
+
+    if (
+      pendingFileCount === 0 &&
+      (previousPending === null || previousPending > 0)
+    ) {
+      try {
+        const title = "Automated review complete";
+        const body =
+          totalFileCount === 1
+            ? "Finished reviewing the last file."
+            : "Finished reviewing all files in this review.";
+
+        new Notification(title, {
+          body,
+          tag: "cmux-review-complete",
+        });
+      } catch {
+        // Ignore notification errors (for example, blocked constructors)
+      } finally {
+        setShouldNotifyOnCompletion(false);
+      }
+    }
+  }, [
+    isNotificationSupported,
+    notificationPermission,
+    pendingFileCount,
+    shouldNotifyOnCompletion,
+    totalFileCount,
+  ]);
+
+  const handleEnableCompletionNotification = useCallback(async () => {
+    if (!isNotificationSupported) {
+      return;
+    }
+
+    if (notificationPermission === "granted") {
+      setShouldNotifyOnCompletion(true);
+      return;
+    }
+
+    if (notificationPermission === "denied") {
+      return;
+    }
+
+    setIsRequestingNotification(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === "granted") {
+        setShouldNotifyOnCompletion(true);
+      }
+    } catch {
+      // Ignore errors while requesting permission
+    } finally {
+      setIsRequestingNotification(false);
+    }
+  }, [isNotificationSupported, notificationPermission]);
+
+  const hasKnownPendingFiles =
+    processedFileCount !== null && pendingFileCount > 0;
+
+  const handleDisableCompletionNotification = useCallback(() => {
+    setShouldNotifyOnCompletion(false);
+  }, []);
+
+  const notificationCardState =
+    useMemo<ReviewCompletionNotificationCardState | null>(() => {
+      if (
+        !isNotificationSupported ||
+        !hasKnownPendingFiles ||
+        notificationPermission === null
+      ) {
+        return null;
+      }
+
+      if (notificationPermission === "denied") {
+        return { kind: "blocked" };
+      }
+
+      if (shouldNotifyOnCompletion) {
+        return {
+          kind: "enabled",
+          onDisable: handleDisableCompletionNotification,
+        };
+      }
+
+      return {
+        kind: "prompt",
+        isRequesting: isRequestingNotification,
+        onEnable: handleEnableCompletionNotification,
+      };
+    }, [
+      handleDisableCompletionNotification,
+      handleEnableCompletionNotification,
+      hasKnownPendingFiles,
+      isNotificationSupported,
+      isRequestingNotification,
+      notificationPermission,
+      shouldNotifyOnCompletion,
+    ]);
+
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return sortedFiles.map((file) => {
       if (!file.patch) {
+        const renameMessage =
+          file.status === "renamed"
+            ? buildRenameMissingDiffMessage(file)
+            : null;
         return {
           file,
           anchorId: file.filename,
           diff: null,
-          error:
-            "GitHub did not return a textual diff for this file. It may be binary or too large.",
+          error: renameMessage ?? undefined,
         };
       }
 
@@ -575,25 +762,39 @@ export function PullRequestDiffViewer({
       const reviewHeatmap = review
         ? parseReviewHeatmap(review.codexReviewOutput)
         : [];
-      const diffHeatmap =
+      const diffHeatmapArtifacts =
         entry.diff && reviewHeatmap.length > 0
-          ? buildDiffHeatmap(entry.diff, reviewHeatmap)
+          ? prepareDiffHeatmapArtifacts(entry.diff, reviewHeatmap)
           : null;
 
       return {
         entry,
         review,
         reviewHeatmap,
-        diffHeatmap,
+        diffHeatmapArtifacts,
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
       };
     });
   }, [parsedDiffs, fileOutputIndex]);
 
+  const thresholdedFileEntries = useMemo(
+    () =>
+      fileEntries.map((fileEntry) => ({
+        ...fileEntry,
+        diffHeatmap: fileEntry.diffHeatmapArtifacts
+          ? renderDiffHeatmapFromArtifacts(
+            fileEntry.diffHeatmapArtifacts,
+            heatmapThreshold
+          )
+          : null,
+      })),
+    [fileEntries, heatmapThreshold]
+  );
+
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
 
-    for (const fileEntry of fileEntries) {
+    for (const fileEntry of thresholdedFileEntries) {
       const { entry, diffHeatmap, changeKeyByLine } = fileEntry;
       if (!diffHeatmap || diffHeatmap.totalEntries === 0) {
         continue;
@@ -631,7 +832,7 @@ export function PullRequestDiffViewer({
     }
 
     return targets;
-  }, [fileEntries]);
+  }, [thresholdedFileEntries]);
 
   const targetCount = errorTargets.length;
 
@@ -733,7 +934,29 @@ export function PullRequestDiffViewer({
       ? null
       : (errorTargets[focusedErrorIndex] ?? null);
 
-  const fileTree = useMemo(() => buildFileTree(sortedFiles), [sortedFiles]);
+  const fileTree = useMemo(() => {
+    const tree = buildFileTree(sortedFiles);
+    // Add loading state to file nodes
+    const addLoadingState = (nodes: FileTreeNode[]): FileTreeNode[] => {
+      return nodes.map((node) => {
+        if (node.file) {
+          // This is a file node - check if it's been processed
+          const isLoading = !fileOutputIndex.has(node.file.filename);
+          return {
+            ...node,
+            isLoading,
+            children: addLoadingState(node.children),
+          };
+        }
+        // This is a directory node
+        return {
+          ...node,
+          children: addLoadingState(node.children),
+        };
+      });
+    };
+    return addLoadingState(tree);
+  }, [sortedFiles, fileOutputIndex]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
     [fileTree]
@@ -747,9 +970,23 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-    sortedFiles.some((file) => file.filename === hydratedInitialPath)
+      sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
+
+  const sidebarPanelId = useId();
+  const [sidebarWidth, setSidebarWidth] = useState<number>(
+    SIDEBAR_DEFAULT_WIDTH
+  );
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const pointerStartXRef = useRef(0);
+  const pointerStartWidthRef = useRef<number>(SIDEBAR_DEFAULT_WIDTH);
+  const sidebarPointerMoveHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
+  const sidebarPointerUpHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
 
   const [activePath, setActivePath] = useState<string>(initialPath);
   const [activeAnchor, setActiveAnchor] = useState<string>(initialPath);
@@ -761,6 +998,71 @@ export function PullRequestDiffViewer({
     }
     return defaults;
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const storedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!storedWidth) {
+      return;
+    }
+    const parsedWidth = Number.parseInt(storedWidth, 10);
+    const clampedWidth = clampSidebarWidth(parsedWidth);
+    setSidebarWidth((previous) =>
+      previous === clampedWidth ? previous : clampedWidth
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      SIDEBAR_WIDTH_STORAGE_KEY,
+      String(Math.round(sidebarWidth))
+    );
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (!isResizingSidebar) {
+      return;
+    }
+    const previousCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    return () => {
+      document.body.style.cursor = previousCursor;
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    return () => {
+      if (sidebarPointerMoveHandlerRef.current) {
+        window.removeEventListener(
+          "pointermove",
+          sidebarPointerMoveHandlerRef.current
+        );
+        sidebarPointerMoveHandlerRef.current = null;
+      }
+      if (sidebarPointerUpHandlerRef.current) {
+        window.removeEventListener(
+          "pointerup",
+          sidebarPointerUpHandlerRef.current
+        );
+        window.removeEventListener(
+          "pointercancel",
+          sidebarPointerUpHandlerRef.current
+        );
+        sidebarPointerUpHandlerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setExpandedPaths(() => {
@@ -832,6 +1134,116 @@ export function PullRequestDiffViewer({
       observer.disconnect();
     };
   }, [parsedDiffs]);
+
+  const handleSidebarResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      if (typeof window === "undefined") {
+        return;
+      }
+      event.preventDefault();
+      const handleElement = event.currentTarget;
+      const pointerId = event.pointerId;
+      pointerStartXRef.current = event.clientX;
+      pointerStartWidthRef.current = sidebarWidth;
+      setIsResizingSidebar(true);
+
+      try {
+        handleElement.focus({ preventScroll: true });
+      } catch {
+        handleElement.focus();
+      }
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const delta = moveEvent.clientX - pointerStartXRef.current;
+        const nextWidth = clampSidebarWidth(
+          pointerStartWidthRef.current + delta
+        );
+        setSidebarWidth((previous) =>
+          previous === nextWidth ? previous : nextWidth
+        );
+      };
+
+      const handlePointerTerminate = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+        if (handleElement.hasPointerCapture?.(pointerId)) {
+          try {
+            handleElement.releasePointerCapture(pointerId);
+          } catch {
+            // Ignore release failures.
+          }
+        }
+        setIsResizingSidebar(false);
+        if (sidebarPointerMoveHandlerRef.current) {
+          window.removeEventListener(
+            "pointermove",
+            sidebarPointerMoveHandlerRef.current
+          );
+          sidebarPointerMoveHandlerRef.current = null;
+        }
+        if (sidebarPointerUpHandlerRef.current) {
+          window.removeEventListener(
+            "pointerup",
+            sidebarPointerUpHandlerRef.current
+          );
+          window.removeEventListener(
+            "pointercancel",
+            sidebarPointerUpHandlerRef.current
+          );
+          sidebarPointerUpHandlerRef.current = null;
+        }
+      };
+
+      sidebarPointerMoveHandlerRef.current = handlePointerMove;
+      sidebarPointerUpHandlerRef.current = handlePointerTerminate;
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerTerminate);
+      window.addEventListener("pointercancel", handlePointerTerminate);
+
+      try {
+        handleElement.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer capture failures (e.g., Safari).
+      }
+    },
+    [sidebarWidth, setIsResizingSidebar, setSidebarWidth]
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const key = event.key;
+      if (key === "ArrowLeft" || key === "ArrowRight") {
+        event.preventDefault();
+        const delta = key === "ArrowLeft" ? -16 : 16;
+        setSidebarWidth((previous) => clampSidebarWidth(previous + delta));
+        return;
+      }
+      if (key === "Home") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MIN_WIDTH);
+        return;
+      }
+      if (key === "End") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MAX_WIDTH);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "0") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+      }
+    },
+    [setSidebarWidth]
+  );
+
+  const handleSidebarResizeDoubleClick = useCallback(() => {
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }, [setSidebarWidth]);
 
   const handleNavigate = useCallback(
     (path: string, options?: NavigateOptions) => {
@@ -1025,6 +1437,10 @@ export function PullRequestDiffViewer({
     };
   }, [focusedError, handleNavigate]);
 
+  const kitty = useMemo(() => {
+    return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
+
   if (totalFileCount === 0) {
     return (
       <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
@@ -1035,8 +1451,16 @@ export function PullRequestDiffViewer({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-3">
-        <aside className="lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:w-72 lg:overflow-y-auto">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
+        <aside
+          id={sidebarPanelId}
+          className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:flex-none lg:overflow-y-auto lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem]"
+          style={
+            {
+              "--pr-diff-sidebar-width": `${sidebarWidth}px`,
+            } as CSSProperties
+          }
+        >
           <div className="flex flex-col gap-3">
             <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white">
               <ReviewProgressIndicator
@@ -1045,6 +1469,13 @@ export function PullRequestDiffViewer({
                 isLoading={isLoadingFileOutputs}
               />
             </div>
+            {notificationCardState ? (
+              <ReviewCompletionNotificationCard state={notificationCardState} />
+            ) : null}
+            <HeatmapThresholdControl
+              value={heatmapThresholdInput}
+              onChange={setHeatmapThresholdInput}
+            />
             {targetCount > 0 ? (
               <div className="flex justify-center">
                 <ErrorNavigator
@@ -1065,19 +1496,55 @@ export function PullRequestDiffViewer({
               />
             </div>
           </div>
-          <div className="h-[40px]"></div>
+          <div className="h-[40px]" />
         </aside>
 
-        <div className="flex-1 space-y-3">
-          {fileEntries.map(({ entry, review, diffHeatmap }) => {
+        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">
+          <div
+            className={cn(
+              "flex h-full w-full cursor-col-resize select-none items-center justify-center touch-none rounded",
+              "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500",
+              isResizingSidebar
+                ? "bg-sky-200/60 dark:bg-sky-900/40"
+                : "bg-transparent hover:bg-sky-100/60 dark:hover:bg-sky-900/40"
+            )}
+            role="separator"
+            aria-label="Resize file navigation panel"
+            aria-orientation="vertical"
+            aria-controls={sidebarPanelId}
+            aria-valuenow={Math.round(sidebarWidth)}
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            tabIndex={0}
+            onPointerDown={handleSidebarResizePointerDown}
+            onKeyDown={handleSidebarResizeKeyDown}
+            onDoubleClick={handleSidebarResizeDoubleClick}
+          >
+            <span className="sr-only">
+              Drag to adjust file navigation width
+            </span>
+            <div
+              className={cn(
+                "h-full w-[3px] rounded-full transition-opacity",
+                isResizingSidebar
+                  ? "bg-sky-500 dark:bg-sky-400 opacity-100"
+                  : "bg-neutral-400 opacity-0 group-hover/resize:opacity-100 dark:bg-neutral-500"
+              )}
+              aria-hidden
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-3">
+          {thresholdedFileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
             const focusedLine = isFocusedFile
               ? focusedError
                 ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
+                  side: focusedError.side,
+                  lineNumber: focusedError.lineNumber,
+                }
                 : null
               : null;
             const focusedChangeKey = isFocusedFile
@@ -1085,13 +1552,15 @@ export function PullRequestDiffViewer({
               : null;
             const autoTooltipLine =
               isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === entry.file.filename
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
                 ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+                  side: autoTooltipTarget.side,
+                  lineNumber: autoTooltipTarget.lineNumber,
+                }
                 : null;
+
+            const isLoading = !fileOutputIndex.has(entry.file.filename);
 
             return (
               <FileDiffCard
@@ -1103,10 +1572,22 @@ export function PullRequestDiffViewer({
                 focusedLine={focusedLine}
                 focusedChangeKey={focusedChangeKey}
                 autoTooltipLine={autoTooltipLine}
+                isLoading={isLoading}
               />
             );
           })}
-          <div className="h-[70dvh] w-full" />
+          <div className="h-[70dvh] w-full">
+            <div className="px-3 py-6 text-center">
+              <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+                You&apos;ve reached the end of the diff!
+              </span>
+              <div className="grid place-content-center">
+                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                  {kitty}
+                </pre>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1147,7 +1628,7 @@ function ReviewProgressIndicator({
 
   return (
     <div
-      className="border border-neutral-200 bg-white p-5 transition"
+      className="border border-neutral-200 bg-white p-5 pt-4 transition"
       aria-live="polite"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1200,6 +1681,67 @@ function ReviewProgressIndicator({
           aria-valuenow={processedFileCount ?? 0}
         />
       </div>
+    </div>
+  );
+}
+
+function HeatmapThresholdControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const sliderId = useId();
+  const descriptionId = `${sliderId}-description`;
+  const percent = Math.round(Math.min(Math.max(value, 0), 1) * 100);
+
+  const handleSliderChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const numeric = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(numeric)) {
+        return;
+      }
+      const normalized = Math.min(Math.max(numeric / 100, 0), 1);
+      onChange(normalized);
+    },
+    [onChange]
+  );
+
+  return (
+    <div className="rounded border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700">
+      <div className="flex items-center justify-between gap-3">
+        <label
+          htmlFor={sliderId}
+          className="font-medium text-neutral-700"
+        >
+          &ldquo;Should review&rdquo; threshold
+        </label>
+        <span className="text-xs font-semibold text-neutral-600">
+          ≥ <span className="tabular-nums">{percent}%</span>
+        </span>
+      </div>
+      <input
+        id={sliderId}
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={percent}
+        onChange={handleSliderChange}
+        className="mt-3 w-full accent-sky-500"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={`"Should review" threshold ${percent} percent`}
+        aria-describedby={descriptionId}
+      />
+      <p
+        id={descriptionId}
+        className="mt-2 text-xs text-neutral-500"
+      >
+        Only show heatmap highlights with a score at or above this value.
+      </p>
     </div>
   );
 }
@@ -1335,11 +1877,27 @@ function FileTreeNavigator({
                 style={{ paddingLeft: depth * 14 + 10 }}
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-neutral-500" />
+                  <ChevronDown
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 ) : (
-                  <ChevronRight className="h-4 w-4 text-neutral-500" />
+                  <ChevronRight
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 )}
-                <Folder className="h-4 w-4 text-neutral-500" />
+                {isExpanded ? (
+                  <MaterialSymbolsFolderOpenSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                ) : (
+                  <MaterialSymbolsFolderSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                )}
                 <span className="truncate">{node.name}</span>
               </button>
               {isExpanded ? (
@@ -1364,7 +1922,7 @@ function FileTreeNavigator({
             type="button"
             onClick={() => onSelectFile(node.path)}
             className={cn(
-              "flex w-full items-center gap-1 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
+              "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
               isActive
                 ? "bg-sky-100/80 text-sky-900 font-semibold"
                 : "text-neutral-700"
@@ -1372,6 +1930,22 @@ function FileTreeNavigator({
             style={{ paddingLeft: depth * 14 + 32 }}
           >
             <span className="truncate">{node.name}</span>
+            {node.isLoading ? (
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center ml-auto">
+                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="right"
+                  align="center"
+                  className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                >
+                  AI review in progress...
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </button>
         );
       })}
@@ -1387,6 +1961,7 @@ function FileDiffCard({
   focusedLine,
   focusedChangeKey,
   autoTooltipLine,
+  isLoading,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
@@ -1395,6 +1970,7 @@ function FileDiffCard({
   focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
   autoTooltipLine: DiffLineLocation | null;
+  isLoading: boolean;
 }) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
@@ -1521,8 +2097,9 @@ function FileDiffCard({
                   <span className="cmux-heatmap-char-wrapper">{rendered}</span>
                 </TooltipTrigger>
                 <TooltipContent
-                  side="top"
+                  side="bottom"
                   align="start"
+                  sideOffset={0}
                   className={cn(
                     "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
                     getHeatmapTooltipTheme(tooltipMeta.score).contentClass
@@ -1622,8 +2199,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-            enhancers,
-          }
+          enhancers,
+        }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
@@ -1684,14 +2261,25 @@ function FileDiffCard({
             </span>
 
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="pl-1.5 text-sm text-neutral-700 truncate">
+              <span className="pl-1.5 text-sm text-neutral-700 truncate flex items-center gap-2">
                 {file.filename}
+                {isLoading ? (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center">
+                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      AI review in progress...
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
               </span>
-              {file.previous_filename ? (
-                <span className="text-sm text-neutral-500 truncate">
-                  Renamed from {file.previous_filename}
-                </span>
-              ) : null}
             </div>
 
             <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
@@ -1862,7 +2450,7 @@ function HeatmapGutterTooltip({
         </span>
       </TooltipTrigger>
       <TooltipContent
-        side="top"
+        side="left"
         align="start"
         className={cn(
           "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
@@ -2270,4 +2858,12 @@ function getParentPaths(path: string): string[] {
     parents.push(segments.slice(0, index).join("/"));
   }
   return parents;
+}
+
+function buildRenameMissingDiffMessage(file: GithubFileChange): string {
+  const previousPath = file.previous_filename;
+  if (previousPath) {
+    return `File renamed from ${previousPath} to ${file.filename}.`;
+  }
+  return "File renamed without diff details.";
 }

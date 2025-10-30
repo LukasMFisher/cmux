@@ -27,7 +27,7 @@ mostImportantWord must always be provided and should identify the most critical 
 Ugly code should be given a higher score.
 Code that may be hard to read for a human should also be given a higher score.
 Non-clean code too. Type casts, type assertions, type guards, "any" types, untyped bodies to "fetch" etc. should be given a higher score.
-Do not be lazy. Return all lines that are even slightly interesting to review. Be extremely thorough.
+DO NOT BE LAZY. DO THE ENTIRE FILE. FROM START TO FINISH. DO NOT BE LAZY.
 
 The diff:
 ${diffForPrompt || "(no diff output)"}`;

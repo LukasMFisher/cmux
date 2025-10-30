@@ -72,9 +72,9 @@ async function getInjectScriptSource(productionMode: boolean): Promise<string> {
       } catch (error) {
         const maybeCode =
           typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          typeof (error as { code?: unknown }).code === "string"
+            error !== null &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
             ? (error as { code: string }).code
             : null;
         if (maybeCode === "ENOENT") {
@@ -305,11 +305,14 @@ function buildMetadata(
   };
 }
 
-async function fetchPrMetadataTask(prUrl: string): Promise<PrMetadata> {
+async function fetchPrMetadataTask(
+  prUrl: string,
+  accessToken?: string
+): Promise<PrMetadata> {
   console.log("Fetching PR metadata...");
   const finishFetchMetadata = startTiming("fetch PR metadata");
   try {
-    return await fetchPrMetadata(prUrl);
+    return await fetchPrMetadata(prUrl, { accessToken });
   } finally {
     finishFetchMetadata();
   }
@@ -385,9 +388,7 @@ export async function startAutomatedPrReview(
       instance = startedInstance;
       return startedInstance;
     });
-    const prMetadataPromise = config.comparison
-      ? Promise.resolve(buildComparisonMetadata(config))
-      : fetchPrMetadataTask(config.prUrl);
+    const prMetadataPromise = fetchPrMetadataTask(config.prUrl, config.githubAccessToken);
 
     const [prMetadata, startedInstance] = await Promise.all([
       prMetadataPromise,
@@ -505,6 +506,9 @@ export async function startAutomatedPrReview(
       envPairs.push(["FILE_CALLBACK_URL", config.fileCallback.url]);
       envPairs.push(["FILE_CALLBACK_TOKEN", config.fileCallback.token]);
     }
+    if (config.githubAccessToken) {
+      envPairs.push(["GITHUB_TOKEN", config.githubAccessToken]);
+    }
     if (config.teamId) {
       envPairs.push(["TEAM_ID", config.teamId]);
     }
@@ -596,39 +600,4 @@ export async function startAutomatedPrReview(
     }
     throw error;
   }
-}
-
-function buildComparisonMetadata(config: PrReviewJobContext): PrMetadata {
-  const comparison = config.comparison;
-  if (!comparison) {
-    throw new Error("Comparison context is required to build metadata");
-  }
-  const { owner: repoOwner, name: repoName } = splitRepoFullName(
-    config.repoFullName
-  );
-  const baseOwner = comparison.baseOwner || repoOwner;
-  const headOwner = comparison.headOwner || repoOwner;
-
-  return {
-    owner: baseOwner,
-    repo: repoName,
-    number: config.prNumber ?? -1,
-    prUrl: config.prUrl,
-    headRefName: comparison.headRef,
-    headRepoOwner: headOwner,
-    headRepoName: repoName,
-    headSha: config.commitRef,
-    baseRefName: comparison.baseRef,
-  };
-}
-
-function splitRepoFullName(repoFullName: string): {
-  owner: string;
-  name: string;
-} {
-  const [owner, name] = repoFullName.split("/");
-  if (!owner || !name) {
-    throw new Error(`Invalid repo full name: ${repoFullName}`);
-  }
-  return { owner, name };
 }

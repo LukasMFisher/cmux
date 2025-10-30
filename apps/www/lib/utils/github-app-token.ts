@@ -56,7 +56,7 @@ export async function generateGitHubInstallationToken({
 
   try {
     console.log(`[GitHub App] Requesting token with body:`, JSON.stringify(requestBody, null, 2));
-    
+
     const { data } = await octokit.request(
       "POST /app/installations/{installation_id}/access_tokens",
       {
@@ -67,7 +67,7 @@ export async function generateGitHubInstallationToken({
 
     console.log(`[GitHub App] Successfully generated token with expiry: ${data.expires_at}`);
     console.log(`[GitHub App] Token has access to ${data.repositories?.length || "all"} repositories`);
-    
+
     return data.token;
   } catch (error) {
     console.error(`[GitHub App] Failed to generate token:`, error);
@@ -83,11 +83,11 @@ export async function generateGitHubInstallationToken({
 export async function getInstallationForRepo(
   repository: string
 ): Promise<number | null> {
-  // Extract owner from repository (format: owner/repo)
-  const [owner] = repository.split("/");
-  if (!owner) return null;
+  // Extract owner and repo from repository (format: owner/repo)
+  const [owner, repo] = repository.split("/");
+  if (!owner || !repo) return null;
 
-  console.log(`[GitHub App] Looking for installation for owner: ${owner}`);
+  console.log(`[GitHub App] Looking for installation for repository: ${repository}`);
 
   const octokit = new Octokit({
     authStrategy: createAppAuth,
@@ -98,23 +98,24 @@ export async function getInstallationForRepo(
   });
 
   try {
-    // Get the installation for this specific owner/org
+    // Get the installation for this specific repository
     const { data } = await octokit.request(
-      "GET /users/{username}/installation",
-      { username: owner }
-    ).catch(() => {
-      console.log(`[GitHub App] ${owner} is not a user, trying as organization`);
-      // If not a user, try as an org
-      return octokit.request("GET /orgs/{org}/installation", { org: owner });
-    });
+      "GET /repos/{owner}/{repo}/installation",
+      { owner, repo }
+    );
 
-    console.log(`[GitHub App] Found installation ${data.id} for ${owner}`);
+    console.log(`[GitHub App] Found installation ${data.id} for ${repository}`);
     console.log(`[GitHub App] Installation permissions:`, data.permissions);
     console.log(`[GitHub App] Installation events:`, data.events);
-    
+
     return data.id;
   } catch (error) {
-    console.error(`[GitHub App] No installation found for ${owner}:`, error);
+    // 404 is expected when the app is not installed - not an error
+    if (error && typeof error === 'object' && 'status' in error && error.status === 404) {
+      console.log(`[GitHub App] No installation found for ${repository} (app not installed or no access)`);
+    } else {
+      console.error(`[GitHub App] Unexpected error checking installation for ${repository}:`, error);
+    }
     return null;
   }
 }
