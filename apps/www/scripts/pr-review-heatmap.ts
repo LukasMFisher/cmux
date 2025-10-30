@@ -44,7 +44,7 @@ export interface HeatmapJobResult {
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const GITHUB_USER_AGENT = "cmux-pr-review-heatmap";
 
-// Load GitHub tokens from environment variables
+// Load GitHub tokens from environment variables for rotation
 function loadGitHubTokensFromEnv(): string[] {
   return [
     process.env.GITHUB_TOKEN_1,
@@ -63,43 +63,6 @@ function getNextGitHubToken(): string | null {
   const token = tokens[currentTokenIndex % tokens.length];
   currentTokenIndex = (currentTokenIndex + 1) % tokens.length;
   return token;
-}
-
-// In-memory cache for GitHub API responses
-interface CacheEntry {
-  data: unknown;
-  timestamp: number;
-}
-
-const githubApiCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function getCacheKey(url: string, accept: string): string {
-  return `${url}::${accept}`;
-}
-
-function _getCachedResponse(url: string, accept: string): unknown | null {
-  const key = getCacheKey(url, accept);
-  const entry = githubApiCache.get(key);
-  if (!entry) {
-    return null;
-  }
-  const age = Date.now() - entry.timestamp;
-  if (age > CACHE_TTL_MS) {
-    githubApiCache.delete(key);
-    return null;
-  }
-  console.log(`[heatmap] Cache HIT for ${url}`);
-  return entry.data;
-}
-
-function _setCachedResponse(url: string, accept: string, data: unknown): void {
-  const key = getCacheKey(url, accept);
-  githubApiCache.set(key, {
-    data,
-    timestamp: Date.now(),
-  });
-  console.log(`[heatmap] Cached response for ${url}`);
 }
 
 interface CollectPrDiffsOptions {
@@ -687,20 +650,24 @@ interface GhPrMetadata {
 }
 
 function resolveGithubToken(token?: string | null): string | null {
-  // If a token is explicitly provided, use it
+  // If an explicit token is provided, use it
   if (token) {
-    console.log("[heatmap] Using explicitly provided GitHub token");
     return token;
   }
 
-  // Use rotating tokens by default
-  const nextToken = getNextGitHubToken();
-  if (nextToken) {
-    return nextToken;
+  // Otherwise, try rotating tokens first
+  const rotatingToken = getNextGitHubToken();
+  if (rotatingToken) {
+    return rotatingToken;
   }
 
-  console.warn("[heatmap] No GitHub tokens available (set GITHUB_TOKEN_1, GITHUB_TOKEN_2, GITHUB_TOKEN_3)");
-  return null;
+  // Fall back to single token env vars
+  return (
+    process.env.GITHUB_TOKEN ??
+    process.env.GH_TOKEN ??
+    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ??
+    null
+  );
 }
 
 function normalizeGithubApiBaseUrl(custom?: string): string {

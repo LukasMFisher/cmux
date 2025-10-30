@@ -12,6 +12,7 @@ import {
   generateGitHubInstallationToken,
   getInstallationForRepo,
 } from "@/lib/utils/github-app-token";
+import { checkRepoVisibility } from "@/lib/github/check-repo-visibility";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -123,17 +124,6 @@ export type SimpleReviewStreamResult = {
   finalText: string;
 };
 
-function isAuthorizationError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const message = error.message ?? "";
-  if (typeof message !== "string") {
-    return false;
-  }
-  return /\bstatus\s+(401|403|404)\b/.test(message);
-}
-
 function parseRepoSlug(prIdentifier: string): RepoSlug | null {
   try {
     const url = new URL(prIdentifier);
@@ -190,40 +180,54 @@ async function collectDiffsWithFallback({
       ? githubToken.trim()
       : null;
 
-  let firstError: unknown = null;
-
-  // Try with provided token first
-  try {
-    return await collectPrDiffs({
-      prIdentifier,
-      includePaths: [],
-      maxFiles: null,
-      githubToken: normalizedToken ?? undefined,
-    });
-  } catch (error) {
-    firstError = error;
-
-    // If not an auth error, fail immediately
-    if (!isAuthorizationError(error)) {
-      throw error;
-    }
-  }
-
-  // Try with GitHub App token
   const slug = parseRepoSlug(prIdentifier);
-  if (slug) {
+
+  // For repos without explicit token, check visibility to determine auth strategy
+  if (!normalizedToken && slug) {
+    const visibility = await checkRepoVisibility(slug.owner, slug.repo);
+    console.info(
+      "[simple-review] Repo visibility check",
+      { owner: slug.owner, repo: slug.repo, visibility }
+    );
+
+    // For public repos, use rotating tokens
+    if (visibility === "public") {
+      console.info(
+        "[simple-review] Public repo, using rotating tokens",
+        { owner: slug.owner, repo: slug.repo }
+      );
+
+      try {
+        return await collectPrDiffs({
+          prIdentifier,
+          includePaths: [],
+          maxFiles: null,
+          githubToken: undefined, // Use rotating tokens
+        });
+      } catch (error) {
+        // Unexpected error for public repo
+        console.error(
+          "[simple-review] Unexpected error fetching public repo",
+          { owner: slug.owner, repo: slug.repo, error }
+        );
+        throw error;
+      }
+    }
+
+    // For private/unknown repos, try GitHub App first
+    console.info(
+      "[simple-review] Private/unknown repo, trying GitHub App",
+      { owner: slug.owner, repo: slug.repo }
+    );
+
     try {
       const installationId = await getInstallationForRepo(
         `${slug.owner}/${slug.repo}`
       );
-
       if (installationId) {
         console.info(
-          "[simple-review] Falling back to GitHub App token for diff fetch",
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-          }
+          "[simple-review] Using GitHub App token",
+          { owner: slug.owner, repo: slug.repo, installationId }
         );
 
         const appToken = await generateGitHubInstallationToken({
@@ -243,39 +247,31 @@ async function collectDiffsWithFallback({
         });
       }
     } catch (error) {
-      // GitHub App token failed, continue to gh CLI fallback
       console.warn(
-        "[simple-review] GitHub App token fallback failed, trying gh CLI",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        }
+        "[simple-review] GitHub App check/fetch failed, will try gh CLI",
+        { owner: slug.owner, repo: slug.repo, error: error instanceof Error ? error.message : String(error) }
       );
     }
+
+    // Fall back to gh CLI for private repos without GitHub App
+    console.info(
+      "[simple-review] Using gh CLI for private repo",
+      { owner: slug.owner, repo: slug.repo }
+    );
+
+    return await collectPrDiffsViaGhCli(prIdentifier, [], null);
   }
 
-  // Try with gh CLI as final fallback
+  // For repos with explicit token, use that token
   try {
-    console.info(
-      "[simple-review] Falling back to gh CLI for diff fetch",
-      { prIdentifier }
-    );
-
-    return await collectPrDiffsViaGhCli(
+    return await collectPrDiffs({
       prIdentifier,
-      [],
-      null
-    );
-  } catch (ghError) {
-    console.error(
-      "[simple-review] gh CLI fallback also failed",
-      {
-        ghError: ghError instanceof Error ? ghError.message : String(ghError),
-        originalError: firstError instanceof Error ? firstError.message : String(firstError),
-      }
-    );
-
-    // Throw the original error
-    throw firstError;
+      includePaths: [],
+      maxFiles: null,
+      githubToken: normalizedToken ?? undefined,
+    });
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -447,11 +443,17 @@ export async function runSimpleAnthropicReviewStream(
             error instanceof Error
               ? error.message
               : String(error ?? "Unknown error");
-          console.error("[simple-review] File stream failed", {
-            prIdentifier,
-            filePath: file.filePath,
-            message,
-          });
+
+          // Don't log abort errors - client disconnected
+          const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
+          if (!isAbortError) {
+            console.error("[simple-review] File stream failed", {
+              prIdentifier,
+              filePath: file.filePath,
+              message,
+            });
+          }
+
           await emitEvent({
             type: "skip",
             filePath: file.filePath,
