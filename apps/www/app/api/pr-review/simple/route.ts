@@ -111,11 +111,35 @@ export async function GET(request: NextRequest) {
                     filePath: event.filePath,
                   });
                   break;
+                case "skip":
+                  console.info("[simple-review][api][skip]", {
+                    filePath: event.filePath,
+                    reason: event.reason,
+                  });
+                  enqueue({
+                    type: "skip",
+                    filePath: event.filePath,
+                    reason: event.reason,
+                  });
+                  break;
                 case "hunk":
                   enqueue({
                     type: "hunk",
                     filePath: event.filePath,
                     header: event.header,
+                  });
+                  break;
+                case "file-complete":
+                  console.info("[simple-review][api][file-complete]", {
+                    filePath: event.filePath,
+                    status: event.status,
+                    summary: event.summary,
+                  });
+                  enqueue({
+                    type: "file-complete",
+                    filePath: event.filePath,
+                    status: event.status,
+                    summary: event.summary,
                   });
                   break;
                 case "line": {

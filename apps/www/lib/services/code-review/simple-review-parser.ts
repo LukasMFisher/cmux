@@ -20,7 +20,14 @@ export type SimpleReviewParsedLine = {
 export type SimpleReviewParsedEvent =
   | { type: "file"; filePath: string }
   | { type: "hunk"; filePath: string | null; header: string }
-  | { type: "line"; filePath: string; line: SimpleReviewParsedLine };
+  | { type: "line"; filePath: string; line: SimpleReviewParsedLine }
+  | { type: "skip"; filePath: string; reason: string }
+  | {
+      type: "file-complete";
+      filePath: string;
+      status: "success" | "skipped" | "error";
+      summary?: string;
+    };
 
 function clampScore(value: number): number {
   if (Number.isNaN(value)) {
