@@ -2,6 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
+import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
 import { z } from "zod";
 import { env } from "./www-env";
 
@@ -118,6 +119,7 @@ function getModelAndProvider(
   if (apiKeys.ANTHROPIC_API_KEY) {
     const anthropic = createAnthropic({
       apiKey: apiKeys.ANTHROPIC_API_KEY,
+      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
     });
     return {
       model: anthropic("claude-3-5-haiku-20241022"),

@@ -187,7 +187,9 @@ function formatResultAsMarkdown(
     // Use the original diff text when available; ensure we still output a valid diff line.
     const rawLine = line.line;
     const hasDiffMarker =
-      rawLine.startsWith("+") || rawLine.startsWith("-") || rawLine.startsWith(" ");
+      rawLine.startsWith("+") ||
+      rawLine.startsWith("-") ||
+      rawLine.startsWith(" ");
     let diffLine = hasDiffMarker ? rawLine : ` ${rawLine}`;
 
     // Add inline comment if should review
@@ -883,8 +885,10 @@ export async function collectPrDiffs({
   const token = resolveGithubToken(githubToken ?? null);
   const baseUrl = normalizeGithubApiBaseUrl(githubApiBaseUrl);
   const context: GithubApiContext = { token, baseUrl };
-  const metadata = await fetchPrMetadataFromGithub(identifier, context);
-  const allDiffs = await fetchPrDiffFromGithub(identifier, context);
+  const [metadata, allDiffs] = await Promise.all([
+    fetchPrMetadataFromGithub(identifier, context),
+    fetchPrDiffFromGithub(identifier, context),
+  ]);
   let filtered = filterFileDiffsByInclude(allDiffs, includePaths ?? []);
   if (filtered.length === 0) {
     filtered = allDiffs;

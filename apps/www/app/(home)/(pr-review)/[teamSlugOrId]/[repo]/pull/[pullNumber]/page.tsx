@@ -15,6 +15,7 @@ import { isGithubApiError } from "@/lib/github/errors";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
+import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
 import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
@@ -30,6 +31,8 @@ import {
 import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
+
+const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
 type PageParams = {
   teamSlugOrId: string;
@@ -153,10 +156,15 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   // Get user (including anonymous users) - middleware has already checked for cookies
   const user = await stackServerApp.getUser({
-    or: "anonymous"
+    or: "anonymous",
   });
 
-  console.log("[PullRequestPage] user:", user?.id, "repoIsPublic:", repoIsPublic);
+  console.log(
+    "[PullRequestPage] user:",
+    user?.id,
+    "repoIsPublic:",
+    repoIsPublic
+  );
 
   // For private repos, reject anonymous users and redirect to auth
   if (!repoIsPublic && user && !user.primaryEmail) {
@@ -228,7 +236,7 @@ export default async function PullRequestPage({ params }: PageProps) {
   ).then((files) => files.map(toGithubFileChange));
 
   // Schedule code review in background (non-blocking)
-  if (selectedTeam) {
+  if (selectedTeam && ENABLE_IMMEDIATE_CODE_REVIEW) {
     scheduleCodeReviewStart({
       teamSlugOrId: selectedTeam.id,
       githubOwner,
@@ -348,11 +356,6 @@ function scheduleCodeReviewStart({
           const authJson = await user.getAuthJson();
           accessToken = authJson.accessToken ?? null;
 
-          if (!accessToken) {
-            console.warn("[code-review] No access token available; skipping callback");
-            return;
-          }
-
           const githubAccount = await user.getConnectedAccount("github");
           if (!githubAccount) {
             console.warn(
@@ -368,7 +371,58 @@ function scheduleCodeReviewStart({
             }
           }
         } catch (error) {
-          console.warn("[code-review] Failed to get user auth info; skipping callback", error);
+          console.warn(
+            "[code-review] Failed to get user auth info; skipping callback",
+            error
+          );
+          return;
+        }
+
+        const repoIsPrivate =
+          pullRequest.base?.repo?.private ??
+          pullRequest.head?.repo?.private ??
+          false;
+
+        const shouldAttemptSimpleReview =
+          !repoIsPrivate ||
+          (typeof githubAccessToken === "string" &&
+            githubAccessToken.trim().length > 0);
+
+        const simpleReviewToken = repoIsPrivate
+          ? githubAccessToken
+          : (githubAccessToken ?? null);
+
+        let simpleReviewPromise: Promise<unknown> | null = null;
+
+        if (shouldAttemptSimpleReview) {
+          simpleReviewPromise = runSimpleAnthropicReviewStream({
+            prIdentifier: githubLink,
+            githubToken: simpleReviewToken,
+          }).catch((error) => {
+            const message =
+              error instanceof Error ? error.message : String(error ?? "");
+            console.error("[simple-review][page] Stream failed", {
+              githubLink,
+              message,
+            });
+          });
+        } else {
+          console.warn(
+            "[simple-review][page] Skipping stream; repository is private and no token available",
+            {
+              githubLink,
+              pullNumber,
+            }
+          );
+        }
+
+        if (!accessToken) {
+          console.warn(
+            "[code-review] No access token available; skipping automated job start"
+          );
+          if (simpleReviewPromise) {
+            await simpleReviewPromise;
+          }
           return;
         }
 
@@ -397,8 +451,15 @@ function scheduleCodeReviewStart({
           teamId: job.teamId,
         });
 
+        const followUpTasks: Promise<unknown>[] = [];
         if (backgroundTask) {
-          await backgroundTask;
+          followUpTasks.push(backgroundTask);
+        }
+        if (simpleReviewPromise) {
+          followUpTasks.push(simpleReviewPromise);
+        }
+        if (followUpTasks.length > 0) {
+          await Promise.all(followUpTasks);
         }
       } catch (error) {
         const context = {
@@ -743,13 +804,13 @@ function formatRelativeTimeFromNow(date: Date): string {
     divisor: number;
     unit: Intl.RelativeTimeFormatUnit;
   }[] = [
-      { threshold: 45, divisor: 1, unit: "second" },
-      { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
-      { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
-      { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
-      { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
-      { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
-    ];
+    { threshold: 45, divisor: 1, unit: "second" },
+    { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
+    { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
+    { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
+    { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
+    { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
+  ];
 
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 

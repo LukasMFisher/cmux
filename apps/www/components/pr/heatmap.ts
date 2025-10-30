@@ -17,6 +17,7 @@ export type DiffHeatmap = {
   lineClasses: Map<number, string>;
   oldLineClasses: Map<number, string>;
   newRanges: HeatmapRangeNode[];
+  oldRanges: HeatmapRangeNode[];
   entries: Map<number, ResolvedHeatmapLine>;
   oldEntries: Map<number, ResolvedHeatmapLine>;
   totalEntries: number;
@@ -168,8 +169,10 @@ export function prepareDiffHeatmapArtifacts(
 
     let highlight: { start: number; length: number } | null = null;
 
-    if (entry.side === "new" && entry.mostImportantWord) {
-      const content = lineContent.newLines.get(entry.lineNumber);
+    if (entry.mostImportantWord) {
+      const contentSource =
+        entry.side === "new" ? lineContent.newLines : lineContent.oldLines;
+      const content = contentSource.get(entry.lineNumber);
       if (content && content.length > 0) {
         const rawHighlight = deriveHighlightRange(
           content,
@@ -232,7 +235,8 @@ export function renderDiffHeatmapFromArtifacts(
 
   const lineClasses = new Map<number, string>();
   const oldLineClasses = new Map<number, string>();
-  const characterRanges: HeatmapRangeNode[] = [];
+  const newCharacterRanges: HeatmapRangeNode[] = [];
+  const oldCharacterRanges: HeatmapRangeNode[] = [];
   const entries = new Map<number, ResolvedHeatmapLine>();
   const oldEntries = new Map<number, ResolvedHeatmapLine>();
 
@@ -240,7 +244,7 @@ export function renderDiffHeatmapFromArtifacts(
     source: Map<number, HeatmapEntryArtifact>,
     target: Map<number, ResolvedHeatmapLine>,
     classMap: Map<number, string>,
-    { allowHighlight }: { allowHighlight: boolean }
+    rangeCollector?: HeatmapRangeNode[]
   ) => {
     for (const [lineNumber, artifact] of source.entries()) {
       const score = artifact.score ?? SCORE_CLAMP_MIN;
@@ -260,9 +264,9 @@ export function renderDiffHeatmapFromArtifacts(
         classMap.set(lineNumber, `cmux-heatmap-tier-${artifact.tier}`);
       }
 
-      if (allowHighlight && artifact.highlight) {
+      if (rangeCollector && artifact.highlight) {
         const charTier = artifact.tier > 0 ? artifact.tier : 1;
-        characterRanges.push({
+        rangeCollector.push({
           type: "span",
           lineNumber,
           start: artifact.highlight.start,
@@ -273,17 +277,19 @@ export function renderDiffHeatmapFromArtifacts(
     }
   };
 
-  applyArtifacts(artifacts.entries, entries, lineClasses, {
-    allowHighlight: true,
-  });
-  applyArtifacts(artifacts.oldEntries, oldEntries, oldLineClasses, {
-    allowHighlight: false,
-  });
+  applyArtifacts(artifacts.entries, entries, lineClasses, newCharacterRanges);
+  applyArtifacts(
+    artifacts.oldEntries,
+    oldEntries,
+    oldLineClasses,
+    oldCharacterRanges
+  );
 
   if (
     lineClasses.size === 0 &&
     oldLineClasses.size === 0 &&
-    characterRanges.length === 0
+    newCharacterRanges.length === 0 &&
+    oldCharacterRanges.length === 0
   ) {
     if (entries.size === 0 && oldEntries.size === 0) {
       return null;
@@ -298,7 +304,8 @@ export function renderDiffHeatmapFromArtifacts(
   return {
     lineClasses,
     oldLineClasses,
-    newRanges: characterRanges,
+    newRanges: newCharacterRanges,
+    oldRanges: oldCharacterRanges,
     entries,
     oldEntries,
     totalEntries,

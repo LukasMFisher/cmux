@@ -101,6 +101,8 @@ describe("buildDiffHeatmap", () => {
     expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
     expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
     expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    expect(Array.isArray(heatmap.oldRanges)).toBe(true);
+    expect(heatmap.oldRanges).toHaveLength(0);
 
     const rangeForLine2 = heatmap.newRanges.find(
       (range) => range.lineNumber === 2
@@ -126,6 +128,43 @@ describe("buildDiffHeatmap", () => {
     );
     expect(rangeForLine4.start).toBe(expectedStart);
     expect(rangeForLine4.length).toBe(6);
+  });
+
+  it("produces character highlights for old-side matches", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "const b = 2;",
+            shouldBeReviewedScore: 0.6,
+            shouldReviewWhy: "old line review",
+            mostImportantWord: "b",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review);
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    expect(heatmap.oldEntries.get(2)?.side).toBe("old");
+    const oldRange = heatmap.oldRanges.find(
+      (range) => range.lineNumber === 2
+    );
+    expect(oldRange).toBeDefined();
+    if (!oldRange) {
+      return;
+    }
+
+    expect(oldRange.start).toBeGreaterThanOrEqual(0);
+    expect(oldRange.length).toBeGreaterThan(0);
   });
 
   it("filters entries below the configured threshold", () => {
