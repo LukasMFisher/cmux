@@ -90,10 +90,21 @@ export async function GET(request: NextRequest) {
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
+        let isClosed = false;
+
         const enqueue = (payload: unknown) => {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
-          );
+          // Silently skip if controller is already closed (happens when client disconnects)
+          if (isClosed) {
+            return;
+          }
+          try {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+            );
+          } catch {
+            // Mark as closed if enqueue fails
+            isClosed = true;
+          }
         };
 
         enqueue({ type: "status", message: "starting" });
@@ -168,18 +179,25 @@ export async function GET(request: NextRequest) {
             },
           });
           enqueue({ type: "complete" });
+          isClosed = true;
           controller.close();
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "Unknown error";
 
-          // Don't log auth errors as errors - they're expected for private repos and handled by fallback
+          // Don't log expected errors
           const isAuthError = message.includes("status 401") || message.includes("status 403") || message.includes("status 404");
+          const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
 
           if (isAuthError) {
             console.info("[simple-review][api] Auth failed, fallback should handle", {
               prIdentifier,
               message,
+            });
+          } else if (isAbortError) {
+            // Client disconnected - this is expected, don't log as error
+            console.info("[simple-review][api] Stream aborted by client", {
+              prIdentifier,
             });
           } else {
             console.error("[simple-review][api] Stream failed", {
@@ -190,6 +208,7 @@ export async function GET(request: NextRequest) {
           }
 
           enqueue({ type: "error", message });
+          isClosed = true;
           controller.close();
         }
       },

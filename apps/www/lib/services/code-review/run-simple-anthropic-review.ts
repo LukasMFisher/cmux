@@ -443,11 +443,17 @@ export async function runSimpleAnthropicReviewStream(
             error instanceof Error
               ? error.message
               : String(error ?? "Unknown error");
-          console.error("[simple-review] File stream failed", {
-            prIdentifier,
-            filePath: file.filePath,
-            message,
-          });
+
+          // Don't log abort errors - client disconnected
+          const isAbortError = message.includes("Stream aborted") || message.includes("aborted");
+          if (!isAbortError) {
+            console.error("[simple-review] File stream failed", {
+              prIdentifier,
+              filePath: file.filePath,
+              message,
+            });
+          }
+
           await emitEvent({
             type: "skip",
             filePath: file.filePath,
