@@ -715,8 +715,7 @@ async function fetchGithubResponse(
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(
-      `GitHub API request to ${url} failed with status ${
-        response.status
+      `GitHub API request to ${url} failed with status ${response.status
       }: ${errorText.slice(0, 2000)}`
     );
   }
