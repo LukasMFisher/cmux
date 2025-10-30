@@ -15,7 +15,7 @@ export default function HeatmapPage() {
           href="https://cmux.dev"
           className="mb-8 inline-block text-sm text-neutral-600 hover:text-black"
         >
-          ← Back to cmux
+          ← Back to <span className="bg-sky-100 px-1">cmux</span>
         </Link>
         <h1 className="mb-8 text-3xl font-bold">
           A <span className="bg-yellow-200 px-1">heatmap</span> diff viewer for
@@ -51,7 +51,7 @@ export default function HeatmapPage() {
               rel="noopener noreferrer"
               className="text-black underline"
             >
-              cmux repo
+              <span className="bg-sky-100 px-1">cmux</span> repo
             </a>
             .
           </p>
