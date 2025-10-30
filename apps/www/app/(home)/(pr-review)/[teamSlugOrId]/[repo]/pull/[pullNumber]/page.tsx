@@ -1,7 +1,6 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
-import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
 
@@ -151,24 +150,12 @@ export default async function PullRequestPage({ params }: PageProps) {
   // Check if the repository is public
   const repoIsPublic = await isRepoPublic(githubOwner, repo);
 
-  // Check if Stack Auth cookies exist (indicates user has authenticated or gone through guest flow)
-  const cookieStore = await cookies();
-  const hasStackAuthCookies = cookieStore.has("stack-access") || cookieStore.has(`stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`);
-
-  console.log("[PullRequestPage] hasStackAuthCookies:", hasStackAuthCookies);
-
-  // If no cookies, redirect to auth page to authenticate
-  if (!hasStackAuthCookies) {
-    console.log("[PullRequestPage] No Stack Auth cookies found, redirecting to auth page");
-    redirect(`/${githubOwner}/${repo}/pull/${pullNumber}/auth`);
-  }
-
-  // Get user (including anonymous users) now that we know cookies exist
+  // Get user (including anonymous users) - middleware has already checked for cookies
   const user = await stackServerApp.getUser({
     or: "anonymous"
   });
 
-  console.log("[PullRequestPage] After getUser - user:", user?.id, "repoIsPublic:", repoIsPublic);
+  console.log("[PullRequestPage] user:", user?.id, "repoIsPublic:", repoIsPublic);
 
   // For private repos, require a team. For public repos, teams are optional.
   let selectedTeam: Team | null = null;

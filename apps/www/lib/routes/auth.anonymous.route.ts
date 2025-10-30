@@ -115,17 +115,6 @@ authAnonymousRouter.openapi(
           // Get the user object from Stack Auth
           const user = await stackServerApp.getUser(data.user_id);
 
-          if (!user) {
-            console.error("[authAnonymous] User not found:", data.user_id);
-            return c.json({
-              success: true,
-              userId: data.user_id,
-              teamId: data.team_id,
-              teams: [],
-              message: "Anonymous user created successfully (user not found)",
-            });
-          }
-
           // Get teams for this specific user
           const teams = await user.listTeams();
           console.log("[authAnonymous] User teams:", teams);
@@ -136,10 +125,18 @@ authAnonymousRouter.openapi(
             profile_image_url: team.profileImageUrl,
           }));
 
+          console.log("[authAnonymous] Anonymous user created successfully", {
+            success: true,
+            userId: data.user_id,
+            teamId: userTeams?.[0].id,
+            teams: userTeams,
+            message: "Anonymous user created successfully",
+          });
+
           return c.json({
             success: true,
             userId: data.user_id,
-            teamId: data.team_id,
+            teamId: userTeams?.[0]?.id,
             teams: userTeams,
             message: "Anonymous user created successfully",
           });
@@ -149,7 +146,7 @@ authAnonymousRouter.openapi(
           return c.json({
             success: true,
             userId: data.user_id,
-            teamId: data.team_id,
+            teamId: undefined,
             teams: [],
             message: "Anonymous user created successfully (teams fetch failed)",
           });
