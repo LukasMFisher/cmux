@@ -7,14 +7,14 @@
   </a>
 </p>
 
-cmux lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
+cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
 
-Each agent runs in its own Docker container, launching VS Code with a Git diff UI and a terminal for its CLI.
+Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready so parallel agent work stays verifiable, fast, and ready to ship.
 
-![cmux screenshot](./docs/assets/cmux-demo-00.png)
-![cmux screenshot](./docs/assets/cmux-demo-10.png)
-![cmux screenshot](./docs/assets/cmux-demo-20.png)
-![cmux screenshot](./docs/assets/cmux-demo-30.png)
+![cmux screenshot](./docs/assets/cmux0.png)
+![cmux screenshot](./docs/assets/cmux1.png)
+![cmux screenshot](./docs/assets/cmux2.png)
+![cmux screenshot](./docs/assets/cmux3.png)
 
 ## Install
 
