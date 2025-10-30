@@ -2177,7 +2177,7 @@ function CmuxPromoCard() {
     <div className="border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
       <div className="flex flex-col gap-1">
         <div className="flex flex-row items-center justify-start gap-2 text-center">
-          <p className="text-xs font-mono leading-relaxed text-neutral-900 font-bold">
+          <p className="text-sm font-medium text-neutral-700 leading-relaxed font-sans">
             From the creators of
           </p>
           <a
@@ -2185,18 +2185,18 @@ function CmuxPromoCard() {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Visit cmux.dev"
-            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-2.5px]"
+            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-6.5px]"
           >
             <CmuxLogo
-              height={28}
+              height={30}
               label="cmux.dev"
               wordmarkText="cmux.dev"
               wordmarkFill="#0f172a"
             />
           </a>
         </div>
-        <div className="mb-1">
-          <p className="text-xs font-mono leading-relaxed text-neutral-500">
+        <div className="mb-1 translate-y-[-1.5px]">
+          <p className="text-xs font-sans leading-relaxed text-neutral-500">
             We also made a Claude Code/Codex manager! Check out cmux if you want
             heatmaps for your vibe coded diffs (coming soon)!
           </p>
@@ -2206,7 +2206,7 @@ function CmuxPromoCard() {
             href="https://cmux.dev"
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono inline-flex items-center justify-center bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-neutral-800"
+            className="font-sans inline-flex items-center justify-center bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-neutral-800"
           >
             Explore cmux
           </a>
@@ -2214,7 +2214,7 @@ function CmuxPromoCard() {
             href="https://github.com/manaflow-ai/cmux"
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+            className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
           >
             <Star className="h-3.5 w-3.5" aria-hidden />
             Star on GitHub
@@ -2249,7 +2249,7 @@ function HeatmapThresholdControl({
   );
 
   return (
-    <div className="rounded border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700">
+    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={sliderId} className="font-medium text-neutral-700">
           &ldquo;Should review&rdquo; threshold
