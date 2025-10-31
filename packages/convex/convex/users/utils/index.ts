@@ -49,6 +49,3 @@ export const taskIdWithFake = v.union(
   v.id("tasks"),
   v.string() // Accepts fake IDs like "fake-xxx"
 );
-
-export { getWorkerAuth } from "./getWorkerAuth";
-export type { WorkerAuthContext } from "./getWorkerAuth";
