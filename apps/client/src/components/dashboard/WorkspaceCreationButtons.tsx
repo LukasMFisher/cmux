@@ -31,7 +31,8 @@ export function WorkspaceCreationButtons({
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
-  const [isCreating, setIsCreating] = useState(false);
+  const [isCreatingLocal, setIsCreatingLocal] = useState(false);
+  const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
@@ -55,7 +56,7 @@ export function WorkspaceCreationButtons({
     const projectFullName = selectedProject[0];
     const repoUrl = `https://github.com/${projectFullName}.git`;
 
-    setIsCreating(true);
+    setIsCreatingLocal(true);
 
     try {
       const reservation = await reserveLocalWorkspace({
@@ -100,7 +101,7 @@ export function WorkspaceCreationButtons({
       console.error("Error creating local workspace:", error);
       toast.error("Failed to create local workspace");
     } finally {
-      setIsCreating(false);
+      setIsCreatingLocal(false);
     }
   }, [
     socket,
@@ -133,7 +134,7 @@ export function WorkspaceCreationButtons({
       ""
     ) as Id<"environments">;
 
-    setIsCreating(true);
+    setIsCreatingCloud(true);
 
     try {
       // Create task in Convex without task description (it's just a workspace)
@@ -175,7 +176,7 @@ export function WorkspaceCreationButtons({
       console.error("Error creating cloud workspace:", error);
       toast.error("Failed to create cloud workspace");
     } finally {
-      setIsCreating(false);
+      setIsCreatingCloud(false);
     }
   }, [
     socket,
@@ -196,10 +197,10 @@ export function WorkspaceCreationButtons({
         <TooltipTrigger asChild>
           <button
             onClick={handleCreateLocalWorkspace}
-            disabled={!canCreateLocal || isCreating}
+            disabled={!canCreateLocal || isCreatingLocal}
             className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isCreating ? (
+            {isCreatingLocal ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <FolderOpen className="w-3.5 h-3.5" />
@@ -220,10 +221,14 @@ export function WorkspaceCreationButtons({
         <TooltipTrigger asChild>
           <button
             onClick={handleCreateCloudWorkspace}
-            disabled={!canCreateCloud || isCreating}
+            disabled={!canCreateCloud || isCreatingCloud}
             className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <ServerIcon className="w-3.5 h-3.5" />
+            {isCreatingCloud ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ServerIcon className="w-3.5 h-3.5" />
+            )}
             <span>Create Cloud Workspace</span>
           </button>
         </TooltipTrigger>
