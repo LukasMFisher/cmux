@@ -33,6 +33,7 @@ import type * as github_workflows from "../github_workflows.js";
 import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
+import type * as screenshots_http from "../screenshots_http.js";
 import type * as stack from "../stack.js";
 import type * as stack_webhook from "../stack_webhook.js";
 import type * as stack_webhook_actions from "../stack_webhook_actions.js";
@@ -43,7 +44,8 @@ import type * as taskRuns from "../taskRuns.js";
 import type * as taskRuns_http from "../taskRuns_http.js";
 import type * as tasks from "../tasks.js";
 import type * as teams from "../teams.js";
-import type * as users_utils from "../users/utils.js";
+import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
+import type * as users_utils_index from "../users/utils/index.js";
 import type * as users from "../users.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
 
@@ -87,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
+  screenshots_http: typeof screenshots_http;
   stack: typeof stack;
   stack_webhook: typeof stack_webhook;
   stack_webhook_actions: typeof stack_webhook_actions;
@@ -97,7 +100,8 @@ declare const fullApi: ApiFromModules<{
   taskRuns_http: typeof taskRuns_http;
   tasks: typeof tasks;
   teams: typeof teams;
-  "users/utils": typeof users_utils;
+  "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
+  "users/utils/index": typeof users_utils_index;
   users: typeof users;
   workspaceSettings: typeof workspaceSettings;
 }>;

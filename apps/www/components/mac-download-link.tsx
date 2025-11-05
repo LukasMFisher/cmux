@@ -8,114 +8,20 @@ import {
 } from "react";
 
 import type { MacArchitecture, MacDownloadUrls } from "@/lib/releases";
+import {
+  detectClientMacArchitecture,
+  getNavigatorArchitectureHint,
+  pickMacDownloadUrl,
+} from "@/lib/utils/mac-architecture";
 
 type MacDownloadLinkProps = Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
-  "href"
+  "href" | "popover"
 > & {
   urls: MacDownloadUrls;
   fallbackUrl: string;
   autoDetect?: boolean;
   architecture?: MacArchitecture;
-};
-
-const normalizeArchitecture = (
-  value?: string | null,
-): MacArchitecture | null => {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.toLowerCase();
-
-  if (normalized === "universal" || normalized === "universal2") {
-    return "universal";
-  }
-
-  if (normalized === "arm" || normalized === "arm64" || normalized === "aarch64") {
-    return "arm64";
-  }
-
-  if (
-    normalized === "x86" ||
-    normalized === "x86_64" ||
-    normalized === "amd64" ||
-    normalized === "x64"
-  ) {
-    return "x64";
-  }
-
-  return null;
-};
-
-const detectMacArchitecture = async (): Promise<MacArchitecture | null> => {
-  if (typeof navigator === "undefined") {
-    return null;
-  }
-
-  const platform = navigator.platform?.toLowerCase() ?? "";
-  const userAgent = navigator.userAgent.toLowerCase();
-  const isMac = platform.includes("mac") || userAgent.includes("macintosh");
-
-  if (!isMac) {
-    return null;
-  }
-
-  const navigatorWithUAData = navigator as Navigator & {
-    userAgentData?: {
-      architecture?: string;
-      getHighEntropyValues?: (
-        hints: readonly string[],
-      ) => Promise<Record<string, unknown>>;
-    };
-  };
-
-  const uaData = navigatorWithUAData.userAgentData;
-
-  if (uaData) {
-    let architectureHint = normalizeArchitecture(uaData.architecture ?? null);
-
-    if (!architectureHint && typeof uaData.getHighEntropyValues === "function") {
-      const details = await uaData
-        .getHighEntropyValues(["architecture"])
-        .catch(() => null);
-
-      if (details && typeof details === "object") {
-        const maybeValue = (details as Record<string, unknown>).architecture;
-        architectureHint = normalizeArchitecture(
-          typeof maybeValue === "string" ? maybeValue : null,
-        );
-      }
-    }
-
-    if (architectureHint) {
-      return architectureHint;
-    }
-  }
-
-  if (userAgent.includes("arm") || userAgent.includes("aarch64")) {
-    return "arm64";
-  }
-
-  if (userAgent.includes("x86_64") || userAgent.includes("intel")) {
-    return "x64";
-  }
-
-  return null;
-};
-
-const resolveUrl = (
-  urls: MacDownloadUrls,
-  architecture: MacArchitecture,
-  fallbackUrl: string,
-): string => {
-  const candidate = urls[architecture];
-
-  if (typeof candidate === "string" && candidate.trim() !== "") {
-    return candidate;
-  }
-
-  return fallbackUrl;
 };
 
 export function MacDownloadLink({
@@ -143,29 +49,26 @@ export function MacDownloadLink({
     [urls.arm64, urls.universal, urls.x64],
   );
 
-  const autoDefaultUrl = useMemo(() => {
-    if (sanitizedUrls.universal) {
-      return sanitizedUrls.universal;
-    }
-
-    if (sanitizedUrls.arm64) {
-      return sanitizedUrls.arm64;
-    }
-
-    if (sanitizedUrls.x64) {
-      return sanitizedUrls.x64;
-    }
-
-    return fallbackUrl;
-  }, [fallbackUrl, sanitizedUrls.arm64, sanitizedUrls.universal, sanitizedUrls.x64]);
+  const autoDefaultUrl = useMemo(
+    () => pickMacDownloadUrl(sanitizedUrls, fallbackUrl, null),
+    [fallbackUrl, sanitizedUrls],
+  );
 
   const explicitDefaultUrl = useMemo(() => {
     if (architecture) {
-      return resolveUrl(sanitizedUrls, architecture, fallbackUrl);
+      return pickMacDownloadUrl(sanitizedUrls, fallbackUrl, architecture);
+    }
+
+    if (autoDetect) {
+      const detected = getNavigatorArchitectureHint();
+
+      if (detected) {
+        return pickMacDownloadUrl(sanitizedUrls, fallbackUrl, detected);
+      }
     }
 
     return autoDefaultUrl;
-  }, [architecture, autoDefaultUrl, fallbackUrl, sanitizedUrls]);
+  }, [architecture, autoDefaultUrl, autoDetect, fallbackUrl, sanitizedUrls]);
 
   const [href, setHref] = useState<string>(explicitDefaultUrl);
 
@@ -178,21 +81,22 @@ export function MacDownloadLink({
       return;
     }
 
-    // When a universal build is available, prefer it over per-arch detection.
-    if (sanitizedUrls.universal) {
-      return;
+    const synchronousHint = getNavigatorArchitectureHint();
+
+    if (synchronousHint) {
+      setHref(pickMacDownloadUrl(sanitizedUrls, fallbackUrl, synchronousHint));
     }
 
     let isMounted = true;
 
     const run = async () => {
-      const detectedArchitecture = await detectMacArchitecture();
+      const detectedArchitecture = await detectClientMacArchitecture();
 
       if (!isMounted || !detectedArchitecture) {
         return;
       }
 
-      setHref(resolveUrl(sanitizedUrls, detectedArchitecture, fallbackUrl));
+      setHref(pickMacDownloadUrl(sanitizedUrls, fallbackUrl, detectedArchitecture));
     };
 
     void run();

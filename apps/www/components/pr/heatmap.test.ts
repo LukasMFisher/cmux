@@ -26,25 +26,25 @@ describe("parseReviewHeatmap", () => {
             line: "2",
             shouldBeReviewedScore: 0.3,
             shouldReviewWhy: "first pass",
-            mostImportantCharacterIndex: 4,
+            mostImportantWord: "const",
           },
           {
             line: "2",
             shouldBeReviewedScore: 0.7,
             shouldReviewWhy: "updated score",
-            mostImportantCharacterIndex: 6,
+            mostImportantWord: "b",
           },
           {
             line: 4,
             shouldBeReviewedScore: 0.92,
             shouldReviewWhy: "new export logic",
-            mostImportantCharacterIndex: 120,
+            mostImportantWord: "length",
           },
           {
             line: "invalid",
             shouldBeReviewedScore: 1,
             shouldReviewWhy: "ignored",
-            mostImportantCharacterIndex: 0,
+            mostImportantWord: "invalid",
           },
         ],
       }),
@@ -63,7 +63,7 @@ describe("parseReviewHeatmap", () => {
 
 describe("buildDiffHeatmap", () => {
   it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
     const file = files[0] ?? null;
     expect(file).not.toBeNull();
 
@@ -74,19 +74,19 @@ describe("buildDiffHeatmap", () => {
             line: "2",
             shouldBeReviewedScore: 0.3,
             shouldReviewWhy: "first pass",
-            mostImportantCharacterIndex: 4,
+            mostImportantWord: "const",
           },
           {
             line: "2",
             shouldBeReviewedScore: 0.7,
             shouldReviewWhy: "updated score",
-            mostImportantCharacterIndex: 6,
+            mostImportantWord: "b",
           },
           {
             line: 4,
             shouldBeReviewedScore: 0.92,
             shouldReviewWhy: "new export logic",
-            mostImportantCharacterIndex: 120,
+            mostImportantWord: "length",
           },
         ],
       }),
@@ -101,6 +101,8 @@ describe("buildDiffHeatmap", () => {
     expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
     expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
     expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    expect(Array.isArray(heatmap.oldRanges)).toBe(true);
+    expect(heatmap.oldRanges).toHaveLength(0);
 
     const rangeForLine2 = heatmap.newRanges.find(
       (range) => range.lineNumber === 2
@@ -119,11 +121,118 @@ describe("buildDiffHeatmap", () => {
     const lineFourChange = file!.hunks[0]?.changes.find(
       (change) => computeNewLineNumber(change) === 4
     );
+    expect(lineFourChange?.content.includes("length")).toBe(true);
     const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
+      (lineFourChange?.content.indexOf("length") ?? -1),
       0
     );
     expect(rangeForLine4.start).toBe(expectedStart);
-    expect(rangeForLine4.length).toBe(1);
+    expect(rangeForLine4.length).toBe(6);
+  });
+
+  it("produces character highlights for old-side matches", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "const b = 2;",
+            shouldBeReviewedScore: 0.6,
+            shouldReviewWhy: "old line review",
+            mostImportantWord: "b",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review);
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    expect(heatmap.oldEntries.get(2)?.side).toBe("old");
+    const oldRange = heatmap.oldRanges.find(
+      (range) => range.lineNumber === 2
+    );
+    expect(oldRange).toBeDefined();
+    if (!oldRange) {
+      return;
+    }
+
+    expect(oldRange.start).toBeGreaterThanOrEqual(0);
+    expect(oldRange.length).toBeGreaterThan(0);
+  });
+
+  it("filters entries below the configured threshold", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.3,
+            shouldReviewWhy: "first pass",
+            mostImportantWord: "const",
+          },
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.7,
+            shouldReviewWhy: "updated score",
+            mostImportantWord: "b",
+          },
+          {
+            line: 4,
+            shouldBeReviewedScore: 0.92,
+            shouldReviewWhy: "new export logic",
+            mostImportantWord: "length",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review, {
+      scoreThreshold: 0.8,
+    });
+
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    expect(heatmap.entries.has(2)).toBe(false);
+    expect(heatmap.entries.has(4)).toBe(true);
+    expect(heatmap.totalEntries).toBe(1);
+  });
+
+  it("returns null when all entries fall below the threshold", () => {
+    const files = parseDiff(SAMPLE_DIFF, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.2,
+            shouldReviewWhy: "low score",
+            mostImportantWord: "const",
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review, {
+      scoreThreshold: 0.5,
+    });
+
+    expect(heatmap).toBeNull();
   });
 });

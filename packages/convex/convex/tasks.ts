@@ -118,6 +118,7 @@ export const create = authMutation({
       ),
     ),
     environmentId: v.optional(v.id("environments")),
+    isCloudWorkspace: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -142,6 +143,7 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
+      isCloudWorkspace: args.isCloudWorkspace,
     });
 
     return taskId;
@@ -534,6 +536,95 @@ export const updateMergeStatus = authMutation({
       mergeStatus: args.mergeStatus,
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const recordScreenshotResult = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
+    status: v.union(
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    screenshots: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          commitSha: v.string(),
+        }),
+      ),
+    ),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.taskId !== args.taskId) {
+      throw new Error("Task run not found for task");
+    }
+
+    const now = Date.now();
+    const screenshots = args.screenshots ?? [];
+
+    const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
+      taskId: args.taskId,
+      runId: args.runId,
+      status: args.status,
+      commitSha: screenshots[0]?.commitSha,
+      capturedAt: now,
+      error: args.error ?? undefined,
+      images: screenshots.map((screenshot) => ({
+        storageId: screenshot.storageId,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.fileName,
+        commitSha: screenshot.commitSha,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const patch: Record<string, unknown> = {
+      screenshotStatus: args.status,
+      screenshotRunId: args.runId,
+      screenshotRequestedAt: now,
+      updatedAt: now,
+      latestScreenshotSetId:
+        args.status === "completed" && screenshots.length > 0
+          ? screenshotSetId
+          : undefined,
+    };
+
+    if (args.status === "completed" && screenshots.length > 0) {
+      patch.screenshotStorageId = screenshots[0].storageId;
+      patch.screenshotMimeType = screenshots[0].mimeType;
+      patch.screenshotFileName = screenshots[0].fileName;
+      patch.screenshotCommitSha = screenshots[0].commitSha;
+      patch.screenshotCompletedAt = now;
+      patch.screenshotError = undefined;
+    } else {
+      patch.screenshotStorageId = undefined;
+      patch.screenshotMimeType = undefined;
+      patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
+      patch.screenshotCompletedAt = undefined;
+      patch.screenshotError = args.error ?? undefined;
+    }
+
+    if (args.status === "failed" || args.status === "skipped") {
+      patch.screenshotError = args.error ?? patch.screenshotError;
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+
+    return screenshotSetId;
   },
 });
 

@@ -1,6 +1,7 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -269,10 +270,10 @@ const RestartTaskForm = memo(function RestartTaskForm({
   }, [isRestartingTask, overridePrompt, socket, task, trimmedFollowUp]);
 
   return (
-    <div className="sticky bottom-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2">
+    <div className="fixed bottom-0 left-0 right-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2 pointer-events-none">
       <form
         onSubmit={handleFormSubmit}
-        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950"
+        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950 pointer-events-auto"
       >
         <div className="px-3.5 pt-3.5">
           <LexicalEditor
@@ -600,6 +601,19 @@ function RunDiffPage() {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
 
+  const runDiffContextQuery = useRQ({
+    ...convexQuery(api.taskRuns.getRunDiffContext, {
+      teamSlugOrId,
+      taskId,
+      runId,
+    }),
+    enabled: Boolean(teamSlugOrId && taskId && runId),
+  });
+
+  const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotSetsLoading =
+    runDiffContextQuery.isLoading && screenshotSets.length === 0;
+
   // Get PR information from the selected run
   const pullRequests = useMemo(() => {
     return selectedRun?.pullRequests?.filter(
@@ -748,7 +762,7 @@ function RunDiffPage() {
               </div>
             </div>
           )}
-          <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
+          <div className="bg-white dark:bg-neutral-900 flex-1 min-h-0 flex flex-col">
             {pullRequests && pullRequests.length > 0 && (
               <Suspense fallback={null}>
                 {pullRequests.map((pr) => (
@@ -764,40 +778,54 @@ function RunDiffPage() {
                 ))}
               </Suspense>
             )}
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-                    Loading diffs...
-                  </div>
-                </div>
-              }
-            >
-              {hasDiffSources ? (
-                <RunDiffSection
-                  repoFullName={primaryRepo as string}
-                  additionalRepoFullNames={additionalRepos}
-                  withRepoPrefix={shouldPrefixDiffs}
-                  ref1={baseRef}
-                  ref2={headRef}
-                  onControlsChange={setDiffControls}
-                  classNames={gitDiffViewerClassNames}
-                  metadataByRepo={metadataByRepo}
-                />
-              ) : (
-                <div className="p-6 text-sm text-neutral-600 dark:text-neutral-300">
-                  Missing repo or branches to show diff.
-                </div>
-              )}
-            </Suspense>
-            <RestartTaskForm
-              key={restartTaskPersistenceKey}
-              task={task}
-              teamSlugOrId={teamSlugOrId}
-              restartAgents={restartAgents}
-              restartIsCloudMode={restartIsCloudMode}
-              persistenceKey={restartTaskPersistenceKey}
-            />
+            {screenshotSetsLoading ? (
+              <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
+                Loading screenshots...
+              </div>
+            ) : (
+              <RunScreenshotGallery
+                screenshotSets={screenshotSets}
+                highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+              />
+            )}
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="flex-1 min-h-0">
+                <Suspense
+                  fallback={
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
+                        Loading diffs...
+                      </div>
+                    </div>
+                  }
+                >
+                  {hasDiffSources ? (
+                    <RunDiffSection
+                      repoFullName={primaryRepo as string}
+                      additionalRepoFullNames={additionalRepos}
+                      withRepoPrefix={shouldPrefixDiffs}
+                      ref1={baseRef}
+                      ref2={headRef}
+                      onControlsChange={setDiffControls}
+                      classNames={gitDiffViewerClassNames}
+                      metadataByRepo={metadataByRepo}
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">
+                      Missing repo or branches to show diff.
+                    </div>
+                  )}
+                </Suspense>
+              </div>
+              <RestartTaskForm
+                key={restartTaskPersistenceKey}
+                task={task}
+                teamSlugOrId={teamSlugOrId}
+                restartAgents={restartAgents}
+                restartIsCloudMode={restartIsCloudMode}
+                persistenceKey={restartTaskPersistenceKey}
+              />
+            </div>
           </div>
         </div>
       </div>

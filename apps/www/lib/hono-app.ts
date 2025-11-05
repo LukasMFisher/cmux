@@ -14,6 +14,7 @@ import {
   codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  githubInstallStateRouter,
   healthRouter,
   morphRouter,
   sandboxesRouter,
@@ -21,6 +22,7 @@ import {
   usersRouter,
   iframePreflightRouter,
 } from "@/lib/routes/index";
+import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
@@ -96,6 +98,7 @@ app.get("/user", async (c) => {
 
 // Routes - Next.js passes the full /api/* path
 app.route("/", healthRouter);
+app.route("/", authAnonymousRouter);
 app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
@@ -109,6 +112,7 @@ app.route("/", githubPrsPatchRouter);
 app.route("/", githubPrsFilesRouter);
 app.route("/", githubPrsFileContentsRouter);
 app.route("/", githubPrsFileContentsBatchRouter);
+app.route("/", githubInstallStateRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);

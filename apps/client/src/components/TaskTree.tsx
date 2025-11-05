@@ -14,6 +14,10 @@ import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
+import {
+  aggregatePullRequestState,
+  type RunPullRequestState,
+} from "@cmux/shared/pull-request-state";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
@@ -55,6 +59,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -296,7 +301,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text).catch(() => {});
+      navigator.clipboard.writeText(task.text);
     }
   }, [task.text]);
 
@@ -464,6 +469,7 @@ function TaskTreeInner({
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
+  const isCloudWorkspace = task.isCloudWorkspace;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -550,7 +556,7 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace) {
+    if (isLocalWorkspace || isCloudWorkspace) {
       return null;
     }
 
@@ -860,6 +866,7 @@ function TaskRunTreeInner({
   );
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
+  const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
@@ -869,10 +876,78 @@ function TaskRunTreeInner({
   }[run.status];
 
   const shouldHideStatusIcon =
-    isLocalWorkspaceRunEntry && run.status !== "failed";
-  const resolvedStatusIcon = shouldHideStatusIcon ? null : statusIcon;
+    (isLocalWorkspaceRunEntry || isCloudWorkspaceRunEntry) && run.status !== "failed";
 
-  const runLeadingIcon =
+  const pullRequestState = useMemo<RunPullRequestState | null>(() => {
+    if (run.pullRequests && run.pullRequests.length > 0) {
+      const summary = aggregatePullRequestState(run.pullRequests);
+      return summary.state === "none" ? null : summary.state;
+    }
+    const explicit = run.pullRequestState;
+    if (explicit && explicit !== "none") {
+      return explicit;
+    }
+    if (run.pullRequestUrl && run.pullRequestUrl !== "pending") {
+      return run.pullRequestIsDraft ? "draft" : "open";
+    }
+    return null;
+  }, [
+    run.pullRequestIsDraft,
+    run.pullRequestState,
+    run.pullRequestUrl,
+    run.pullRequests,
+  ]);
+
+  const pullRequestIcon = useMemo<ReactNode>(() => {
+    if (run.status !== "completed") {
+      return null;
+    }
+    if (!pullRequestState || pullRequestState === "none") {
+      return null;
+    }
+
+    let tooltipLabel: string;
+    let icon: ReactElement;
+
+    switch (pullRequestState) {
+      case "draft":
+        tooltipLabel = "Draft PR";
+        icon = <GitPullRequestDraft className="w-3 h-3 text-neutral-500" />;
+        break;
+      case "open":
+        tooltipLabel = "PR Open";
+        icon = (
+          <GitPullRequest className="w-3 h-3 text-[#1f883d] dark:text-[#238636]" />
+        );
+        break;
+      case "merged":
+        tooltipLabel = "Merged";
+        icon = <GitMerge className="w-3 h-3 text-purple-500" />;
+        break;
+      case "closed":
+        tooltipLabel = "PR Closed";
+        icon = <GitPullRequestClosed className="w-3 h-3 text-red-500" />;
+        break;
+      case "unknown":
+        tooltipLabel = "PR Status Unknown";
+        icon = <GitPullRequest className="w-3 h-3 text-neutral-500" />;
+        break;
+      default:
+        return null;
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{icon}</TooltipTrigger>
+        <TooltipContent side="right">{tooltipLabel}</TooltipContent>
+      </Tooltip>
+    );
+  }, [pullRequestState, run.status]);
+
+  const hideStatusIcon = shouldHideStatusIcon && !pullRequestIcon;
+  const resolvedStatusIcon = hideStatusIcon ? null : statusIcon;
+
+  const statusIconWithTooltip =
     run.status === "failed" && run.errorMessage ? (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -888,6 +963,8 @@ function TaskRunTreeInner({
     ) : (
       resolvedStatusIcon
     );
+
+  const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
 
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
@@ -951,7 +1028,7 @@ function TaskRunTreeInner({
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
-      run.pullRequests?.some((pr) => pr.url)
+    run.pullRequests?.some((pr) => pr.url)
   );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;

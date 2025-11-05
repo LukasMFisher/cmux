@@ -14,7 +14,10 @@ import {
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
+import type {
+  CreateLocalWorkspaceResponse,
+  CreateCloudWorkspaceResponse,
+} from "@cmux/shared";
 import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useUser, type Team } from "@stackframe/react";
@@ -23,23 +26,40 @@ import { Command, useCommandState } from "cmdk";
 import { useMutation, useQuery } from "convex/react";
 import {
   Bug,
+  ClipboardCopy,
+  FolderPlus,
   GitPullRequest,
-  LogOut,
   Home,
+  LogOut,
   Monitor,
   Moon,
+  PanelLeftClose,
   Plus,
-  FolderPlus,
   RefreshCw,
+  ScrollText,
   Server,
   Settings,
   Sun,
   Users,
-  PanelLeftClose,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
-import { ElectronLogsCommandItems } from "./command-bar/ElectronLogsCommandItems";
+import {
+  buildSearchText,
+  filterCommandItems,
+} from "./command-bar/commandSearch";
+import {
+  buildScopeKey,
+  selectSuggestedItems,
+  useSuggestionHistory,
+} from "./command-bar/useSuggestionHistory";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -76,6 +96,13 @@ const EMPTY_TEAM_LIST: Team[] = [];
 
 const isDevEnvironment = import.meta.env.DEV;
 
+const baseCommandItemClassName =
+  "flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800 data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100";
+const taskCommandItemClassName =
+  "flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800 data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100 group";
+const placeholderClassName =
+  "flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md text-sm text-neutral-500 dark:text-neutral-400";
+
 type TeamCommandItem = {
   id: string;
   label: string;
@@ -89,6 +116,25 @@ type LocalWorkspaceOption = {
   fullName: string;
   repoBaseName: string;
   keywords: string[];
+};
+
+type CloudWorkspaceOption = {
+  environmentId: Id<"environments">;
+  name: string;
+  keywords: string[];
+};
+
+type CommandListEntry = {
+  value: string;
+  label: string;
+  keywords?: string[];
+  searchText: string;
+  renderContent: () => ReactNode;
+  execute: () => Promise<void> | void;
+  disabled?: boolean;
+  className?: string;
+  dataValue?: string;
+  trackUsage?: boolean;
 };
 
 function CommandHighlightListener({
@@ -121,36 +167,41 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const [search, setSearch] = useState("");
   const [openedWithShift, setOpenedWithShift] = useState(false);
   const [activePage, setActivePage] = useState<
-    "root" | "teams" | "local-workspaces"
+    "root" | "teams" | "local-workspaces" | "cloud-workspaces"
   >("root");
   const [isCreatingLocalWorkspace, setIsCreatingLocalWorkspace] =
     useState(false);
+  const [isCreatingCloudWorkspace, setIsCreatingCloudWorkspace] =
+    useState(false);
   const [commandValue, setCommandValue] = useState<string | undefined>(
-    undefined,
+    undefined
   );
   const openRef = useRef<boolean>(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const commandListRef = useRef<HTMLDivElement | null>(null);
+  const previousSearchRef = useRef(search);
+  const skipNextCloseRef = useRef(false);
   // Used only in non-Electron fallback
   const prevFocusedElRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
   const router = useRouter();
-  const { setTheme } = useTheme();
+  const { setTheme, theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
       if (!targetTeamSlugOrId) return;
-      console.log("Preloading team dashboard for", targetTeamSlugOrId);
       await router.preloadRoute({
         to: "/$teamSlugOrId/dashboard",
         params: { teamSlugOrId: targetTeamSlugOrId },
       });
     },
-    [router],
+    [router]
   );
 
   const closeCommand = useCallback(() => {
+    skipNextCloseRef.current = false;
     setOpen(false);
     setSearch("");
     setOpenedWithShift(false);
@@ -158,11 +209,27 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     setCommandValue(undefined);
   }, [setOpen, setSearch, setOpenedWithShift, setActivePage, setCommandValue]);
 
+  const handleEscape = useCallback(() => {
+    skipNextCloseRef.current = false;
+    if (search.length > 0) {
+      skipNextCloseRef.current = true;
+      setSearch("");
+      return;
+    }
+    if (activePage !== "root") {
+      skipNextCloseRef.current = true;
+      setActivePage("root");
+      return;
+    }
+    closeCommand();
+  }, [activePage, closeCommand, search, setActivePage, setSearch]);
+
   const stackUser = useUser({ or: "return-null" });
   const stackTeams = stackUser?.useTeams() ?? EMPTY_TEAM_LIST;
   const selectedTeamId = stackUser?.selectedTeam?.id ?? null;
   const teamMemberships = useQuery(api.teams.listTeamMemberships, {});
   const reposByOrg = useQuery(api.github.getReposByOrg, { teamSlugOrId });
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
 
   const localWorkspaceOptions = useMemo<LocalWorkspaceOption[]>(() => {
     const repoGroups = reposByOrg ?? {};
@@ -177,8 +244,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         }
         const existingActivity =
           existing.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-        const candidateActivity =
-          repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+        const candidateActivity = repo.lastPushedAt ?? Number.NEGATIVE_INFINITY;
         if (candidateActivity > existingActivity) {
           uniqueRepos.set(repo.fullName, repo);
         }
@@ -217,6 +283,27 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   }, [reposByOrg]);
 
   const isLocalWorkspaceLoading = reposByOrg === undefined;
+
+  const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
+    if (!environments) return [];
+    return environments
+      .sort((a, b) => {
+        // Sort by creation time, most recent first
+        return b.createdAt - a.createdAt;
+      })
+      .map((env) => ({
+        environmentId: env._id,
+        name: env.name,
+        keywords: compactStrings([
+          env.name,
+          env.description,
+          env.morphSnapshotId,
+          ...(env.selectedRepos ?? []),
+        ]),
+      }));
+  }, [environments]);
+
+  const isCloudWorkspaceLoading = environments === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -273,6 +360,21 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     return items;
   }, [stackTeams, teamMemberships, selectedTeamId, getClientSlug]);
 
+  const teamCommandEntries = useMemo(
+    () =>
+      teamCommandItems.map((item) => ({
+        value: `team:${item.id}:${item.teamSlugOrId}`,
+        searchText: buildSearchText(item.label, item.keywords, [
+          item.slug,
+          item.teamSlugOrId,
+          item.id,
+          item.isCurrent ? "current" : undefined,
+        ]),
+        item,
+      })),
+    [teamCommandItems]
+  );
+
   const isTeamsLoading = Boolean(stackUser) && teamMemberships === undefined;
   const teamPageEmptyMessage = stackUser
     ? "No teams available yet."
@@ -282,9 +384,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const nextWorkspaceSequence = useQuery(api.localWorkspaces.nextSequence, {
     teamSlugOrId,
   });
-  const predictedWorkspaceSequence =
-    nextWorkspaceSequence?.sequence ?? null;
+  const predictedWorkspaceSequence = nextWorkspaceSequence?.sequence ?? null;
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
+  const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
 
   useEffect(() => {
@@ -298,7 +400,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       }
       if (!socket) {
         console.warn(
-          "Socket is not connected yet. Please try again momentarily.",
+          "Socket is not connected yet. Please try again momentarily."
         );
         return;
       }
@@ -363,20 +465,20 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                 console.log(
                   response.pending
                     ? `${effectiveWorkspaceName} is provisioning…`
-                    : `${effectiveWorkspaceName} is ready`,
+                    : `${effectiveWorkspaceName} is ready`
                 );
 
                 const normalizedWorkspaceUrl = response.workspaceUrl
                   ? rewriteLocalWorkspaceUrlIfNeeded(
                       response.workspaceUrl,
-                      localServeWeb.data?.baseUrl,
+                      localServeWeb.data?.baseUrl
                     )
                   : null;
 
                 if (response.workspaceUrl && effectiveTaskRunId) {
                   const proxiedUrl = toProxyWorkspaceUrl(
                     response.workspaceUrl,
-                    localServeWeb.data?.baseUrl,
+                    localServeWeb.data?.baseUrl
                   );
                   if (proxiedUrl) {
                     void preloadTaskRunIframes([
@@ -416,7 +518,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               } finally {
                 resolve();
               }
-            },
+            }
           );
         });
       } catch (error) {
@@ -444,7 +546,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       router,
       socket,
       teamSlugOrId,
-    ],
+    ]
   );
 
   const handleLocalWorkspaceSelect = useCallback(
@@ -452,7 +554,97 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       closeCommand();
       void createLocalWorkspace(projectFullName);
     },
-    [closeCommand, createLocalWorkspace],
+    [closeCommand, createLocalWorkspace]
+  );
+
+  const createCloudWorkspace = useCallback(
+    async (environmentId: Id<"environments">) => {
+      if (isCreatingCloudWorkspace) {
+        return;
+      }
+      if (!socket) {
+        console.warn(
+          "Socket is not connected yet. Please try again momentarily."
+        );
+        return;
+      }
+
+      setIsCreatingCloudWorkspace(true);
+
+      try {
+        // Find environment name for the task text
+        const environment = environments?.find((env) => env._id === environmentId);
+        const environmentName = environment?.name ?? "Unknown Environment";
+
+        // Create task in Convex without task description (it's just a workspace)
+        const taskId = await createTask({
+          teamSlugOrId,
+          text: `Cloud Workspace: ${environmentName}`,
+          projectFullName: undefined, // No repo for cloud environment workspaces
+          baseBranch: undefined, // No branch for environments
+          environmentId,
+          isCloudWorkspace: true,
+        });
+
+        // Hint the sidebar to auto-expand this task once it appears
+        addTaskToExpand(taskId);
+
+        await new Promise<void>((resolve) => {
+          socket.emit(
+            "create-cloud-workspace",
+            {
+              teamSlugOrId,
+              environmentId,
+              taskId,
+              theme,
+            },
+            async (response: CreateCloudWorkspaceResponse) => {
+              try {
+                if (response.success) {
+                  toast.success("Cloud workspace created successfully");
+                } else {
+                  toast.error(
+                    response.error || "Failed to create cloud workspace"
+                  );
+                }
+              } catch (callbackError) {
+                const message =
+                  callbackError instanceof Error
+                    ? callbackError.message
+                    : String(callbackError ?? "Unknown");
+                console.error("Failed to create cloud workspace", message);
+              } finally {
+                resolve();
+              }
+            }
+          );
+        });
+
+        console.log("Cloud workspace created:", taskId);
+      } catch (error) {
+        console.error("Error creating cloud workspace:", error);
+        toast.error("Failed to create cloud workspace");
+      } finally {
+        setIsCreatingCloudWorkspace(false);
+      }
+    },
+    [
+      addTaskToExpand,
+      createTask,
+      environments,
+      isCreatingCloudWorkspace,
+      socket,
+      teamSlugOrId,
+      theme,
+    ]
+  );
+
+  const handleCloudWorkspaceSelect = useCallback(
+    (environmentId: Id<"environments">) => {
+      closeCommand();
+      void createCloudWorkspace(environmentId);
+    },
+    [closeCommand, createCloudWorkspace]
   );
 
   useEffect(() => {
@@ -538,34 +730,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     }
     return undefined;
   }, [open]);
-
-  useEffect(() => {
-    if (!open || activePage !== "local-workspaces") return;
-    if (isLocalWorkspaceLoading) return;
-
-    if (localWorkspaceOptions.length === 0) {
-      if (commandValue?.startsWith("local-workspace:")) {
-        setCommandValue(undefined);
-      }
-      return;
-    }
-
-    const toLocalWorkspaceValue = (fullName: string) =>
-      `local-workspace:${fullName}`;
-    const currentMatchesSelection = localWorkspaceOptions.some(
-      (option) => toLocalWorkspaceValue(option.fullName) === commandValue,
-    );
-
-    if (!currentMatchesSelection) {
-      setCommandValue(toLocalWorkspaceValue(localWorkspaceOptions[0].fullName));
-    }
-  }, [
-    activePage,
-    commandValue,
-    isLocalWorkspaceLoading,
-    localWorkspaceOptions,
-    open,
-  ]);
 
   useEffect(() => {
     if (!open || !openedWithShift) return;
@@ -675,7 +839,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         }
       }
     },
-    [router, teamSlugOrId, allTasks, preloadTeamDashboard],
+    [router, teamSlugOrId, allTasks, preloadTeamDashboard]
   );
 
   const handleSelect = useCallback(
@@ -691,6 +855,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         });
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
+        setSearch("");
+        return;
+      } else if (value === "cloud-workspaces") {
+        setActivePage("cloud-workspaces");
         setSearch("");
         return;
       } else if (value === "pull-requests") {
@@ -734,7 +902,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   ? ` (${result.version})`
                   : "";
                 toast.success(
-                  `Update available${versionLabel}. Downloading in the background.`,
+                  `Update available${versionLabel}. Downloading in the background.`
                 );
               } else {
                 toast.info("You're up to date.");
@@ -768,13 +936,15 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       } else if (value === "sidebar-toggle") {
         const currentHidden = localStorage.getItem("sidebarHidden") === "true";
         localStorage.setItem("sidebarHidden", String(!currentHidden));
-        window.dispatchEvent(new StorageEvent("storage", {
-          key: "sidebarHidden",
-          newValue: String(!currentHidden),
-          oldValue: String(currentHidden),
-          storageArea: localStorage,
-          url: window.location.href,
-        }));
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "sidebarHidden",
+            newValue: String(!currentHidden),
+            oldValue: String(currentHidden),
+            storageArea: localStorage,
+            url: window.location.href,
+          })
+        );
       } else if (value === "home") {
         navigate({
           to: "/$teamSlugOrId/dashboard",
@@ -885,8 +1055,797 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       stackUser,
       stackTeams,
       closeCommand,
-    ],
+    ]
   );
+
+  const rootCommandEntries = useMemo<CommandListEntry[]>(() => {
+    const baseEntries: CommandListEntry[] = [
+      {
+        value: "new-task",
+        label: "New Task",
+        keywords: ["task", "create", "new"],
+        searchText: buildSearchText(
+          "New Task",
+          ["task", "create"],
+          ["new-task"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("new-task"),
+        renderContent: () => (
+          <>
+            <Plus className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">New Task</span>
+          </>
+        ),
+      },
+      {
+        value: "local-workspaces",
+        label: "New Local Workspace",
+        keywords: ["workspace", "local", "repo"],
+        searchText: buildSearchText(
+          "New Local Workspace",
+          ["workspace", "local"],
+          ["local-workspaces"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("local-workspaces"),
+        renderContent: () => (
+          <>
+            <FolderPlus className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">New Local Workspace</span>
+          </>
+        ),
+      },
+      {
+        value: "cloud-workspaces",
+        label: "New Cloud Workspace",
+        keywords: ["workspace", "cloud", "environment", "env"],
+        searchText: buildSearchText(
+          "New Cloud Workspace",
+          ["workspace", "cloud", "environment"],
+          ["cloud-workspaces"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("cloud-workspaces"),
+        renderContent: () => (
+          <>
+            <Server className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">New Cloud Workspace</span>
+          </>
+        ),
+      },
+      {
+        value: "pull-requests",
+        label: "Pull Requests",
+        keywords: ["pull request", "prs", "pr"],
+        searchText: buildSearchText(
+          "Pull Requests",
+          ["pull request", "prs"],
+          ["pull-requests"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("pull-requests"),
+        renderContent: () => (
+          <>
+            <GitPullRequest className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Pull Requests</span>
+          </>
+        ),
+      },
+      ...(isDevEnvironment
+        ? [
+            {
+              value: "dev:webcontents",
+              label: "Debug WebContents",
+              keywords: ["debug", "devtools", "electron"],
+              searchText: buildSearchText(
+                "Debug WebContents",
+                ["debug", "electron"],
+                ["dev:webcontents"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("dev:webcontents"),
+              renderContent: () => (
+                <>
+                  <Bug className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">Debug WebContents</span>
+                </>
+              ),
+            },
+          ]
+        : []),
+      {
+        value: "home",
+        label: "Home",
+        keywords: ["dashboard", "home"],
+        searchText: buildSearchText("Home", ["dashboard"], ["home"]),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("home"),
+        renderContent: () => (
+          <>
+            <Home className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Home</span>
+          </>
+        ),
+      },
+      {
+        value: "environments",
+        label: "Environments",
+        keywords: ["environment", "env", "servers"],
+        searchText: buildSearchText(
+          "Environments",
+          ["environment"],
+          ["environments"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("environments"),
+        renderContent: () => (
+          <>
+            <Server className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Environments</span>
+          </>
+        ),
+      },
+      {
+        value: "settings",
+        label: "Settings",
+        keywords: ["preferences", "config"],
+        searchText: buildSearchText("Settings", ["preferences"], ["settings"]),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("settings"),
+        renderContent: () => (
+          <>
+            <Settings className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Settings</span>
+          </>
+        ),
+      },
+      {
+        value: "teams:switch",
+        label: "Switch team",
+        keywords: ["team", "switch", "change"],
+        searchText: buildSearchText(
+          "Switch team",
+          ["team", "switch"],
+          ["teams:switch"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("teams:switch"),
+        renderContent: () => (
+          <>
+            <Users className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Switch team</span>
+          </>
+        ),
+      },
+      {
+        value: "sidebar-toggle",
+        label: "Toggle Sidebar",
+        keywords: ["sidebar", "hide", "show", "panel"],
+        searchText: buildSearchText(
+          "Toggle Sidebar",
+          ["sidebar", "toggle"],
+          ["sidebar-toggle"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("sidebar-toggle"),
+        renderContent: () => (
+          <>
+            <PanelLeftClose className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Toggle Sidebar</span>
+          </>
+        ),
+      },
+      {
+        value: "theme-light",
+        label: "Light Mode",
+        keywords: ["theme", "light"],
+        searchText: buildSearchText(
+          "Light Mode",
+          ["theme", "light"],
+          ["theme-light"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("theme-light"),
+        renderContent: () => (
+          <>
+            <Sun className="h-4 w-4 text-amber-500" />
+            <span className="text-sm">Light Mode</span>
+          </>
+        ),
+      },
+      {
+        value: "theme-dark",
+        label: "Dark Mode",
+        keywords: ["theme", "dark"],
+        searchText: buildSearchText(
+          "Dark Mode",
+          ["theme", "dark"],
+          ["theme-dark"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("theme-dark"),
+        renderContent: () => (
+          <>
+            <Moon className="h-4 w-4 text-blue-500" />
+            <span className="text-sm">Dark Mode</span>
+          </>
+        ),
+      },
+      {
+        value: "theme-system",
+        label: "System Theme",
+        keywords: ["theme", "system", "auto"],
+        searchText: buildSearchText(
+          "System Theme",
+          ["theme", "system"],
+          ["theme-system"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("theme-system"),
+        renderContent: () => (
+          <>
+            <Monitor className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">System Theme</span>
+          </>
+        ),
+      },
+      ...(stackUser
+        ? [
+            {
+              value: "sign-out",
+              label: "Sign out",
+              keywords: ["logout", "sign out", "account"],
+              searchText: buildSearchText(
+                "Sign out",
+                ["logout", "account"],
+                ["sign-out"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("sign-out"),
+              renderContent: () => (
+                <>
+                  <LogOut className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">Sign out</span>
+                </>
+              ),
+            },
+          ]
+        : []),
+    ];
+
+    const taskEntries =
+      allTasks && allTasks.length > 0
+        ? allTasks.slice(0, 9).flatMap<CommandListEntry>((task, index) => {
+            const title =
+              task.pullRequestTitle || task.text || `Task ${index + 1}`;
+            const keywords = compactStrings([
+              title,
+              task.text,
+              task.pullRequestTitle,
+              String(task._id),
+              `task ${index + 1}`,
+            ]);
+            const baseSearch = buildSearchText(title, keywords, [
+              `${index + 1}`,
+              `task:${task._id}`,
+            ]);
+            const statusLabel = task.isCompleted ? "completed" : "in progress";
+            const statusClassName = task.isCompleted
+              ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
+            const run = task.selectedTaskRun;
+
+            const entriesForTask: CommandListEntry[] = [
+              {
+                value: `${index + 1}:task:${task._id}`,
+                label: title,
+                keywords,
+                searchText: baseSearch,
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1}
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              },
+            ];
+
+            if (run) {
+              const vsKeywords = [...keywords, "vs", "vscode"];
+              entriesForTask.push({
+                value: `${index + 1} vs:task:${task._id}`,
+                label: `${title} (VS)`,
+                keywords: vsKeywords,
+                searchText: buildSearchText(`${title} VS`, vsKeywords, [
+                  `${index + 1} vs`,
+                  `task:${task._id}:vs`,
+                ]),
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}:vs`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1} VS
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              });
+
+              const diffKeywords = [...keywords, "git", "diff"];
+              entriesForTask.push({
+                value: `${index + 1} git diff:task:${task._id}`,
+                label: `${title} (git diff)`,
+                keywords: diffKeywords,
+                searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+                  `${index + 1} git diff`,
+                  `task:${task._id}:gitdiff`,
+                ]),
+                className: taskCommandItemClassName,
+                execute: () => handleSelect(`task:${task._id}:gitdiff`),
+                renderContent: () => (
+                  <>
+                    <span className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600">
+                      {index + 1} git diff
+                    </span>
+                    <span className="flex-1 truncate text-sm">{title}</span>
+                    <span className={statusClassName}>{statusLabel}</span>
+                  </>
+                ),
+              });
+            }
+
+            return entriesForTask;
+          })
+        : [];
+
+    const electronEntries = isElectron
+      ? [
+          {
+            value: "updates:check",
+            label: "Check for Updates",
+            keywords: ["update", "version", "desktop"],
+            searchText: buildSearchText(
+              "Check for Updates",
+              ["update", "desktop"],
+              ["updates:check"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("updates:check"),
+            renderContent: () => (
+              <>
+                <RefreshCw className="h-4 w-4 text-neutral-500" />
+                <span className="text-sm">Check for Updates</span>
+              </>
+            ),
+          },
+          {
+            value: "logs:view",
+            label: "Logs: View",
+            keywords: ["logs", "view", "desktop"],
+            searchText: buildSearchText(
+              "Logs View",
+              ["logs", "view"],
+              ["logs:view"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("logs:view"),
+            renderContent: () => (
+              <>
+                <ScrollText className="h-4 w-4 text-blue-500" />
+                <span className="text-sm">Logs: View</span>
+              </>
+            ),
+          },
+          {
+            value: "logs:copy",
+            label: "Logs: Copy all",
+            keywords: ["logs", "copy"],
+            searchText: buildSearchText(
+              "Logs Copy",
+              ["logs", "copy"],
+              ["logs:copy"]
+            ),
+            className: baseCommandItemClassName,
+            execute: () => handleSelect("logs:copy"),
+            renderContent: () => (
+              <>
+                <ClipboardCopy className="h-4 w-4 text-violet-500" />
+                <span className="text-sm">Logs: Copy all</span>
+              </>
+            ),
+          },
+        ]
+      : [];
+
+    return [...baseEntries, ...taskEntries, ...electronEntries];
+  }, [allTasks, handleSelect, stackUser]);
+
+  const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
+    return localWorkspaceOptions.map((option) => {
+      const value = `local-workspace:${option.fullName}`;
+      const predictedWorkspaceName =
+        predictedWorkspaceSequence !== null
+          ? generateWorkspaceName({
+              repoName: option.repoBaseName,
+              sequence: predictedWorkspaceSequence,
+            })
+          : null;
+      return {
+        value,
+        label: option.fullName,
+        keywords: option.keywords,
+        searchText: buildSearchText(option.fullName, option.keywords, [
+          option.repoBaseName,
+        ]),
+        className: baseCommandItemClassName,
+        disabled: isCreatingLocalWorkspace,
+        execute: () => handleLocalWorkspaceSelect(option.fullName),
+        renderContent: () => (
+          <>
+            <GitHubIcon className="h-4 w-4 text-neutral-500" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm">{option.fullName}</span>
+              {predictedWorkspaceName ? (
+                <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                  {predictedWorkspaceName}
+                </span>
+              ) : null}
+            </div>
+          </>
+        ),
+      };
+    });
+  }, [
+    handleLocalWorkspaceSelect,
+    isCreatingLocalWorkspace,
+    localWorkspaceOptions,
+    predictedWorkspaceSequence,
+  ]);
+
+  const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
+    return cloudWorkspaceOptions.map((option) => {
+      const value = `cloud-workspace:${option.environmentId}`;
+      return {
+        value,
+        label: option.name,
+        keywords: option.keywords,
+        searchText: buildSearchText(option.name, option.keywords, [
+          option.environmentId,
+        ]),
+        className: baseCommandItemClassName,
+        disabled: isCreatingCloudWorkspace,
+        execute: () => handleCloudWorkspaceSelect(option.environmentId),
+        renderContent: () => (
+          <>
+            <Server className="h-4 w-4 text-neutral-500" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm">{option.name}</span>
+            </div>
+          </>
+        ),
+      };
+    });
+  }, [cloudWorkspaceOptions, handleCloudWorkspaceSelect, isCreatingCloudWorkspace]);
+
+  const {
+    history: rootSuggestionHistory,
+    record: recordRootUsage,
+    prune: pruneRootHistory,
+  } = useSuggestionHistory(buildScopeKey("root"));
+  const {
+    history: localWorkspaceSuggestionHistory,
+    record: recordLocalWorkspaceUsage,
+    prune: pruneLocalWorkspaceHistory,
+  } = useSuggestionHistory(buildScopeKey("local-workspaces", teamSlugOrId));
+  const {
+    history: cloudWorkspaceSuggestionHistory,
+    record: recordCloudWorkspaceUsage,
+    prune: pruneCloudWorkspaceHistory,
+  } = useSuggestionHistory(buildScopeKey("cloud-workspaces", teamSlugOrId));
+
+  useEffect(() => {
+    pruneRootHistory(new Set(rootCommandEntries.map((entry) => entry.value)));
+  }, [rootCommandEntries, pruneRootHistory]);
+
+  useEffect(() => {
+    pruneLocalWorkspaceHistory(
+      new Set(localWorkspaceEntries.map((entry) => entry.value))
+    );
+  }, [localWorkspaceEntries, pruneLocalWorkspaceHistory]);
+
+  useEffect(() => {
+    pruneCloudWorkspaceHistory(
+      new Set(cloudWorkspaceEntries.map((entry) => entry.value))
+    );
+  }, [cloudWorkspaceEntries, pruneCloudWorkspaceHistory]);
+
+  const filteredRootEntries = useMemo(
+    () => filterCommandItems(search, rootCommandEntries),
+    [rootCommandEntries, search]
+  );
+
+  const filteredLocalWorkspaceEntries = useMemo(
+    () => filterCommandItems(search, localWorkspaceEntries),
+    [localWorkspaceEntries, search]
+  );
+  const filteredCloudWorkspaceEntries = useMemo(
+    () => filterCommandItems(search, cloudWorkspaceEntries),
+    [cloudWorkspaceEntries, search]
+  );
+  const filteredTeamEntries = useMemo(
+    () => filterCommandItems(search, teamCommandEntries),
+    [search, teamCommandEntries]
+  );
+
+  const hasSearchQuery = search.trim().length > 0;
+
+  const rootSuggestedEntries = useMemo(
+    () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
+    [filteredRootEntries, rootSuggestionHistory]
+  );
+  const rootSuggestedValueSet = useMemo(
+    () => new Set(rootSuggestedEntries.map((entry) => entry.value)),
+    [rootSuggestedEntries]
+  );
+  const rootRemainingEntries = useMemo(
+    () =>
+      filteredRootEntries.filter(
+        (entry) => !rootSuggestedValueSet.has(entry.value)
+      ),
+    [filteredRootEntries, rootSuggestedValueSet]
+  );
+
+  const localWorkspaceSuggestedEntries = useMemo(
+    () =>
+      selectSuggestedItems(
+        localWorkspaceSuggestionHistory,
+        filteredLocalWorkspaceEntries,
+        5
+      ),
+    [filteredLocalWorkspaceEntries, localWorkspaceSuggestionHistory]
+  );
+  const localWorkspaceSuggestedValueSet = useMemo(
+    () => new Set(localWorkspaceSuggestedEntries.map((entry) => entry.value)),
+    [localWorkspaceSuggestedEntries]
+  );
+  const localWorkspaceRemainingEntries = useMemo(
+    () =>
+      filteredLocalWorkspaceEntries.filter(
+        (entry) => !localWorkspaceSuggestedValueSet.has(entry.value)
+      ),
+    [filteredLocalWorkspaceEntries, localWorkspaceSuggestedValueSet]
+  );
+
+  const rootSuggestionsToRender = useMemo(
+    () => (!hasSearchQuery ? rootSuggestedEntries : []),
+    [hasSearchQuery, rootSuggestedEntries]
+  );
+  const rootCommandsToRender = useMemo(
+    () =>
+      hasSearchQuery || rootSuggestionsToRender.length === 0
+        ? filteredRootEntries
+        : rootRemainingEntries,
+    [
+      filteredRootEntries,
+      hasSearchQuery,
+      rootRemainingEntries,
+      rootSuggestionsToRender.length,
+    ]
+  );
+  const rootVisibleValues = useMemo(
+    () =>
+      [...rootSuggestionsToRender, ...rootCommandsToRender].map(
+        (entry) => entry.value
+      ),
+    [rootCommandsToRender, rootSuggestionsToRender]
+  );
+  const localWorkspaceSuggestionsToRender = useMemo(
+    () => (!hasSearchQuery ? localWorkspaceSuggestedEntries : []),
+    [hasSearchQuery, localWorkspaceSuggestedEntries]
+  );
+  const localWorkspaceCommandsToRender = useMemo(
+    () =>
+      hasSearchQuery || localWorkspaceSuggestionsToRender.length === 0
+        ? filteredLocalWorkspaceEntries
+        : localWorkspaceRemainingEntries,
+    [
+      filteredLocalWorkspaceEntries,
+      hasSearchQuery,
+      localWorkspaceRemainingEntries,
+      localWorkspaceSuggestionsToRender.length,
+    ]
+  );
+  const localWorkspaceVisibleValues = useMemo(
+    () =>
+      [
+        ...localWorkspaceSuggestionsToRender,
+        ...localWorkspaceCommandsToRender,
+      ].map((entry) => entry.value),
+    [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender]
+  );
+
+  const cloudWorkspaceSuggestedEntries = useMemo(
+    () =>
+      selectSuggestedItems(
+        cloudWorkspaceSuggestionHistory,
+        filteredCloudWorkspaceEntries,
+        5
+      ),
+    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestionHistory]
+  );
+  const cloudWorkspaceSuggestedValueSet = useMemo(
+    () => new Set(cloudWorkspaceSuggestedEntries.map((entry) => entry.value)),
+    [cloudWorkspaceSuggestedEntries]
+  );
+  const cloudWorkspaceRemainingEntries = useMemo(
+    () =>
+      filteredCloudWorkspaceEntries.filter(
+        (entry) => !cloudWorkspaceSuggestedValueSet.has(entry.value)
+      ),
+    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestedValueSet]
+  );
+
+  const cloudWorkspaceSuggestionsToRender = useMemo(
+    () => (!hasSearchQuery ? cloudWorkspaceSuggestedEntries : []),
+    [hasSearchQuery, cloudWorkspaceSuggestedEntries]
+  );
+  const cloudWorkspaceCommandsToRender = useMemo(
+    () =>
+      hasSearchQuery || cloudWorkspaceSuggestionsToRender.length === 0
+        ? filteredCloudWorkspaceEntries
+        : cloudWorkspaceRemainingEntries,
+    [
+      filteredCloudWorkspaceEntries,
+      hasSearchQuery,
+      cloudWorkspaceRemainingEntries,
+      cloudWorkspaceSuggestionsToRender.length,
+    ]
+  );
+  const cloudWorkspaceVisibleValues = useMemo(
+    () =>
+      [
+        ...cloudWorkspaceSuggestionsToRender,
+        ...cloudWorkspaceCommandsToRender,
+      ].map((entry) => entry.value),
+    [cloudWorkspaceCommandsToRender, cloudWorkspaceSuggestionsToRender]
+  );
+
+  const teamVisibleValues = useMemo(() => {
+    if (!filteredTeamEntries.length) return [];
+    return filteredTeamEntries.map((entry) => entry.value);
+  }, [filteredTeamEntries]);
+
+  const renderCommandItem = useCallback(
+    (entry: CommandListEntry, recordUsage: (value: string) => void) => (
+      <Command.Item
+        key={entry.value}
+        value={entry.value}
+        data-value={entry.dataValue ?? entry.value}
+        keywords={entry.keywords}
+        disabled={entry.disabled}
+        className={entry.className ?? baseCommandItemClassName}
+        onSelect={async () => {
+          try {
+            await entry.execute();
+            if (entry.trackUsage !== false) {
+              recordUsage(entry.value);
+            }
+          } catch (error) {
+            console.error("Failed to execute command", error);
+          }
+        }}
+      >
+        {entry.renderContent()}
+      </Command.Item>
+    ),
+    []
+  );
+
+  const scrollCommandItemIntoView = useCallback((value: string | undefined) => {
+    if (!value) return;
+    if (typeof window === "undefined") return;
+    const listEl = commandListRef.current;
+    if (!listEl) return;
+    const escapeValue =
+      typeof window.CSS !== "undefined" &&
+      typeof window.CSS.escape === "function"
+        ? window.CSS.escape(value)
+        : value.replace(/["\\]/g, "\\$&");
+    const selector = `[data-value="${escapeValue}"]`;
+    const run = () => {
+      const target = listEl.querySelector<HTMLElement>(selector);
+      target?.scrollIntoView({ block: "nearest", behavior: "instant" });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    let availableValues: string[] = [];
+    if (activePage === "root") {
+      availableValues = rootVisibleValues;
+    } else if (activePage === "local-workspaces") {
+      availableValues = localWorkspaceVisibleValues;
+    } else if (activePage === "cloud-workspaces") {
+      availableValues = cloudWorkspaceVisibleValues;
+    } else if (activePage === "teams") {
+      availableValues = teamVisibleValues;
+    }
+
+    if (availableValues.length === 0) {
+      setCommandValue(undefined);
+      return;
+    }
+
+    if (!commandValue || !availableValues.includes(commandValue)) {
+      setCommandValue(availableValues[0]);
+    }
+  }, [
+    activePage,
+    cloudWorkspaceVisibleValues,
+    commandValue,
+    localWorkspaceVisibleValues,
+    open,
+    rootVisibleValues,
+    teamVisibleValues,
+  ]);
+
+  useEffect(() => {
+    if (!open) {
+      previousSearchRef.current = search;
+      return;
+    }
+
+    if (previousSearchRef.current === search) {
+      return;
+    }
+
+    previousSearchRef.current = search;
+
+    let availableValues: string[] = [];
+    if (activePage === "root") {
+      availableValues = rootVisibleValues;
+    } else if (activePage === "local-workspaces") {
+      availableValues = localWorkspaceVisibleValues;
+    } else if (activePage === "cloud-workspaces") {
+      availableValues = cloudWorkspaceVisibleValues;
+    } else if (activePage === "teams") {
+      availableValues = teamVisibleValues;
+    }
+
+    if (availableValues.length === 0) {
+      setCommandValue(undefined);
+      return;
+    }
+
+    const firstValue = availableValues[0];
+    if (commandValue !== firstValue) {
+      setCommandValue(firstValue);
+    }
+    scrollCommandItemIntoView(firstValue);
+  }, [
+    activePage,
+    cloudWorkspaceVisibleValues,
+    commandValue,
+    localWorkspaceVisibleValues,
+    open,
+    rootVisibleValues,
+    scrollCommandItemIntoView,
+    search,
+    teamVisibleValues,
+  ]);
 
   if (!open) return null;
 
@@ -899,8 +1858,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       <Command.Dialog
         open={open}
         value={commandValue}
+        shouldFilter={false}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
+            if (skipNextCloseRef.current) {
+              skipNextCloseRef.current = false;
+              return;
+            }
             closeCommand();
           } else {
             setActivePage("root");
@@ -914,10 +1878,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         title="Command Menu"
         loop
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
-        onKeyDown={(e) => {
+        onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
-            closeCommand();
+            e.stopPropagation();
+            handleEscape();
           } else if (
             e.key === "Backspace" &&
             activePage !== "root" &&
@@ -941,408 +1906,106 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             className="w-full px-4 py-3 text-sm bg-transparent border-b border-neutral-200 dark:border-neutral-700 outline-none placeholder:text-neutral-500 dark:placeholder:text-neutral-400"
           />
           <CommandHighlightListener onHighlight={handleHighlight} />
-          <Command.List className="max-h-[400px] overflow-y-auto px-1 pb-2 flex flex-col gap-2">
+          <Command.List
+            ref={commandListRef}
+            className="max-h-[400px] overflow-y-auto px-1 pb-2 flex flex-col gap-2 pt-1"
+          >
             <Command.Empty className="py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
               {activePage === "teams"
                 ? "No matching teams."
                 : activePage === "local-workspaces"
-                  ? "No matching repositories."
-                  : "No results found."}
+                  ? isLocalWorkspaceLoading
+                    ? "Loading repositories…"
+                    : "No matching repositories."
+                  : activePage === "cloud-workspaces"
+                    ? isCloudWorkspaceLoading
+                      ? "Loading environments…"
+                      : "No matching environments."
+                    : "No results found."}
             </Command.Empty>
 
             {activePage === "root" ? (
               <>
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Actions
-                  </div>
-                  <Command.Item
-                    value="new-task"
-                    onSelect={() => handleSelect("new-task")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Plus className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">New Task</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="local-workspaces"
-                    onSelect={() => handleSelect("local-workspaces")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <FolderPlus className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">New Local Workspace</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="pull-requests"
-                    onSelect={() => handleSelect("pull-requests")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <GitPullRequest className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">Pull Requests</span>
-                  </Command.Item>
-                </Command.Group>
-
-                {isDevEnvironment ? (
+                {rootSuggestionsToRender.length > 0 ? (
                   <Command.Group>
-                    <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                      Developer
-                    </div>
-                    <Command.Item
-                      value="dev:webcontents"
-                      keywords={["debug", "electron", "webcontents"]}
-                      onSelect={() => handleSelect("dev:webcontents")}
-                      className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                    >
-                      <Bug className="h-4 w-4 text-neutral-500" />
-                      <span className="text-sm">Debug WebContents</span>
-                    </Command.Item>
+                    {rootSuggestionsToRender.map((entry) =>
+                      renderCommandItem(entry, recordRootUsage)
+                    )}
                   </Command.Group>
                 ) : null}
-
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Navigation
-                  </div>
-                  <Command.Item
-                    value="home"
-                    onSelect={() => handleSelect("home")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Home className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">Home</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="environments"
-                    onSelect={() => handleSelect("environments")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Server className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">Environments</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="settings"
-                    onSelect={() => handleSelect("settings")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Settings className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">Settings</span>
-                  </Command.Item>
-                </Command.Group>
-
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Teams
-                  </div>
-                  <Command.Item
-                    value="teams:switch"
-                    onSelect={() => handleSelect("teams:switch")}
-                    keywords={["team", "teams", "switch"]}
-                    className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Users className="h-4 w-4 text-neutral-500" />
-                    <span className="flex-1 truncate text-sm">Switch team</span>
-                  </Command.Item>
-                </Command.Group>
-
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    View
-                  </div>
-                  <Command.Item
-                    value="sidebar-toggle"
-                    keywords={["sidebar", "toggle", "hide", "show", "panel"]}
-                    onSelect={() => handleSelect("sidebar-toggle")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <PanelLeftClose className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">Toggle Sidebar</span>
-                  </Command.Item>
-                </Command.Group>
-
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Theme
-                  </div>
-                  <Command.Item
-                    value="theme-light"
-                    onSelect={() => handleSelect("theme-light")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Sun className="h-4 w-4 text-amber-500" />
-                    <span className="text-sm">Light Mode</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="theme-dark"
-                    onSelect={() => handleSelect("theme-dark")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Moon className="h-4 w-4 text-blue-500" />
-                    <span className="text-sm">Dark Mode</span>
-                  </Command.Item>
-                  <Command.Item
-                    value="theme-system"
-                    onSelect={() => handleSelect("theme-system")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
-                    <Monitor className="h-4 w-4 text-neutral-500" />
-                    <span className="text-sm">System Theme</span>
-                  </Command.Item>
-                </Command.Group>
-
-                {stackUser ? (
+                {rootCommandsToRender.length > 0 ? (
                   <Command.Group>
-                    <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                      Account
-                    </div>
-                    <Command.Item
-                      value="sign-out"
-                      onSelect={() => handleSelect("sign-out")}
-                      className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                    >
-                      <LogOut className="h-4 w-4 text-neutral-500" />
-                      <span className="text-sm">Sign out</span>
-                    </Command.Item>
+                    {rootCommandsToRender.map((entry) =>
+                      renderCommandItem(entry, recordRootUsage)
+                    )}
                   </Command.Group>
-                ) : null}
-
-                {allTasks && allTasks.length > 0 && (
-                  <Command.Group>
-                    <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                      Tasks
-                    </div>
-                    {allTasks.slice(0, 9).flatMap((task, index) => {
-                      const run = task.selectedTaskRun;
-                      const items = [
-                        <Command.Item
-                          key={task._id}
-                          value={`${index + 1}:task:${task._id}`}
-                          onSelect={() => handleSelect(`task:${task._id}`)}
-                          data-value={`task:${task._id}`}
-                          className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
-                    data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                    data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
-                    group"
-                        >
-                          <span
-                            className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold
-                    bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
-                    group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
-                          >
-                            {index + 1}
-                          </span>
-                          <span className="flex-1 truncate text-sm">
-                            {task.pullRequestTitle || task.text}
-                          </span>
-                          {task.isCompleted ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                              completed
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                              in progress
-                            </span>
-                          )}
-                        </Command.Item>,
-                      ];
-
-                      if (run) {
-                        items.push(
-                          <Command.Item
-                            key={`${task._id}-vs-${run._id}`}
-                            value={`${index + 1} vs:task:${task._id}`}
-                            onSelect={() => handleSelect(`task:${task._id}:vs`)}
-                            data-value={`task:${task._id}:vs`}
-                            className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
-                    data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                    data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
-                    group"
-                          >
-                            <span
-                              className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold
-                    bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
-                    group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
-                            >
-                              {index + 1} VS
-                            </span>
-                            <span className="flex-1 truncate text-sm">
-                              {task.pullRequestTitle || task.text}
-                            </span>
-                            {task.isCompleted ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                                completed
-                              </span>
-                            ) : (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                                in progress
-                              </span>
-                            )}
-                          </Command.Item>,
-                        );
-
-                        items.push(
-                          <Command.Item
-                            key={`${task._id}-gitdiff-${run._id}`}
-                            value={`${index + 1} git diff:task:${task._id}`}
-                            onSelect={() =>
-                              handleSelect(`task:${task._id}:gitdiff`)
-                            }
-                            data-value={`task:${task._id}:gitdiff`}
-                            className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
-                    data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                    data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
-                    group"
-                          >
-                            <span
-                              className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold
-                    bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
-                    group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
-                            >
-                              {index + 1} git diff
-                            </span>
-                            <span className="flex-1 truncate text-sm">
-                              {task.pullRequestTitle || task.text}
-                            </span>
-                            {task.isCompleted ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                                completed
-                              </span>
-                            ) : (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                                in progress
-                              </span>
-                            )}
-                          </Command.Item>,
-                        );
-                      }
-
-                      return items;
-                    })}
-                  </Command.Group>
-                )}
-
-                {isElectron ? (
-                  <>
-                    <Command.Group>
-                      <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                        Desktop
-                      </div>
-                      <Command.Item
-                        value="updates:check"
-                        onSelect={() => handleSelect("updates:check")}
-                        className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                      >
-                        <RefreshCw className="h-4 w-4 text-neutral-500" />
-                        <span className="text-sm">Check for Updates</span>
-                      </Command.Item>
-                    </Command.Group>
-
-                    <ElectronLogsCommandItems onSelect={handleSelect} />
-                  </>
                 ) : null}
               </>
             ) : null}
 
             {activePage === "local-workspaces" ? (
               <>
-                <Command.Group>
-                  <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Repositories
+                {isLocalWorkspaceLoading ? (
+                  <div className={placeholderClassName}>
+                    Loading repositories…
                   </div>
-                  {isLocalWorkspaceLoading ? (
-                    <Command.Item
-                      value="local-workspaces:loading"
-                      disabled
-                      className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
-                    >
-                      Loading repositories…
-                    </Command.Item>
-                  ) : localWorkspaceOptions.length > 0 ? (
-                    localWorkspaceOptions.map((option) => {
-                      const predictedWorkspaceName =
-                        predictedWorkspaceSequence !== null
-                          ? generateWorkspaceName({
-                              repoName: option.repoBaseName,
-                              sequence: predictedWorkspaceSequence,
-                            })
-                          : null;
-                      return (
-                        <Command.Item
-                          key={option.fullName}
-                          value={`local-workspace:${option.fullName}`}
-                          data-value={`local-workspace:${option.fullName}`}
-                          keywords={option.keywords}
-                          disabled={isCreatingLocalWorkspace}
-                          onSelect={() =>
-                            handleLocalWorkspaceSelect(option.fullName)
-                          }
-                          className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                        >
-                          <GitHubIcon className="h-4 w-4 text-neutral-500" />
-                          <div className="flex min-w-0 flex-1 flex-col">
-                            <span className="truncate text-sm">
-                              {option.fullName}
-                            </span>
-                            {predictedWorkspaceName ? (
-                              <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                                {predictedWorkspaceName}
-                              </span>
-                            ) : null}
-                          </div>
-                        </Command.Item>
-                      );
-                    })
-                  ) : (
-                    <Command.Item
-                      value="local-workspaces:none"
-                      disabled
-                      className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-default text-sm text-neutral-500 dark:text-neutral-400"
-                    >
-                      No repositories available.
-                    </Command.Item>
-                  )}
-                </Command.Group>
+                ) : (
+                  <>
+                    {localWorkspaceSuggestionsToRender.length > 0 ? (
+                      <Command.Group>
+                        {localWorkspaceSuggestionsToRender.map((entry) =>
+                          renderCommandItem(entry, recordLocalWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                    {localWorkspaceSuggestionsToRender.length > 0 &&
+                    localWorkspaceCommandsToRender.length > 0 ? (
+                      <div className="px-2">
+                        <hr className="border-neutral-200 dark:border-neutral-800" />
+                      </div>
+                    ) : null}
+                    {localWorkspaceCommandsToRender.length > 0 ? (
+                      <Command.Group>
+                        {localWorkspaceCommandsToRender.map((entry) =>
+                          renderCommandItem(entry, recordLocalWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                  </>
+                )}
+              </>
+            ) : null}
+
+            {activePage === "cloud-workspaces" ? (
+              <>
+                {isCloudWorkspaceLoading ? (
+                  <div className={placeholderClassName}>
+                    Loading environments…
+                  </div>
+                ) : (
+                  <>
+                    {cloudWorkspaceSuggestionsToRender.length > 0 ? (
+                      <Command.Group>
+                        {cloudWorkspaceSuggestionsToRender.map((entry) =>
+                          renderCommandItem(entry, recordCloudWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                    {cloudWorkspaceSuggestionsToRender.length > 0 &&
+                    cloudWorkspaceCommandsToRender.length > 0 ? (
+                      <div className="px-2">
+                        <hr className="border-neutral-200 dark:border-neutral-800" />
+                      </div>
+                    ) : null}
+                    {cloudWorkspaceCommandsToRender.length > 0 ? (
+                      <Command.Group>
+                        {cloudWorkspaceCommandsToRender.map((entry) =>
+                          renderCommandItem(entry, recordCloudWorkspaceUsage)
+                        )}
+                      </Command.Group>
+                    ) : null}
+                  </>
+                )}
               </>
             ) : null}
 
@@ -1360,16 +2023,14 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     >
                       Loading teams…
                     </Command.Item>
-                  ) : teamCommandItems.length > 0 ? (
-                    teamCommandItems.map((item) => (
+                  ) : teamCommandEntries.length > 0 ? (
+                    filteredTeamEntries.map(({ value, item }) => (
                       <Command.Item
-                        key={item.id}
-                        value={`team:${item.id}:${item.teamSlugOrId}`}
-                        data-value={`team:${item.id}:${item.teamSlugOrId}`}
+                        key={value}
+                        value={value}
+                        data-value={value}
                         keywords={item.keywords}
-                        onSelect={() =>
-                          handleSelect(`team:${item.id}:${item.teamSlugOrId}`)
-                        }
+                        onSelect={() => handleSelect(value)}
                         className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800

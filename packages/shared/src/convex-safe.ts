@@ -12,4 +12,5 @@ export * from "./utils/normalize-origin";
 export * from "./utils/reserved-cmux-ports";
 export * from "./utils/validate-exposed-ports";
 export * from "./vscode-schemas";
+export * from "./screenshots/types";
 // Note: worker-schemas is excluded because it imports agentConfig which has Node.js dependencies

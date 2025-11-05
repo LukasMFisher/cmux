@@ -244,6 +244,8 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
+      isLocalWorkspace: task.isLocalWorkspace,
+      isCloudWorkspace: task.isCloudWorkspace,
     });
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
     if (
@@ -394,6 +396,7 @@ export const getRunDiffContext = authQuery({
         task: null,
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
+        screenshotSets: [],
       };
     }
 
@@ -433,10 +436,50 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    const screenshotSets = await (async () => {
+      const runDoc = await ctx.db.get(args.runId);
+      // Prevent leaking screenshots for runs outside the authenticated task/team
+      if (
+        !runDoc ||
+        runDoc.teamId !== teamId ||
+        runDoc.taskId !== args.taskId
+      ) {
+        return [];
+      }
+
+      const screenshotSetDocs = await ctx.db
+        .query("taskRunScreenshotSets")
+        .withIndex("by_run_capturedAt", (q) => q.eq("runId", args.runId))
+        .collect();
+
+      screenshotSetDocs.sort((a, b) => b.capturedAt - a.capturedAt);
+
+      const trimmedScreenshotSets = screenshotSetDocs.slice(0, 20);
+
+      return Promise.all(
+        trimmedScreenshotSets.map(async (set) => {
+          const imagesWithUrls = await Promise.all(
+            set.images.map(async (image) => {
+              const url = await ctx.storage.getUrl(image.storageId);
+              return {
+                ...image,
+                url: url ?? undefined,
+              };
+            }),
+          );
+          return {
+            ...set,
+            images: imagesWithUrls,
+          };
+        }),
+      );
+    })();
+
     return {
       task: taskWithImages,
       taskRuns,
       branchMetadataByRepo,
+      screenshotSets,
     };
   },
 });
@@ -519,6 +562,43 @@ export const updateExitCode = internalMutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
       exitCode: args.exitCode,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updateScreenshotMetadata = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    storageId: v.id("_storage"),
+    mimeType: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      screenshotStorageId: args.storageId,
+      screenshotCapturedAt: Date.now(),
+      screenshotMimeType: args.mimeType,
+      screenshotFileName: args.fileName,
+      screenshotCommitSha: args.commitSha,
+      latestScreenshotSetId: args.screenshotSetId,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const clearScreenshotMetadata = internalMutation({
+  args: { id: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      screenshotStorageId: undefined,
+      screenshotCapturedAt: undefined,
+      screenshotMimeType: undefined,
+      screenshotFileName: undefined,
+      screenshotCommitSha: undefined,
+      latestScreenshotSetId: undefined,
       updatedAt: Date.now(),
     });
   },

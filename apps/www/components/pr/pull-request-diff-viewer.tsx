@@ -7,8 +7,16 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
+  useDeferredValue,
 } from "react";
-import type { ReactElement, ReactNode } from "react";
+import type {
+  ReactElement,
+  ReactNode,
+  KeyboardEvent as ReactKeyboardEvent,
+  CSSProperties,
+  ChangeEvent,
+} from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -18,14 +26,19 @@ import {
   FileMinus,
   FilePlus,
   FileText,
-  Folder,
   Sparkles,
+  Copy,
+  Check,
+  Loader2,
+  Star,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Decoration,
   Diff,
   Hunk,
   computeNewLineNumber,
+  computeOldLineNumber,
   parseDiff,
   pickRanges,
   getChangeKey,
@@ -43,6 +56,7 @@ import { useConvexQuery } from "@convex-dev/react-query";
 import type { FunctionReturnType } from "convex/server";
 import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
 import { cn } from "@/lib/utils";
+import CmuxLogo from "@/components/logo/cmux-logo";
 import {
   Tooltip,
   TooltipContent,
@@ -52,11 +66,24 @@ import {
 import { refractor } from "refractor/all";
 
 import {
-  buildDiffHeatmap,
+  MaterialSymbolsFolderOpenSharp,
+  MaterialSymbolsFolderSharp,
+} from "../icons/material-symbols";
+import {
   parseReviewHeatmap,
+  prepareDiffHeatmapArtifacts,
+  renderDiffHeatmapFromArtifacts,
   type DiffHeatmap,
+  type DiffHeatmapArtifacts,
   type ReviewHeatmapLine,
+  type ResolvedHeatmapLine,
 } from "./heatmap";
+import {
+  ReviewCompletionNotificationCard,
+  type ReviewCompletionNotificationCardState,
+} from "./review-completion-notification-card";
+import clsx from "clsx";
+import { kitties } from "./kitty";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -67,6 +94,8 @@ type PullRequestDiffViewerProps = {
   jobType?: "pull_request" | "comparison";
   commitRef?: string;
   baseCommitRef?: string;
+  pullRequestTitle?: string;
+  pullRequestUrl?: string;
 };
 
 type ParsedFileDiff = {
@@ -210,7 +239,9 @@ const refractorAdapter = createRefractorAdapter(refractor);
 
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
-  | FunctionReturnType<typeof api.codeReview.listFileOutputsForComparison>[number];
+  | FunctionReturnType<
+      typeof api.codeReview.listFileOutputsForComparison
+    >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -221,8 +252,9 @@ type FileDiffViewModel = {
   entry: ParsedFileDiff;
   review: FileOutput | null;
   reviewHeatmap: ReviewHeatmapLine[];
-  diffHeatmap: DiffHeatmap | null;
-  changeKeyByLine: Map<number, string>;
+  diffHeatmapArtifacts: DiffHeatmapArtifacts | null;
+  changeKeyByLine: Map<string, string>;
+  streamState: StreamFileState | null;
 };
 
 type ReviewErrorTarget = {
@@ -230,6 +262,7 @@ type ReviewErrorTarget = {
   anchorId: string;
   filePath: string;
   lineNumber: number;
+  side: DiffLineSide;
   reason: string | null;
   score: number | null;
   changeKey: string | null;
@@ -242,6 +275,7 @@ type FocusNavigateOptions = {
 type ActiveTooltipTarget = {
   filePath: string;
   lineNumber: number;
+  side: DiffLineSide;
 };
 
 type ShowAutoTooltipOptions = {
@@ -253,6 +287,92 @@ type HeatmapTooltipTheme = {
   titleClass: string;
   reasonClass: string;
 };
+
+type NavigateOptions = {
+  updateAnchor?: boolean;
+  updateHash?: boolean;
+};
+
+type DiffLineSide = "new" | "old";
+
+type DiffLineLocation = {
+  side: DiffLineSide;
+  lineNumber: number;
+};
+
+type LineTooltipMap = Record<DiffLineSide, Map<number, HeatmapTooltipMeta>>;
+
+type StreamFileStatus = "pending" | "success" | "skipped" | "error";
+
+type StreamFileState = {
+  lines: ReviewHeatmapLine[];
+  status: StreamFileStatus;
+  skipReason?: string | null;
+  summary?: string | null;
+};
+
+const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:pr-diff-viewer:file-tree-width";
+const SIDEBAR_DEFAULT_WIDTH = 330;
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 520;
+
+function selectTooltipMeta(
+  className: string,
+  lineNumber: number,
+  tooltipMap: LineTooltipMap
+): HeatmapTooltipMeta | undefined {
+  const isOldToken = className.includes("cmux-heatmap-char-old");
+  const primarySource = isOldToken ? tooltipMap.old : tooltipMap.new;
+  const fallbackSource = isOldToken ? tooltipMap.new : tooltipMap.old;
+  return primarySource.get(lineNumber) ?? fallbackSource.get(lineNumber);
+}
+
+function mergeHeatmapLines(
+  primary: ReviewHeatmapLine[],
+  fallback: ReviewHeatmapLine[]
+): ReviewHeatmapLine[] {
+  if (fallback.length === 0) {
+    return primary;
+  }
+
+  const lineMap = new Map<string, ReviewHeatmapLine>();
+
+  for (const entry of primary) {
+    const normalized =
+      typeof entry.lineText === "string"
+        ? entry.lineText.replace(/\s+/g, " ").trim()
+        : "";
+    const key = `${entry.lineNumber ?? "unknown"}:${normalized}`;
+    lineMap.set(key, entry);
+  }
+
+  for (const entry of fallback) {
+    const normalized =
+      typeof entry.lineText === "string"
+        ? entry.lineText.replace(/\s+/g, " ").trim()
+        : "";
+    const key = `${entry.lineNumber ?? "unknown"}:${normalized}`;
+    if (!lineMap.has(key)) {
+      lineMap.set(key, entry);
+    }
+  }
+
+  return Array.from(lineMap.values()).sort((a, b) => {
+    const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
+    const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+    if (aLine !== bLine) {
+      return aLine - bLine;
+    }
+    return (a.lineText ?? "").localeCompare(b.lineText ?? "");
+  });
+}
+
+function clampSidebarWidth(value: number): number {
+  if (Number.isNaN(value)) {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
+}
 
 function inferLanguage(filename: string): string | null {
   const lowerPath = filename.toLowerCase();
@@ -285,6 +405,7 @@ type FileTreeNode = {
   path: string;
   children: FileTreeNode[];
   file?: GithubFileChange;
+  isLoading?: boolean;
 };
 
 type FileStatusMeta = {
@@ -339,6 +460,43 @@ function getFileStatusMeta(
   }
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-sky-700 transition-colors hover:bg-sky-100"
+      aria-label={copied ? "Copied to clipboard" : "Copy to clipboard"}
+    >
+      {copied ? (
+        <>
+          <Check className="h-3.5 w-3.5" aria-hidden />
+          <span>Copied!</span>
+        </>
+      ) : (
+        <>
+          <Copy className="h-3.5 w-3.5" aria-hidden />
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+}
+
+const DEBUG_LOG = false;
+
 export function PullRequestDiffViewer({
   files,
   teamSlugOrId,
@@ -348,13 +506,340 @@ export function PullRequestDiffViewer({
   jobType,
   commitRef,
   baseCommitRef,
+  pullRequestTitle,
+  pullRequestUrl,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
 
+  const [streamStateByFile, setStreamStateByFile] = useState<
+    Map<string, StreamFileState>
+  >(() => new Map());
+
+  useEffect(() => {
+    if (normalizedJobType !== "pull_request") {
+      return;
+    }
+    if (typeof prNumber !== "number" || Number.isNaN(prNumber)) {
+      return;
+    }
+    if (!repoFullName) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setStreamStateByFile(new Map());
+    const params = new URLSearchParams({
+      repoFullName,
+      prNumber: String(prNumber),
+    });
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/pr-review/simple?${params.toString()}`,
+          {
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          console.error(
+            "[simple-review][frontend] Failed to start stream",
+            response.status
+          );
+          return;
+        }
+
+        const body = response.body;
+        if (!body) {
+          console.error(
+            "[simple-review][frontend] Response body missing for stream"
+          );
+          return;
+        }
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+
+            const lines = rawEvent.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) {
+                continue;
+              }
+              const data = line.slice(5).trim();
+              if (data.length === 0) {
+                continue;
+              }
+              try {
+                const payload = JSON.parse(data) as Record<string, unknown>;
+                const type =
+                  typeof payload.type === "string" ? payload.type : "";
+                const filePath =
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
+
+                switch (type) {
+                  case "status":
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][status]",
+                        payload
+                      );
+                    }
+                    break;
+                  case "file":
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][file]", payload);
+                    }
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "skip":
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][skip]", payload);
+                    }
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          skipReason:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.skipReason ?? null),
+                          summary:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : (current.summary ?? null),
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "file-complete":
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][file-complete]",
+                        payload
+                      );
+                    }
+                    if (filePath) {
+                      const status =
+                        payload.status === "skipped" ||
+                        payload.status === "error" ||
+                        payload.status === "success"
+                          ? (payload.status as StreamFileStatus)
+                          : "success";
+                      const summary =
+                        typeof payload.summary === "string"
+                          ? payload.summary
+                          : undefined;
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        next.set(filePath, {
+                          ...current,
+                          status,
+                          summary: summary ?? current.summary ?? null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "hunk":
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][hunk]", payload);
+                    }
+                    break;
+                  case "line": {
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][line]", payload);
+                    }
+                    if (!filePath) {
+                      break;
+                    }
+                    const linePayload = payload.line as
+                      | Record<string, unknown>
+                      | undefined;
+                    if (!linePayload) {
+                      break;
+                    }
+                    const rawScore =
+                      typeof linePayload.scoreNormalized === "number"
+                        ? linePayload.scoreNormalized
+                        : typeof linePayload.score === "number"
+                          ? linePayload.score / 100
+                          : null;
+                    if (rawScore === null || rawScore <= 0) {
+                      break;
+                    }
+                    const normalizedScore = Math.max(0, Math.min(rawScore, 1));
+                    const lineNumber =
+                      typeof linePayload.newLineNumber === "number"
+                        ? linePayload.newLineNumber
+                        : typeof linePayload.oldLineNumber === "number"
+                          ? linePayload.oldLineNumber
+                          : null;
+                    const lineText =
+                      typeof linePayload.diffLine === "string"
+                        ? linePayload.diffLine
+                        : typeof linePayload.codeLine === "string"
+                          ? linePayload.codeLine
+                          : null;
+                    const normalizedText =
+                      typeof lineText === "string"
+                        ? lineText.replace(/\s+/g, " ").trim()
+                        : null;
+                    if (!normalizedText) {
+                      break;
+                    }
+
+                    const reviewLine: ReviewHeatmapLine = {
+                      lineNumber,
+                      lineText,
+                      score: normalizedScore,
+                      reason:
+                        typeof linePayload.shouldReviewWhy === "string"
+                          ? linePayload.shouldReviewWhy
+                          : null,
+                      mostImportantWord:
+                        typeof linePayload.mostImportantWord === "string"
+                          ? linePayload.mostImportantWord
+                          : null,
+                    };
+
+                    setStreamStateByFile((previous) => {
+                      const next = new Map(previous);
+                      const current = next.get(filePath) ?? {
+                        lines: [],
+                        status: "pending",
+                        skipReason: null,
+                        summary: null,
+                      };
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                        reviewLine.lineText ?? ""
+                      }`;
+                      const filtered = current.lines.filter((line) => {
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${
+                          line.lineText ?? ""
+                        }`;
+                        return existingKey !== lineKey;
+                      });
+                      const updated = [...filtered, reviewLine].sort((a, b) => {
+                        const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                        if (aLine !== bLine) {
+                          return aLine - bLine;
+                        }
+                        return (a.lineText ?? "").localeCompare(
+                          b.lineText ?? ""
+                        );
+                      });
+                      next.set(filePath, {
+                        ...current,
+                        lines: updated,
+                      });
+                      return next;
+                    });
+                    break;
+                  }
+                  case "complete":
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][complete]",
+                        payload
+                      );
+                    }
+                    setStreamStateByFile((previous) => {
+                      let changed = false;
+                      const next = new Map(previous);
+                      for (const [path, state] of next.entries()) {
+                        if (state.status === "pending") {
+                          next.set(path, {
+                            ...state,
+                            status: "success",
+                          });
+                          changed = true;
+                        }
+                      }
+                      return changed ? next : previous;
+                    });
+                    break;
+                  case "error":
+                    console.error("[simple-review][frontend][error]", payload);
+                    break;
+                  default:
+                    console.info("[simple-review][frontend][event]", payload);
+                }
+              } catch (error) {
+                console.warn(
+                  "[simple-review][frontend] Failed to parse SSE data",
+                  { data, error }
+                );
+              }
+            }
+          }
+        }
+
+        if (buffer.trim().length > 0) {
+          console.debug("[simple-review][frontend] Remaining buffer", buffer);
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.error("[simple-review][frontend] Stream failed", error);
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [normalizedJobType, prNumber, repoFullName, setStreamStateByFile]);
+
   const prQueryArgs = useMemo(
     () =>
-      normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined
         ? ("skip" as const)
         : {
             teamSlugOrId,
@@ -419,42 +904,305 @@ export function PullRequestDiffViewer({
   }, [fileOutputs]);
 
   const sortedFiles = useMemo(() => {
-    return [...files].sort((a, b) => a.filename.localeCompare(b.filename));
+    // Sort files to match the tree structure order
+    // The tree displays files depth-first, so we need to sort by path segments
+    return [...files].sort((a, b) => {
+      const aSegments = a.filename.split("/");
+      const bSegments = b.filename.split("/");
+      const minLength = Math.min(aSegments.length, bSegments.length);
+
+      // Compare segment by segment
+      for (let i = 0; i < minLength; i++) {
+        const aSegment = aSegments[i]!;
+        const bSegment = bSegments[i]!;
+
+        // At the last segment for one of the paths
+        const aIsLast = i === aSegments.length - 1;
+        const bIsLast = i === bSegments.length - 1;
+
+        if (aSegment === bSegment) {
+          // Same segment, continue to next level
+          continue;
+        }
+
+        // If one is a file and one is a directory at this level, directory comes first
+        if (aIsLast && !bIsLast) return 1; // a is file, b is directory
+        if (!aIsLast && bIsLast) return -1; // a is directory, b is file
+
+        // Both are directories or both are files at this level, sort alphabetically
+        return aSegment.localeCompare(bSegment);
+      }
+
+      // One path is a prefix of the other
+      // Shorter path (file in parent dir) comes before longer path (file in subdir)
+      return aSegments.length - bSegments.length;
+    });
   }, [files]);
 
   const totalFileCount = sortedFiles.length;
 
   const processedFileCount = useMemo(() => {
-    if (fileOutputs === undefined) {
+    if (fileOutputs === undefined && streamStateByFile.size === 0) {
       return null;
     }
 
     let count = 0;
     for (const file of sortedFiles) {
-      if (fileOutputIndex.has(file.filename)) {
+      const streamState = streamStateByFile.get(file.filename);
+      const isStreamComplete =
+        streamState !== undefined && streamState.status !== "pending";
+      const isProcessed =
+        fileOutputIndex.has(file.filename) || isStreamComplete;
+      if (isProcessed) {
         count += 1;
       }
     }
 
     return count;
-  }, [fileOutputs, fileOutputIndex, sortedFiles]);
+  }, [fileOutputs, fileOutputIndex, sortedFiles, streamStateByFile]);
 
-  const isLoadingFileOutputs = fileOutputs === undefined;
+  const isLoadingFileOutputs =
+    fileOutputs === undefined &&
+    (streamStateByFile.size === 0 ||
+      Array.from(streamStateByFile.values()).some(
+        (state) => state.status === "pending"
+      ));
+
+  const pendingFileCount = useMemo(() => {
+    if (processedFileCount === null) {
+      return Math.max(totalFileCount, 0);
+    }
+    return Math.max(totalFileCount - processedFileCount, 0);
+  }, [processedFileCount, totalFileCount]);
+
+  const [heatmapThresholdInput, setHeatmapThresholdInput] = useState(0);
+  const heatmapThreshold = useDeferredValue(heatmapThresholdInput);
+
+  const [isNotificationSupported, setIsNotificationSupported] = useState(false);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission | null>(null);
+  const [shouldNotifyOnCompletion, setShouldNotifyOnCompletion] =
+    useState(false);
+  const [isRequestingNotification, setIsRequestingNotification] =
+    useState(false);
+  const previousPendingCountRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const supported = "Notification" in window;
+    setIsNotificationSupported(supported);
+
+    if (!supported) {
+      return;
+    }
+
+    setNotificationPermission(Notification.permission);
+  }, []);
+
+  useEffect(() => {
+    if (notificationPermission === "denied") {
+      setShouldNotifyOnCompletion(false);
+    }
+  }, [notificationPermission]);
+
+  useEffect(() => {
+    const previousPending = previousPendingCountRef.current;
+    previousPendingCountRef.current = pendingFileCount;
+
+    if (
+      !isNotificationSupported ||
+      notificationPermission !== "granted" ||
+      !shouldNotifyOnCompletion
+    ) {
+      return;
+    }
+
+    if (
+      pendingFileCount === 0 &&
+      (previousPending === null || previousPending > 0)
+    ) {
+      try {
+        const completionMessage =
+          totalFileCount === 1
+            ? "Finished reviewing the last file."
+            : "Finished reviewing all files in this review.";
+        const isPullRequestReview = normalizedJobType === "pull_request";
+        const sanitizedTitle =
+          typeof pullRequestTitle === "string"
+            ? pullRequestTitle.replace(/\s+/g, " ").trim()
+            : "";
+        const effectiveTitle =
+          sanitizedTitle.length > 0 ? sanitizedTitle : null;
+        const sanitizedUrl =
+          typeof pullRequestUrl === "string" ? pullRequestUrl.trim() : "";
+        const hasValidPrNumber =
+          typeof prNumber === "number" && Number.isFinite(prNumber);
+        const trimmedRepoFullName =
+          repoFullName.trim().length > 0 ? repoFullName.trim() : null;
+        const fallbackUrl =
+          isPullRequestReview && hasValidPrNumber && trimmedRepoFullName
+            ? `https://github.com/${trimmedRepoFullName}/pull/${prNumber}`
+            : null;
+        const effectiveUrl =
+          sanitizedUrl.length > 0 ? sanitizedUrl : fallbackUrl;
+        const repoDescriptor =
+          trimmedRepoFullName && hasValidPrNumber
+            ? `${trimmedRepoFullName}#${prNumber}`
+            : trimmedRepoFullName;
+
+        const detailLines: string[] = [];
+
+        if (isPullRequestReview) {
+          const descriptorParts: string[] = [];
+          if (effectiveTitle) {
+            descriptorParts.push(`“${effectiveTitle}”`);
+          }
+          if (repoDescriptor) {
+            descriptorParts.push(repoDescriptor);
+          }
+
+          if (descriptorParts.length > 0) {
+            detailLines.push(descriptorParts.join(" • "));
+          }
+
+          if (effectiveUrl) {
+            detailLines.push(effectiveUrl);
+          }
+        }
+
+        const bodyLines = [completionMessage, ...detailLines].filter(
+          (line) => line && line.length > 0
+        );
+        const body = bodyLines.join("\n");
+        const titleSubject =
+          isPullRequestReview && (effectiveTitle || repoDescriptor)
+            ? (effectiveTitle ?? repoDescriptor)
+            : null;
+        const notificationTitle =
+          titleSubject && titleSubject.length > 0
+            ? `Review complete • ${titleSubject}`
+            : "Automated review complete";
+
+        const notification = new Notification(notificationTitle, {
+          body,
+          tag: "cmux-review-complete",
+        });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      } catch {
+        // Ignore notification errors (for example, blocked constructors)
+      } finally {
+        setShouldNotifyOnCompletion(false);
+      }
+    }
+  }, [
+    isNotificationSupported,
+    notificationPermission,
+    pendingFileCount,
+    shouldNotifyOnCompletion,
+    totalFileCount,
+    normalizedJobType,
+    pullRequestTitle,
+    pullRequestUrl,
+    repoFullName,
+    prNumber,
+  ]);
+
+  const handleEnableCompletionNotification = useCallback(async () => {
+    if (!isNotificationSupported) {
+      return;
+    }
+
+    if (notificationPermission === "granted") {
+      setShouldNotifyOnCompletion(true);
+      return;
+    }
+
+    if (notificationPermission === "denied") {
+      return;
+    }
+
+    setIsRequestingNotification(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === "granted") {
+        setShouldNotifyOnCompletion(true);
+      }
+    } catch {
+      // Ignore errors while requesting permission
+    } finally {
+      setIsRequestingNotification(false);
+    }
+  }, [isNotificationSupported, notificationPermission]);
+
+  const hasKnownPendingFiles =
+    processedFileCount !== null && pendingFileCount > 0;
+
+  const handleDisableCompletionNotification = useCallback(() => {
+    setShouldNotifyOnCompletion(false);
+  }, []);
+
+  const notificationCardState =
+    useMemo<ReviewCompletionNotificationCardState | null>(() => {
+      if (
+        !isNotificationSupported ||
+        !hasKnownPendingFiles ||
+        notificationPermission === null
+      ) {
+        return null;
+      }
+
+      if (notificationPermission === "denied") {
+        return { kind: "blocked" };
+      }
+
+      if (shouldNotifyOnCompletion) {
+        return {
+          kind: "enabled",
+          onDisable: handleDisableCompletionNotification,
+        };
+      }
+
+      return {
+        kind: "prompt",
+        isRequesting: isRequestingNotification,
+        onEnable: handleEnableCompletionNotification,
+      };
+    }, [
+      handleDisableCompletionNotification,
+      handleEnableCompletionNotification,
+      hasKnownPendingFiles,
+      isNotificationSupported,
+      isRequestingNotification,
+      notificationPermission,
+      shouldNotifyOnCompletion,
+    ]);
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return sortedFiles.map((file) => {
       if (!file.patch) {
+        const renameMessage =
+          file.status === "renamed"
+            ? buildRenameMissingDiffMessage(file)
+            : null;
         return {
           file,
           anchorId: file.filename,
           diff: null,
-          error:
-            "GitHub did not return a textual diff for this file. It may be binary or too large.",
+          error: renameMessage ?? undefined,
         };
       }
 
       try {
-        const [diff] = parseDiff(buildDiffText(file));
+        const [diff] = parseDiff(buildDiffText(file), {
+          nearbySequences: "zip",
+        });
         return {
           file,
           anchorId: file.filename,
@@ -478,52 +1226,93 @@ export function PullRequestDiffViewer({
   const fileEntries = useMemo<FileDiffViewModel[]>(() => {
     return parsedDiffs.map((entry) => {
       const review = fileOutputIndex.get(entry.file.filename) ?? null;
-      const reviewHeatmap = review
+      const streamState = streamStateByFile.get(entry.file.filename) ?? null;
+      const streamedHeatmap = streamState?.lines ?? [];
+      const reviewHeatmapFromCodex = review
         ? parseReviewHeatmap(review.codexReviewOutput)
         : [];
-      const diffHeatmap =
+      const reviewHeatmap = mergeHeatmapLines(
+        streamedHeatmap,
+        reviewHeatmapFromCodex
+      );
+      const diffHeatmapArtifacts =
         entry.diff && reviewHeatmap.length > 0
-          ? buildDiffHeatmap(entry.diff, reviewHeatmap)
+          ? prepareDiffHeatmapArtifacts(entry.diff, reviewHeatmap)
           : null;
+      if (entry.diff && reviewHeatmap.length > 0 && !diffHeatmapArtifacts) {
+        console.debug("[simple-review][frontend] No artifacts derived", {
+          filePath: entry.file.filename,
+          reviewHeatmapCount: reviewHeatmap.length,
+        });
+      }
 
       return {
         entry,
         review,
         reviewHeatmap,
-        diffHeatmap,
+        diffHeatmapArtifacts,
         changeKeyByLine: buildChangeKeyIndex(entry.diff),
+        streamState,
       };
     });
-  }, [parsedDiffs, fileOutputIndex]);
+  }, [parsedDiffs, fileOutputIndex, streamStateByFile]);
+
+  const thresholdedFileEntries = useMemo(
+    () =>
+      fileEntries.map((fileEntry) => ({
+        ...fileEntry,
+        diffHeatmap: fileEntry.diffHeatmapArtifacts
+          ? renderDiffHeatmapFromArtifacts(
+              fileEntry.diffHeatmapArtifacts,
+              heatmapThreshold
+            )
+          : null,
+      })),
+    [fileEntries, heatmapThreshold]
+  );
 
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
 
-    for (const fileEntry of fileEntries) {
+    for (const fileEntry of thresholdedFileEntries) {
       const { entry, diffHeatmap, changeKeyByLine } = fileEntry;
-      if (!diffHeatmap || diffHeatmap.entries.size === 0) {
+      if (!diffHeatmap || diffHeatmap.totalEntries === 0) {
         continue;
       }
 
-      const sortedEntries = Array.from(diffHeatmap.entries.entries()).sort(
-        (a, b) => a[0] - b[0]
-      );
+      const addTargets = (
+        entriesMap: Map<number, ResolvedHeatmapLine>,
+        side: DiffLineSide
+      ) => {
+        if (entriesMap.size === 0) {
+          return;
+        }
 
-      for (const [lineNumber, metadata] of sortedEntries) {
-        targets.push({
-          id: `${entry.anchorId}:${lineNumber}`,
-          anchorId: entry.anchorId,
-          filePath: entry.file.filename,
-          lineNumber,
-          reason: metadata.reason ?? null,
-          score: metadata.score ?? null,
-          changeKey: changeKeyByLine.get(lineNumber) ?? null,
-        });
-      }
+        const sortedEntries = Array.from(entriesMap.entries()).sort(
+          (a, b) => a[0] - b[0]
+        );
+
+        for (const [lineNumber, metadata] of sortedEntries) {
+          targets.push({
+            id: `${entry.anchorId}:${side}:${lineNumber}`,
+            anchorId: entry.anchorId,
+            filePath: entry.file.filename,
+            lineNumber,
+            side,
+            reason: metadata.reason ?? null,
+            score: metadata.score ?? null,
+            changeKey:
+              changeKeyByLine.get(buildLineKey(side, lineNumber)) ?? null,
+          });
+        }
+      };
+
+      addTargets(diffHeatmap.entries, "new");
+      addTargets(diffHeatmap.oldEntries, "old");
     }
 
     return targets;
-  }, [fileEntries]);
+  }, [thresholdedFileEntries]);
 
   const targetCount = errorTargets.length;
 
@@ -533,6 +1322,7 @@ export function PullRequestDiffViewer({
   const [autoTooltipTarget, setAutoTooltipTarget] =
     useState<ActiveTooltipTarget | null>(null);
   const autoTooltipTimeoutRef = useRef<number | null>(null);
+  const focusChangeOriginRef = useRef<"user" | "auto">("auto");
 
   const clearAutoTooltip = useCallback(() => {
     if (
@@ -559,6 +1349,7 @@ export function PullRequestDiffViewer({
       setAutoTooltipTarget({
         filePath: target.filePath,
         lineNumber: target.lineNumber,
+        side: target.side,
       });
 
       const shouldStick = options?.sticky ?? false;
@@ -569,7 +1360,8 @@ export function PullRequestDiffViewer({
             if (
               current &&
               current.filePath === target.filePath &&
-              current.lineNumber === target.lineNumber
+              current.lineNumber === target.lineNumber &&
+              current.side === target.side
             ) {
               return null;
             }
@@ -584,16 +1376,18 @@ export function PullRequestDiffViewer({
 
   useEffect(() => {
     if (targetCount === 0) {
+      focusChangeOriginRef.current = "auto";
       setFocusedErrorIndex(null);
       return;
     }
 
+    focusChangeOriginRef.current = "auto";
     setFocusedErrorIndex((previous) => {
       if (previous === null) {
-        return 0;
+        return previous;
       }
       if (previous >= targetCount) {
-        return 0;
+        return targetCount - 1;
       }
       return previous;
     });
@@ -620,7 +1414,32 @@ export function PullRequestDiffViewer({
       ? null
       : (errorTargets[focusedErrorIndex] ?? null);
 
-  const fileTree = useMemo(() => buildFileTree(sortedFiles), [sortedFiles]);
+  const fileTree = useMemo(() => {
+    const tree = buildFileTree(sortedFiles);
+    // Add loading state to file nodes
+    const addLoadingState = (nodes: FileTreeNode[]): FileTreeNode[] => {
+      return nodes.map((node) => {
+        if (node.file) {
+          // This is a file node - check if it's been processed
+          const streamState = streamStateByFile.get(node.file.filename);
+          const isLoading =
+            !fileOutputIndex.has(node.file.filename) &&
+            (!streamState || streamState.status === "pending");
+          return {
+            ...node,
+            isLoading,
+            children: addLoadingState(node.children),
+          };
+        }
+        // This is a directory node
+        return {
+          ...node,
+          children: addLoadingState(node.children),
+        };
+      });
+    };
+    return addLoadingState(tree);
+  }, [sortedFiles, fileOutputIndex, streamStateByFile]);
   const directoryPaths = useMemo(
     () => collectDirectoryPaths(fileTree),
     [fileTree]
@@ -638,6 +1457,20 @@ export function PullRequestDiffViewer({
       ? hydratedInitialPath
       : firstPath;
 
+  const sidebarPanelId = useId();
+  const [sidebarWidth, setSidebarWidth] = useState<number>(
+    SIDEBAR_DEFAULT_WIDTH
+  );
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const pointerStartXRef = useRef(0);
+  const pointerStartWidthRef = useRef<number>(SIDEBAR_DEFAULT_WIDTH);
+  const sidebarPointerMoveHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
+  const sidebarPointerUpHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
+
   const [activePath, setActivePath] = useState<string>(initialPath);
   const [activeAnchor, setActiveAnchor] = useState<string>(initialPath);
 
@@ -648,6 +1481,71 @@ export function PullRequestDiffViewer({
     }
     return defaults;
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const storedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!storedWidth) {
+      return;
+    }
+    const parsedWidth = Number.parseInt(storedWidth, 10);
+    const clampedWidth = clampSidebarWidth(parsedWidth);
+    setSidebarWidth((previous) =>
+      previous === clampedWidth ? previous : clampedWidth
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      SIDEBAR_WIDTH_STORAGE_KEY,
+      String(Math.round(sidebarWidth))
+    );
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (!isResizingSidebar) {
+      return;
+    }
+    const previousCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    return () => {
+      document.body.style.cursor = previousCursor;
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    return () => {
+      if (sidebarPointerMoveHandlerRef.current) {
+        window.removeEventListener(
+          "pointermove",
+          sidebarPointerMoveHandlerRef.current
+        );
+        sidebarPointerMoveHandlerRef.current = null;
+      }
+      if (sidebarPointerUpHandlerRef.current) {
+        window.removeEventListener(
+          "pointerup",
+          sidebarPointerUpHandlerRef.current
+        );
+        window.removeEventListener(
+          "pointercancel",
+          sidebarPointerUpHandlerRef.current
+        );
+        sidebarPointerUpHandlerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setExpandedPaths(() => {
@@ -687,33 +1585,24 @@ export function PullRequestDiffViewer({
 
     const observer = new IntersectionObserver(
       (entries) => {
+        // Find all visible entries and sort by their position from the top
         const visible = entries
           .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              a.target.getBoundingClientRect().top -
-              b.target.getBoundingClientRect().top
-          );
-
-        if (visible[0]?.target.id) {
-          setActiveAnchor(visible[0].target.id);
-          return;
-        }
-
-        const nearest = entries
           .map((entry) => ({
             id: entry.target.id,
             top: entry.target.getBoundingClientRect().top,
           }))
-          .sort((a, b) => Math.abs(a.top) - Math.abs(b.top))[0];
+          .sort((a, b) => a.top - b.top);
 
-        if (nearest?.id) {
-          setActiveAnchor(nearest.id);
+        // Set the active anchor to the topmost visible file
+        if (visible.length > 0 && visible[0]?.id) {
+          setActiveAnchor(visible[0].id);
         }
       },
       {
-        rootMargin: "-128px 0px -55% 0px",
-        threshold: [0, 0.2, 0.4, 0.6, 1],
+        // Consider a file active when it's in the top 40% of the viewport
+        rootMargin: "0px 0px -60% 0px",
+        threshold: 0,
       }
     );
 
@@ -729,16 +1618,136 @@ export function PullRequestDiffViewer({
     };
   }, [parsedDiffs]);
 
-  const handleNavigate = useCallback((path: string) => {
-    setActivePath(path);
-    setActiveAnchor(path);
+  const handleSidebarResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      if (typeof window === "undefined") {
+        return;
+      }
+      event.preventDefault();
+      const handleElement = event.currentTarget;
+      const pointerId = event.pointerId;
+      pointerStartXRef.current = event.clientX;
+      pointerStartWidthRef.current = sidebarWidth;
+      setIsResizingSidebar(true);
 
-    if (typeof window === "undefined") {
-      return;
-    }
+      try {
+        handleElement.focus({ preventScroll: true });
+      } catch {
+        handleElement.focus();
+      }
 
-    window.location.hash = encodeURIComponent(path);
-  }, []);
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const delta = moveEvent.clientX - pointerStartXRef.current;
+        const nextWidth = clampSidebarWidth(
+          pointerStartWidthRef.current + delta
+        );
+        setSidebarWidth((previous) =>
+          previous === nextWidth ? previous : nextWidth
+        );
+      };
+
+      const handlePointerTerminate = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+        if (handleElement.hasPointerCapture?.(pointerId)) {
+          try {
+            handleElement.releasePointerCapture(pointerId);
+          } catch {
+            // Ignore release failures.
+          }
+        }
+        setIsResizingSidebar(false);
+        if (sidebarPointerMoveHandlerRef.current) {
+          window.removeEventListener(
+            "pointermove",
+            sidebarPointerMoveHandlerRef.current
+          );
+          sidebarPointerMoveHandlerRef.current = null;
+        }
+        if (sidebarPointerUpHandlerRef.current) {
+          window.removeEventListener(
+            "pointerup",
+            sidebarPointerUpHandlerRef.current
+          );
+          window.removeEventListener(
+            "pointercancel",
+            sidebarPointerUpHandlerRef.current
+          );
+          sidebarPointerUpHandlerRef.current = null;
+        }
+      };
+
+      sidebarPointerMoveHandlerRef.current = handlePointerMove;
+      sidebarPointerUpHandlerRef.current = handlePointerTerminate;
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerTerminate);
+      window.addEventListener("pointercancel", handlePointerTerminate);
+
+      try {
+        handleElement.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer capture failures (e.g., Safari).
+      }
+    },
+    [sidebarWidth, setIsResizingSidebar, setSidebarWidth]
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const key = event.key;
+      if (key === "ArrowLeft" || key === "ArrowRight") {
+        event.preventDefault();
+        const delta = key === "ArrowLeft" ? -16 : 16;
+        setSidebarWidth((previous) => clampSidebarWidth(previous + delta));
+        return;
+      }
+      if (key === "Home") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MIN_WIDTH);
+        return;
+      }
+      if (key === "End") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MAX_WIDTH);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "0") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+      }
+    },
+    [setSidebarWidth]
+  );
+
+  const handleSidebarResizeDoubleClick = useCallback(() => {
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }, [setSidebarWidth]);
+
+  const handleNavigate = useCallback(
+    (path: string, options?: NavigateOptions) => {
+      setActivePath(path);
+
+      const shouldUpdateAnchor = options?.updateAnchor ?? true;
+      if (shouldUpdateAnchor) {
+        setActiveAnchor(path);
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const shouldUpdateHash = options?.updateHash ?? true;
+      if (shouldUpdateHash) {
+        window.location.hash = encodeURIComponent(path);
+      }
+    },
+    []
+  );
 
   const handleFocusPrevious = useCallback(
     (options?: FocusNavigateOptions) => {
@@ -746,6 +1755,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -777,6 +1787,7 @@ export function PullRequestDiffViewer({
         return;
       }
 
+      focusChangeOriginRef.current = "user";
       const isKeyboard = options?.source === "keyboard";
 
       setFocusedErrorIndex((previous) => {
@@ -880,7 +1891,18 @@ export function PullRequestDiffViewer({
       return;
     }
 
-    handleNavigate(focusedError.filePath);
+    const origin = focusChangeOriginRef.current;
+    focusChangeOriginRef.current = "auto";
+    const isUserInitiated = origin === "user";
+
+    handleNavigate(focusedError.filePath, {
+      updateAnchor: isUserInitiated,
+      updateHash: isUserInitiated,
+    });
+
+    if (!isUserInitiated) {
+      return;
+    }
 
     if (focusedError.changeKey) {
       return;
@@ -898,75 +1920,172 @@ export function PullRequestDiffViewer({
     };
   }, [focusedError, handleNavigate]);
 
+  const kitty = useMemo(() => {
+    return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
+
   if (totalFileCount === 0) {
     return (
-      <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600 shadow-sm">
+      <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
         This pull request does not introduce any file changes.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <ReviewProgressIndicator
-        totalFileCount={totalFileCount}
-        processedFileCount={processedFileCount}
-        isLoading={isLoadingFileOutputs}
-      />
-
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
-        <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
-          {targetCount > 0 ? (
-            <div className="mb-4 flex justify-center">
-              <ErrorNavigator
-                totalCount={targetCount}
-                currentIndex={focusedErrorIndex}
-                onPrevious={handleFocusPrevious}
-                onNext={handleFocusNext}
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
+        <aside
+          id={sidebarPanelId}
+          className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:flex-none lg:overflow-y-auto lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem]"
+          style={
+            {
+              "--pr-diff-sidebar-width": `${sidebarWidth}px`,
+            } as CSSProperties
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white">
+              <ReviewProgressIndicator
+                totalFileCount={totalFileCount}
+                processedFileCount={processedFileCount}
+                isLoading={isLoadingFileOutputs}
               />
             </div>
-          ) : null}
-          <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
-            <FileTreeNavigator
-              nodes={fileTree}
-              activePath={activeAnchor}
-              expandedPaths={expandedPaths}
-              onToggleDirectory={handleToggleDirectory}
-              onSelectFile={handleNavigate}
+            {notificationCardState ? (
+              <ReviewCompletionNotificationCard state={notificationCardState} />
+            ) : null}
+            <HeatmapThresholdControl
+              value={heatmapThresholdInput}
+              onChange={setHeatmapThresholdInput}
             />
+            <CmuxPromoCard />
+            {targetCount > 0 ? (
+              <div className="flex justify-center">
+                <ErrorNavigator
+                  totalCount={targetCount}
+                  currentIndex={focusedErrorIndex}
+                  onPrevious={handleFocusPrevious}
+                  onNext={handleFocusNext}
+                />
+              </div>
+            ) : null}
+            <div>
+              <FileTreeNavigator
+                nodes={fileTree}
+                activePath={activeAnchor}
+                expandedPaths={expandedPaths}
+                onToggleDirectory={handleToggleDirectory}
+                onSelectFile={handleNavigate}
+              />
+            </div>
           </div>
+          <div className="h-[40px]" />
         </aside>
 
-        <div className="flex-1 space-y-6">
-          {fileEntries.map(({ entry, review, diffHeatmap }) => {
-            const isFocusedFile =
-              focusedError?.filePath === entry.file.filename;
-            const focusedLineNumber = isFocusedFile
-              ? (focusedError?.lineNumber ?? null)
-              : null;
-            const focusedChangeKey = isFocusedFile
-              ? (focusedError?.changeKey ?? null)
-              : null;
-            const autoTooltipLineNumber =
-              isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === entry.file.filename
-                ? autoTooltipTarget.lineNumber
-                : null;
+        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">
+          <div
+            className={cn(
+              "flex h-full w-full cursor-col-resize select-none items-center justify-center touch-none rounded",
+              "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500",
+              isResizingSidebar
+                ? "bg-sky-200/60 dark:bg-sky-900/40"
+                : "bg-transparent hover:bg-sky-100/60 dark:hover:bg-sky-900/40"
+            )}
+            role="separator"
+            aria-label="Resize file navigation panel"
+            aria-orientation="vertical"
+            aria-controls={sidebarPanelId}
+            aria-valuenow={Math.round(sidebarWidth)}
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            tabIndex={0}
+            onPointerDown={handleSidebarResizePointerDown}
+            onKeyDown={handleSidebarResizeKeyDown}
+            onDoubleClick={handleSidebarResizeDoubleClick}
+          >
+            <span className="sr-only">
+              Drag to adjust file navigation width
+            </span>
+            <div
+              className={cn(
+                "h-full w-[3px] rounded-full transition-opacity",
+                isResizingSidebar
+                  ? "bg-sky-500 dark:bg-sky-400 opacity-100"
+                  : "bg-neutral-400 opacity-0 group-hover/resize:opacity-100 dark:bg-neutral-500"
+              )}
+              aria-hidden
+            />
+          </div>
+        </div>
 
-            return (
-              <FileDiffCard
-                key={entry.anchorId}
-                entry={entry}
-                isActive={entry.anchorId === activeAnchor}
-                review={review}
-                diffHeatmap={diffHeatmap}
-                focusedLineNumber={focusedLineNumber}
-                focusedChangeKey={focusedChangeKey}
-                autoTooltipLineNumber={autoTooltipLineNumber}
-              />
-            );
-          })}
+        <div className="flex-1 min-w-0 space-y-3">
+          {thresholdedFileEntries.map(
+            ({ entry, review, diffHeatmap, streamState }) => {
+              const isFocusedFile =
+                focusedError?.filePath === entry.file.filename;
+              const focusedLine = isFocusedFile
+                ? focusedError
+                  ? {
+                      side: focusedError.side,
+                      lineNumber: focusedError.lineNumber,
+                    }
+                  : null
+                : null;
+              const focusedChangeKey = isFocusedFile
+                ? (focusedError?.changeKey ?? null)
+                : null;
+              const autoTooltipLine =
+                isFocusedFile &&
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
+                  ? {
+                      side: autoTooltipTarget.side,
+                      lineNumber: autoTooltipTarget.lineNumber,
+                    }
+                  : null;
+
+              const isLoading =
+                !fileOutputIndex.has(entry.file.filename) &&
+                (!streamState || streamState.status === "pending");
+
+              return (
+                <FileDiffCard
+                  key={entry.anchorId}
+                  entry={entry}
+                  isActive={entry.anchorId === activeAnchor}
+                  review={review}
+                  diffHeatmap={diffHeatmap}
+                  focusedLine={focusedLine}
+                  focusedChangeKey={focusedChangeKey}
+                  autoTooltipLine={autoTooltipLine}
+                  isLoading={isLoading}
+                  streamState={streamState}
+                />
+              );
+            }
+          )}
+          <div className="h-[70dvh] w-full">
+            <div className="px-3 py-6 text-center">
+              <span className="select-none text-xs text-neutral-500">
+                You&apos;ve reached the end of the diff!
+              </span>
+              <div className="grid place-content-center pb-4">
+                <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500">
+                  {kitty}
+                </pre>
+              </div>
+              <a
+                href="https://github.com/manaflow-ai/cmux"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
+              >
+                <Star className="h-3.5 w-3.5" aria-hidden />
+                Star on GitHub
+              </a>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -996,46 +2115,62 @@ function ReviewProgressIndicator({
       : pendingFileCount === 0
         ? "All files processed"
         : `${processedFileCount} processed • ${pendingFileCount} pending`;
-
   const processedBadgeText =
     processedFileCount === null ? "— done" : `${processedFileCount} done`;
   const pendingBadgeText =
     processedFileCount === null ? "— waiting" : `${pendingFileCount} waiting`;
+  const isFullyProcessed =
+    processedFileCount !== null && pendingFileCount === 0;
+  const shouldPulsePending =
+    processedFileCount === null || pendingFileCount > 0;
 
   return (
     <div
-      className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition"
+      className="border border-neutral-200 bg-white p-5 pt-4 transition"
       aria-live="polite"
     >
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium text-neutral-700">
             Automated review progress
           </p>
-          <p className="text-xs text-neutral-500">{statusText}</p>
+          <p className="sr-only">{statusText}</p>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold">
-          <span
-            className={cn(
-              "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
-              isLoading ? "animate-pulse" : undefined
-            )}
-          >
-            {processedBadgeText}
-          </span>
-          <span
-            className={cn(
-              "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
-              isLoading ? "animate-pulse" : undefined
-            )}
-          >
-            {pendingBadgeText}
-          </span>
+          {isFullyProcessed ? (
+            <span
+              className={cn(
+                "bg-emerald-100 px-2 py-0.5 text-emerald-700",
+                isLoading ? "animate-pulse" : undefined
+              )}
+            >
+              All files processed
+            </span>
+          ) : (
+            <>
+              <span
+                className={cn(
+                  "bg-emerald-100 px-2 py-0.5 text-emerald-700",
+                  isLoading ? "animate-pulse" : undefined
+                )}
+              >
+                {processedBadgeText}
+              </span>
+              <span
+                className={cn(
+                  "bg-amber-100 px-2 py-0.5 text-amber-700",
+                  shouldPulsePending ? "animate-pulse" : undefined
+                )}
+              >
+                {pendingBadgeText}
+              </span>
+            </>
+          )}
         </div>
       </div>
-      <div className="mt-3 h-2 rounded-full bg-neutral-200">
+      <div className="mt-3 h-2 bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className="h-full bg-sky-500 transition-[width] duration-300 ease-out"
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"
@@ -1044,6 +2179,114 @@ function ReviewProgressIndicator({
           aria-valuenow={processedFileCount ?? 0}
         />
       </div>
+    </div>
+  );
+}
+
+function CmuxPromoCard() {
+  return (
+    <div className="border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-row items-center justify-start gap-2 text-center">
+          <p className="text-sm font-medium text-neutral-700 leading-relaxed font-sans">
+            From the creators of
+          </p>
+          <a
+            href="https://cmux.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Visit cmux.dev"
+            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-4.8px]"
+          >
+            <CmuxLogo
+              height={30}
+              label="cmux.dev"
+              wordmarkText="cmux.dev"
+              wordmarkFill="#0f172a"
+            />
+          </a>
+        </div>
+        <div className="mb-1 translate-y-[-1.5px]">
+          <p className="text-xs font-sans leading-relaxed text-neutral-500">
+            We also made an open-source Claude Code/Codex manager! Check out
+            cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <a
+            href="https://github.com/manaflow-ai/cmux"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+          >
+            <Star className="h-3.5 w-3.5" aria-hidden />
+            Star on GitHub
+          </a>
+          <a
+            href="https://cmux.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+          >
+            Explore cmux
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeatmapThresholdControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  const sliderId = useId();
+  const descriptionId = `${sliderId}-description`;
+  const percent = Math.round(Math.min(Math.max(value, 0), 1) * 100);
+
+  const handleSliderChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const numeric = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(numeric)) {
+        return;
+      }
+      const normalized = Math.min(Math.max(numeric / 100, 0), 1);
+      onChange(normalized);
+    },
+    [onChange]
+  );
+
+  return (
+    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={sliderId} className="font-medium text-neutral-700">
+          &ldquo;Should review&rdquo; threshold
+        </label>
+        <span className="text-xs font-semibold text-neutral-600">
+          ≥ <span className="tabular-nums">{percent}%</span>
+        </span>
+      </div>
+      <input
+        id={sliderId}
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={percent}
+        onChange={handleSliderChange}
+        className="mt-3 w-full accent-sky-500"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={`"Should review" threshold ${percent} percent`}
+        aria-describedby={descriptionId}
+      />
+      <p id={descriptionId} className="mt-2 text-xs text-neutral-500">
+        Only show heatmap highlights with a score at or above this value.
+      </p>
     </div>
   );
 }
@@ -1073,11 +2316,11 @@ function ErrorNavigator({
 
   return (
     <TooltipProvider delayDuration={120} skipDelayDuration={120}>
-      <div className="inline-flex items-center gap-3 rounded-full border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm shadow-sky-200/60 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200 dark:shadow-sky-900/40">
+      <div className="flex items-center gap-3 border border-sky-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-sky-800/60 dark:bg-neutral-900/95 dark:text-neutral-200">
         <span aria-live="polite" className="flex items-center gap-1">
           {hasSelection && displayIndex !== null ? (
             <>
-              <span>Error</span>
+              <span>Highlight</span>
               <span className="font-mono tabular-nums">{displayIndex}</span>
               <span>of</span>
               <span className="font-mono tabular-nums">{totalCount}</span>
@@ -1085,7 +2328,7 @@ function ErrorNavigator({
           ) : (
             <>
               <span className="font-mono tabular-nums">{totalCount}</span>
-              <span>{totalCount === 1 ? "error" : "errors"}</span>
+              <span>{totalCount === 1 ? "highlight" : "highlights"}</span>
             </>
           )}
         </span>
@@ -1095,8 +2338,8 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onPrevious()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                aria-label="Go to previous error (Shift+K)"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to previous highlight (Shift+K)"
                 disabled={totalCount === 0}
               >
                 <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
@@ -1107,7 +2350,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>Previous error</span>
+              <span>Previous highlight</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ K
               </span>
@@ -1118,8 +2361,8 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onNext()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                aria-label="Go to next error (Shift+J)"
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to next highlight (Shift+J)"
                 disabled={totalCount === 0}
               >
                 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
@@ -1130,7 +2373,7 @@ function ErrorNavigator({
               align="center"
               className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              <span>Next error</span>
+              <span>Next highlight</span>
               <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 ⇧ J
               </span>
@@ -1173,17 +2416,33 @@ function FileTreeNavigator({
                 type="button"
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
-                  "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm font-medium transition hover:bg-neutral-100",
+                  "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
                   isExpanded ? "text-neutral-900" : "text-neutral-700"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-neutral-500" />
+                  <ChevronDown
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 ) : (
-                  <ChevronRight className="h-4 w-4 text-neutral-500" />
+                  <ChevronRight
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 )}
-                <Folder className="h-4 w-4 text-neutral-500" />
+                {isExpanded ? (
+                  <MaterialSymbolsFolderOpenSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                ) : (
+                  <MaterialSymbolsFolderSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                )}
                 <span className="truncate">{node.name}</span>
               </button>
               {isExpanded ? (
@@ -1208,14 +2467,30 @@ function FileTreeNavigator({
             type="button"
             onClick={() => onSelectFile(node.path)}
             className={cn(
-              "flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
+              "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
               isActive
-                ? "bg-sky-100/80 text-sky-900 shadow-sm"
+                ? "bg-sky-100/80 text-sky-900 font-semibold"
                 : "text-neutral-700"
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
-            <span className="truncate font-medium">{node.name}</span>
+            <span className="truncate">{node.name}</span>
+            {node.isLoading ? (
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center ml-auto">
+                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="right"
+                  align="center"
+                  className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                >
+                  AI review in progress...
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </button>
         );
       })}
@@ -1228,17 +2503,21 @@ function FileDiffCard({
   isActive,
   review,
   diffHeatmap,
-  focusedLineNumber,
+  focusedLine,
   focusedChangeKey,
-  autoTooltipLineNumber,
+  autoTooltipLine,
+  isLoading,
+  streamState,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
   review: FileOutput | null;
   diffHeatmap: DiffHeatmap | null;
-  focusedLineNumber: number | null;
+  focusedLine: DiffLineLocation | null;
   focusedChangeKey: string | null;
-  autoTooltipLineNumber: number | null;
+  autoTooltipLine: DiffLineLocation | null;
+  isLoading: boolean;
+  streamState: StreamFileState | null;
 }) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
@@ -1289,29 +2568,48 @@ function FileDiffCard({
     });
   }, [focusedChangeKey]);
 
-  const lineTooltips = useMemo(() => {
+  const lineTooltips = useMemo<LineTooltipMap | null>(() => {
     if (!diffHeatmap) {
       return null;
     }
 
-    const tooltipMap = new Map<number, HeatmapTooltipMeta>();
-    for (const [lineNumber, metadata] of diffHeatmap.entries.entries()) {
-      const score = metadata.score ?? null;
-      if (score === null || score <= 0) {
-        continue;
-      }
+    const tooltipMap: LineTooltipMap = {
+      new: new Map<number, HeatmapTooltipMeta>(),
+      old: new Map<number, HeatmapTooltipMeta>(),
+    };
 
-      tooltipMap.set(lineNumber, {
-        score,
-        reason: metadata.reason ?? null,
-      });
+    const assignTooltips = (
+      source: Map<number, ResolvedHeatmapLine>,
+      target: Map<number, HeatmapTooltipMeta>
+    ) => {
+      for (const [lineNumber, metadata] of source.entries()) {
+        const score = metadata.score ?? null;
+        if (score === null || score <= 0) {
+          continue;
+        }
+
+        target.set(lineNumber, {
+          score,
+          reason: metadata.reason ?? null,
+        });
+      }
+    };
+
+    assignTooltips(diffHeatmap.entries, tooltipMap.new);
+    assignTooltips(diffHeatmap.oldEntries, tooltipMap.old);
+
+    if (tooltipMap.new.size === 0 && tooltipMap.old.size === 0) {
+      return null;
     }
 
-    return tooltipMap.size > 0 ? tooltipMap : null;
+    return tooltipMap;
   }, [diffHeatmap]);
 
   const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
-    if (!lineTooltips) {
+    if (
+      !lineTooltips ||
+      (lineTooltips.new.size === 0 && lineTooltips.old.size === 0)
+    ) {
       return undefined;
     }
 
@@ -1337,7 +2635,11 @@ function FileDiffCard({
           (className.includes("cmux-heatmap-char") ||
             className.includes("cmux-heatmap-char-tier"))
         ) {
-          const tooltipMeta = lineTooltips.get(lineNumber);
+          const tooltipMeta = selectTooltipMeta(
+            className,
+            lineNumber,
+            lineTooltips
+          );
           if (tooltipMeta) {
             const rendered = renderDefault(token, index);
             return (
@@ -1349,8 +2651,9 @@ function FileDiffCard({
                   <span className="cmux-heatmap-char-wrapper">{rendered}</span>
                 </TooltipTrigger>
                 <TooltipContent
-                  side="top"
+                  side="bottom"
                   align="start"
+                  sideOffset={0}
                   className={cn(
                     "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
                     getHeatmapTooltipTheme(tooltipMeta.score).contentClass
@@ -1384,26 +2687,34 @@ function FileDiffCard({
       wrapInAnchor,
     }) => {
       const content = renderDefault();
-      if (side !== "new") {
+      const tooltipSource =
+        side === "new" ? lineTooltips.new : lineTooltips.old;
+
+      if (tooltipSource.size === 0) {
         return wrapInAnchor(content);
       }
 
-      const lineNumber = computeNewLineNumber(change);
+      const lineNumber =
+        side === "new"
+          ? computeNewLineNumber(change)
+          : computeOldLineNumber(change);
       if (lineNumber <= 0) {
         return wrapInAnchor(content);
       }
 
-      const tooltipMeta = lineTooltips.get(lineNumber);
+      const tooltipMeta = tooltipSource.get(lineNumber);
       if (!tooltipMeta) {
         return wrapInAnchor(content);
       }
 
       const isAutoTooltipOpen =
-        autoTooltipLineNumber !== null && lineNumber === autoTooltipLineNumber;
+        autoTooltipLine !== null &&
+        autoTooltipLine.side === side &&
+        autoTooltipLine.lineNumber === lineNumber;
 
       return wrapInAnchor(
         <HeatmapGutterTooltip
-          key={`heatmap-gutter-${lineNumber}`}
+          key={`heatmap-gutter-${side}-${lineNumber}`}
           isAutoOpen={isAutoTooltipOpen}
           tooltipMeta={tooltipMeta}
         >
@@ -1413,7 +2724,7 @@ function FileDiffCard({
     };
 
     return renderGutterWithTooltip;
-  }, [lineTooltips, autoTooltipLineNumber]);
+  }, [lineTooltips, autoTooltipLine]);
 
   const tokens = useMemo<HunkTokens | null>(() => {
     if (!diff) {
@@ -1421,8 +2732,9 @@ function FileDiffCard({
     }
 
     const enhancers =
-      diffHeatmap && diffHeatmap.newRanges.length > 0
-        ? [pickRanges([], diffHeatmap.newRanges)]
+      diffHeatmap &&
+      (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
+        ? [pickRanges(diffHeatmap.oldRanges, diffHeatmap.newRanges)]
         : undefined;
 
     if (language && refractor.registered(language)) {
@@ -1453,7 +2765,8 @@ function FileDiffCard({
       return null;
     }
 
-    return extractAutomatedReviewText(review.codexReviewOutput);
+    return JSON.stringify(review.codexReviewOutput, null, 2);
+    // return extractAutomatedReviewText(review.codexReviewOutput);
   }, [review]);
 
   // const showReview = Boolean(reviewContent);
@@ -1469,148 +2782,207 @@ function FileDiffCard({
         id={anchorId}
         ref={cardRef}
         className={cn(
-          "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition focus:outline-none",
-          isActive ? "ring-1 ring-sky-200" : "ring-0"
+          "border border-neutral-200 bg-white transition focus:outline-none",
+          isActive ? "" : ""
         )}
         tabIndex={-1}
         aria-current={isActive}
       >
-        <button
-          type="button"
-          onClick={() => setIsCollapsed((previous) => !previous)}
-          className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-          aria-expanded={!isCollapsed}
-        >
-          <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
-            {isCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
+        <div className="flex flex-col divide-y divide-neutral-200">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((previous) => !previous)}
+            className={clsx(
+              "sticky top-0 z-10 flex w-full items-center gap-0 border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
             )}
-          </span>
-
-          <span
-            className={cn(
-              "flex h-5 w-5 items-center justify-center",
-              statusMeta.colorClassName
-            )}
+            aria-expanded={!isCollapsed}
           >
-            {statusMeta.icon}
-            <span className="sr-only">{statusMeta.label}</span>
-          </span>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="font-mono text-xs text-neutral-700 truncate">
-              {file.filename}
+            <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
+              {isCollapsed ? (
+                <ChevronRight className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
             </span>
-            {file.previous_filename ? (
-              <span className="font-mono text-[11px] text-neutral-500 truncate">
-                Renamed from {file.previous_filename}
-              </span>
-            ) : null}
-          </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
-            <span className="text-emerald-600">+{file.additions}</span>
-            <span className="text-rose-600">-{file.deletions}</span>
-          </div>
-        </button>
-
-        {showReview ? (
-          <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-              <Sparkles className="h-4 w-4" aria-hidden />
-              Automated review
-            </div>
-            <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
-              {reviewContent}
-            </pre>
-          </div>
-        ) : null}
-
-        {!isCollapsed ? (
-          diff ? (
-            <Diff
-              diffType={diff.type}
-              hunks={diff.hunks}
-              viewType="split"
-              optimizeSelection
-              className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-              gutterClassName="system-mono bg-white text-xs text-neutral-500"
-              codeClassName="system-mono text-xs text-neutral-800"
-              tokens={tokens ?? undefined}
-              renderToken={renderHeatmapToken}
-              renderGutter={renderHeatmapGutter}
-              generateLineClassName={({ changes, defaultGenerate }) => {
-                const defaultClassName = defaultGenerate();
-                const classNames: string[] = ["system-mono text-xs py-1"];
-                const normalizedChanges = changes.filter(
-                  (change): change is ChangeData => Boolean(change)
-                );
-                const hasFocus =
-                  focusedLineNumber !== null &&
-                  normalizedChanges.some((change) => {
-                    const newLineNumber = computeNewLineNumber(change);
-                    return (
-                      newLineNumber > 0 && newLineNumber === focusedLineNumber
-                    );
-                  });
-                if (hasFocus) {
-                  classNames.push("cmux-heatmap-focus");
-                }
-                if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
-                  let bestHeatmapClass: string | null = null;
-                  for (const change of normalizedChanges) {
-                    const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber <= 0) {
-                      continue;
-                    }
-                    const candidate =
-                      diffHeatmap.lineClasses.get(newLineNumber);
-                    if (!candidate) {
-                      continue;
-                    }
-                    if (!bestHeatmapClass) {
-                      bestHeatmapClass = candidate;
-                      continue;
-                    }
-                    const currentTier = extractHeatmapTier(bestHeatmapClass);
-                    const nextTier = extractHeatmapTier(candidate);
-                    if (nextTier > currentTier) {
-                      bestHeatmapClass = candidate;
-                    }
-                  }
-
-                  if (bestHeatmapClass) {
-                    classNames.push(bestHeatmapClass);
-                  }
-                }
-
-                classNames.push("text-neutral-800");
-
-                return cn(defaultClassName, classNames);
-              }}
+            <span
+              className={cn(
+                "flex h-5 w-5 items-center justify-center pl-2",
+                statusMeta.colorClassName
+              )}
             >
-              {(hunks) =>
-                hunks.map((hunk) => (
-                  <Fragment key={hunk.content}>
-                    <Decoration>
-                      <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                        {hunk.content}
-                      </div>
-                    </Decoration>
-                    <Hunk hunk={hunk} />
-                  </Fragment>
-                ))
-              }
-            </Diff>
-          ) : (
-            <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
-              {error ??
-                "Diff content is unavailable for this file. It might be binary or too large to display."}
+              {statusMeta.icon}
+              <span className="sr-only">{statusMeta.label}</span>
+            </span>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="pl-1.5 text-sm text-neutral-700 truncate flex items-center gap-2">
+                {file.filename}
+                {isLoading ? (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center">
+                        <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      AI review in progress...
+                    </TooltipContent>
+                  </Tooltip>
+                ) : streamState?.status === "skipped" ? (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center text-amber-600">
+                        <AlertTriangle className="h-3 w-3" aria-hidden />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      {streamState.skipReason ??
+                        streamState.summary ??
+                        "AI skipped this file"}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : streamState?.status === "error" ? (
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center text-rose-600">
+                        <AlertTriangle className="h-3 w-3" aria-hidden />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      align="start"
+                      className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    >
+                      {streamState.summary ?? "AI review failed"}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </span>
             </div>
-          )
-        ) : null}
+
+            <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
+              <span className="text-emerald-600">+{file.additions}</span>
+              <span className="text-rose-600">-{file.deletions}</span>
+            </div>
+          </button>
+
+          {showReview && reviewContent ? (
+            <div className="border-b border-neutral-200 bg-sky-50 px-4 py-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                  Automated review
+                </div>
+                <CopyButton text={reviewContent} />
+              </div>
+              <pre className="mt-2 max-h-[9.5rem] overflow-auto whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+                {reviewContent}
+              </pre>
+            </div>
+          ) : null}
+
+          {!isCollapsed &&
+            (diff ? (
+              <Diff
+                diffType={diff.type}
+                hunks={diff.hunks}
+                viewType="split"
+                optimizeSelection
+                className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
+                gutterClassName="system-mono bg-white text-xs text-neutral-500"
+                codeClassName="system-mono text-xs text-neutral-800"
+                tokens={tokens ?? undefined}
+                renderToken={renderHeatmapToken}
+                renderGutter={renderHeatmapGutter}
+                generateLineClassName={({ changes, defaultGenerate }) => {
+                  const defaultClassName = defaultGenerate();
+                  const classNames: string[] = ["system-mono text-xs py-1"];
+                  const normalizedChanges = changes.filter(
+                    (change): change is ChangeData => Boolean(change)
+                  );
+                  const hasFocus =
+                    focusedLine !== null &&
+                    normalizedChanges.some((change) =>
+                      doesChangeMatchLine(change, focusedLine)
+                    );
+                  if (hasFocus) {
+                    classNames.push("cmux-heatmap-focus");
+                  }
+                  if (
+                    diffHeatmap &&
+                    (diffHeatmap.lineClasses.size > 0 ||
+                      diffHeatmap.oldLineClasses.size > 0)
+                  ) {
+                    let bestHeatmapClass: string | null = null;
+
+                    const considerClass = (candidate: string | undefined) => {
+                      if (!candidate) {
+                        return;
+                      }
+                      if (!bestHeatmapClass) {
+                        bestHeatmapClass = candidate;
+                        return;
+                      }
+                      const currentTier = extractHeatmapTier(bestHeatmapClass);
+                      const nextTier = extractHeatmapTier(candidate);
+                      if (nextTier > currentTier) {
+                        bestHeatmapClass = candidate;
+                      }
+                    };
+                    for (const change of normalizedChanges) {
+                      const newLineNumber = computeNewLineNumber(change);
+                      if (newLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.lineClasses.get(newLineNumber)
+                        );
+                      }
+                      const oldLineNumber = computeOldLineNumber(change);
+                      if (oldLineNumber > 0) {
+                        considerClass(
+                          diffHeatmap.oldLineClasses.get(oldLineNumber)
+                        );
+                      }
+                    }
+
+                    if (bestHeatmapClass) {
+                      classNames.push(bestHeatmapClass);
+                    }
+                  }
+
+                  classNames.push("text-neutral-800");
+
+                  return cn(defaultClassName, classNames);
+                }}
+              >
+                {(hunks) =>
+                  hunks.map((hunk) => (
+                    <Fragment key={hunk.content}>
+                      <Decoration>
+                        <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                          {hunk.content}
+                        </div>
+                      </Decoration>
+                      <Hunk hunk={hunk} />
+                    </Fragment>
+                  ))
+                }
+              </Diff>
+            ) : (
+              <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
+                {error ??
+                  "Diff content is unavailable for this file. It might be binary or too large to display."}
+              </div>
+            ))}
+        </div>
       </article>
     </TooltipProvider>
   );
@@ -1665,7 +3037,7 @@ function HeatmapGutterTooltip({
         </span>
       </TooltipTrigger>
       <TooltipContent
-        side="top"
+        side="left"
         align="start"
         className={cn(
           "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
@@ -1714,30 +3086,30 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
     case 4:
       return {
         contentClass:
-          "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-orange-100 border-orange-300 text-neutral-900 shadow-lg shadow-orange-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 3:
       return {
         contentClass:
-          "bg-rose-800/95 border-rose-400/40 text-rose-50 shadow-lg shadow-rose-950/30",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
+          "bg-amber-100 border-amber-300 text-neutral-900 shadow-lg shadow-amber-200/70",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 2:
       return {
         contentClass:
-          "bg-amber-800/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/30",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-100 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/60",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-800",
       };
     case 1:
       return {
         contentClass:
-          "bg-amber-900/95 border-amber-500/40 text-amber-50 shadow-lg shadow-amber-950/40",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
+          "bg-yellow-50 border-yellow-200 text-neutral-900 shadow-lg shadow-yellow-200/50",
+        titleClass: "text-neutral-900",
+        reasonClass: "text-neutral-700",
       };
     default:
       return {
@@ -1759,7 +3131,7 @@ function extractHeatmapTier(className: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function extractAutomatedReviewText(value: unknown): string | null {
+function _extractAutomatedReviewText(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
   }
@@ -1774,7 +3146,7 @@ function extractAutomatedReviewText(value: unknown): string | null {
       "response" in value &&
       typeof (value as { response?: unknown }).response === "string"
     ) {
-      return extractAutomatedReviewText(
+      return _extractAutomatedReviewText(
         (value as { response: string }).response
       );
     }
@@ -1810,7 +3182,8 @@ function formatLineReviews(entries: unknown[]): string | null {
     }
 
     const record = entry as Record<string, unknown>;
-    const line = typeof record.line === "string" ? record.line.trim() : null;
+    const rawLine = typeof record.line === "string" ? record.line : null;
+    const line = rawLine?.trim() ?? null;
     if (!line) {
       continue;
     }
@@ -1825,7 +3198,14 @@ function formatLineReviews(entries: unknown[]): string | null {
         ? record.shouldBeReviewedScore
         : null;
 
-    const changeFlag = record.hasChanged === false ? null : "Changed";
+    let changeFlag: string | null = null;
+    if (typeof rawLine === "string") {
+      if (rawLine.startsWith("+")) {
+        changeFlag = "Added";
+      } else if (rawLine.startsWith("-")) {
+        changeFlag = "Removed";
+      }
+    }
 
     const parts: string[] = [`Line ${line}`];
     if (changeFlag) {
@@ -1887,24 +3267,44 @@ function scrollElementToViewportCenter(
   });
 }
 
-function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
-  const map = new Map<number, string>();
+function buildChangeKeyIndex(diff: FileData | null): Map<string, string> {
+  const map = new Map<string, string>();
   if (!diff) {
     return map;
   }
 
   for (const hunk of diff.hunks) {
     for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber <= 0) {
-        continue;
+      const newLineNumber = computeNewLineNumber(change);
+      if (newLineNumber > 0) {
+        map.set(buildLineKey("new", newLineNumber), getChangeKey(change));
       }
 
-      map.set(lineNumber, getChangeKey(change));
+      const oldLineNumber = computeOldLineNumber(change);
+      if (oldLineNumber > 0) {
+        map.set(buildLineKey("old", oldLineNumber), getChangeKey(change));
+      }
     }
   }
 
   return map;
+}
+
+function buildLineKey(side: DiffLineSide, lineNumber: number): string {
+  return `${side}:${lineNumber}`;
+}
+
+function doesChangeMatchLine(
+  change: ChangeData,
+  target: DiffLineLocation
+): boolean {
+  if (target.side === "new") {
+    const newLineNumber = computeNewLineNumber(change);
+    return newLineNumber > 0 && newLineNumber === target.lineNumber;
+  }
+
+  const oldLineNumber = computeOldLineNumber(change);
+  return oldLineNumber > 0 && oldLineNumber === target.lineNumber;
 }
 
 function buildDiffText(file: GithubFileChange): string {
@@ -2045,4 +3445,12 @@ function getParentPaths(path: string): string[] {
     parents.push(segments.slice(0, index).join("/"));
   }
   return parents;
+}
+
+function buildRenameMissingDiffMessage(file: GithubFileChange): string {
+  const previousPath = file.previous_filename;
+  if (previousPath) {
+    return `File renamed from ${previousPath} to ${file.filename}.`;
+  }
+  return "File renamed without diff details.";
 }

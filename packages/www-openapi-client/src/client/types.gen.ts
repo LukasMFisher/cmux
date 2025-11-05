@@ -10,6 +10,18 @@ export type Health = {
     uptime: number;
 };
 
+export type AnonymousSignUpResponse = {
+    success: boolean;
+    userId?: string;
+    teamId?: string;
+    teams?: Array<{
+        id: string;
+        display_name: string;
+        profile_image_url: string | null;
+    }>;
+    message?: string;
+};
+
 export type User = {
     id: string;
     name: string;
@@ -323,6 +335,21 @@ export type GithubPrsFileContentsBatchBody = {
     maxFileBytes?: number;
 };
 
+export type GithubInstallStateResponse = {
+    state: string;
+};
+
+export type GithubInstallStateRequest = {
+    /**
+     * Team slug or UUID
+     */
+    teamSlugOrId: string;
+    /**
+     * Optional URL to redirect to after installation (web flows)
+     */
+    returnUrl?: string;
+};
+
 export type SetupInstanceResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -335,7 +362,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_2nwm6jjm' | 'snapshot_a0wb2lw8');
+    snapshotId?: string | ('snapshot_hbmnt01r' | 'snapshot_wxrixtw7');
 };
 
 export type CreateEnvironmentResponse = {
@@ -596,6 +623,33 @@ export type GetApiHealthResponses = {
 };
 
 export type GetApiHealthResponse = GetApiHealthResponses[keyof GetApiHealthResponses];
+
+export type PostApiAuthAnonymousSignUpData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/auth/anonymous/sign-up';
+};
+
+export type PostApiAuthAnonymousSignUpErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiAuthAnonymousSignUpResponses = {
+    /**
+     * Anonymous user created successfully
+     */
+    200: AnonymousSignUpResponse;
+};
+
+export type PostApiAuthAnonymousSignUpResponse = PostApiAuthAnonymousSignUpResponses[keyof PostApiAuthAnonymousSignUpResponses];
 
 export type GetApiUsersData = {
     body?: never;
@@ -1461,6 +1515,37 @@ export type PostApiIntegrationsGithubPrsFileContentsBatchResponses = {
 };
 
 export type PostApiIntegrationsGithubPrsFileContentsBatchResponse = PostApiIntegrationsGithubPrsFileContentsBatchResponses[keyof PostApiIntegrationsGithubPrsFileContentsBatchResponses];
+
+export type PostApiIntegrationsGithubInstallStateData = {
+    body: GithubInstallStateRequest;
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/install-state';
+};
+
+export type PostApiIntegrationsGithubInstallStateErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Server error
+     */
+    500: unknown;
+};
+
+export type PostApiIntegrationsGithubInstallStateResponses = {
+    /**
+     * OK
+     */
+    200: GithubInstallStateResponse;
+};
+
+export type PostApiIntegrationsGithubInstallStateResponse = PostApiIntegrationsGithubInstallStateResponses[keyof PostApiIntegrationsGithubInstallStateResponses];
 
 export type PostApiMorphSetupInstanceData = {
     body: SetupInstanceBody;
