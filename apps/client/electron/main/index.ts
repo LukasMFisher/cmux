@@ -187,8 +187,8 @@ function emitToRenderer(level: LogLevel, message: string) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("main-log", { level, message });
     }
-  } catch {
-    // ignore mirror failures
+  } catch (error) {
+    console.error("Failed to emit to renderer", error);
   }
 }
 
@@ -435,25 +435,18 @@ async function writeFatalLog(...args: unknown[]) {
     const file = path.join(base, `fatal-${ts}.log`);
     const msg = formatArgs(args);
     await fs.writeFile(file, msg + "\n", { encoding: "utf8" });
-  } catch {
+  } catch (error) {
+    console.error("Failed to write fatal log", error);
     // ignore
   }
 }
 
 process.on("uncaughtException", (err) => {
-  try {
-    console.error("[MAIN] uncaughtException", err);
-  } catch {
-    // ignore
-  }
+  console.error("[MAIN] uncaughtException", err);
   void writeFatalLog("uncaughtException", err);
 });
 process.on("unhandledRejection", (reason) => {
-  try {
-    console.error("[MAIN] unhandledRejection", reason);
-  } catch {
-    // ignore
-  }
+  console.error("[MAIN] unhandledRejection", reason);
   void writeFatalLog("unhandledRejection", reason);
 });
 
@@ -717,8 +710,8 @@ app.whenReady().then(async () => {
   app.once("will-quit", () => {
     try {
       disposeContextMenu();
-    } catch {
-      // ignore cleanup failures
+    } catch (error) {
+      console.error("Failed to dispose context menu", error);
     }
   });
   registerLogIpcHandlers();
@@ -801,8 +794,8 @@ app.whenReady().then(async () => {
     try {
       app.setName("cmux");
       app.setAboutPanelOptions({ applicationName: "cmux" });
-    } catch {
-      // ignore if not supported
+    } catch (error) {
+      console.error("Failed to set app name and about panel options", error);
     }
   }
 
@@ -1071,7 +1064,8 @@ async function verifyJwtAndGetPayload(
     const JWKS = jwksForIssuer(iss);
     const { payload } = await jwtVerify(token, JWKS, { issuer: iss });
     return payload;
-  } catch {
+  } catch (error) {
+    console.error("Failed to verify JWT and get payload", error);
     return null;
   }
 }

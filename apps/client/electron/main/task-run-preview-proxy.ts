@@ -72,8 +72,8 @@ function proxyLog(event: string, data?: Record<string, unknown>): void {
   }
   try {
     proxyLogger?.log("Preview proxy", { event, ...(data ?? {}) });
-  } catch {
-    // ignore logging failures
+  } catch (error) {
+    console.error("Failed to log preview proxy", error);
   }
 }
 
@@ -83,8 +83,8 @@ function proxyWarn(event: string, data?: Record<string, unknown>): void {
   }
   try {
     proxyLogger?.warn("Preview proxy", { event, ...(data ?? {}) });
-  } catch {
-    // ignore logging failures
+  } catch (error) {
+    console.error("Failed to log preview proxy", error);
   }
 }
 
@@ -229,7 +229,8 @@ async function startProxyServer(logger: Logger): Promise<number> {
       server.removeAllListeners();
       try {
         server.close();
-      } catch {
+      } catch (error) {
+        console.error("Failed to close preview proxy server", error);
         // ignore close failure
       }
       if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
@@ -418,7 +419,8 @@ function parseProxyRequestTarget(req: IncomingMessage): URL | null {
       return null;
     }
     return new URL(`http://${host}${req.url}`);
-  } catch {
+  } catch (error) {
+    console.error("Failed to parse proxy request target", error);
     return null;
   }
 }
@@ -649,7 +651,8 @@ function deriveRoute(url: string): ProxyRoute | null {
         domainSuffix: domain,
       };
     }
-  } catch {
+  } catch (error) {
+    console.error("Failed to derive route", error);
     return null;
   }
   return null;

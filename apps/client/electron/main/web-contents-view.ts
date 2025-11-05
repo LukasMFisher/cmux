@@ -158,7 +158,8 @@ function buildState(entry: Entry): ElectronWebContentsState | null {
       isLoading: contents.isLoading(),
       isDevToolsOpened: contents.isDevToolsOpened(),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to build state", error);
     return null;
   }
 }
@@ -452,8 +453,8 @@ function destroyView(id: number): boolean {
     if (entry.previewProxyCleanup) {
       try {
         entry.previewProxyCleanup();
-      } catch {
-        // ignore cleanup failures
+      } catch (error) {
+        console.error("Failed to cleanup preview proxy", error);
       } finally {
         entry.previewProxyCleanup = undefined;
       }
@@ -462,7 +463,8 @@ function destroyView(id: number): boolean {
     for (const cleanup of entry.eventCleanup) {
       try {
         cleanup();
-      } catch {
+      } catch (error) {
+        console.error("Failed to cleanup event listener", error);
         // ignore cleanup failures
       }
     }
@@ -472,14 +474,15 @@ function destroyView(id: number): boolean {
     if (win && !win.isDestroyed()) {
       try {
         win.contentView.removeChildView(entry.view);
-      } catch {
+      } catch (error) {
+        console.error("Failed to remove view from window", error);
         // ignore removal failures
       }
     }
     try {
       destroyWebContents(entry.view.webContents);
-    } catch {
-      // ignore destroy failures
+    } catch (error) {
+      console.error("Failed to destroy webContents", error);
     }
   } finally {
     viewEntries.delete(id);
@@ -533,8 +536,8 @@ function applyBackgroundColor(
   if (!color) return;
   try {
     view.setBackgroundColor(color);
-  } catch {
-    // ignore invalid colors
+  } catch (error) {
+    console.error("Failed to apply background color", error);
   }
 }
 
@@ -546,8 +549,8 @@ function applyBorderRadius(
   const safe = Math.max(0, Math.round(radius));
   try {
     view.setBorderRadius(safe);
-  } catch {
-    // ignore unsupported platforms
+  } catch (error) {
+    console.error("Failed to apply border radius", error);
   }
 }
 
@@ -723,8 +726,8 @@ export function registerWebContentsViewHandlers({
           logger.error("Failed to add WebContentsView to window", error);
           try {
             destroyWebContents(view.webContents);
-          } catch {
-            // ignore
+          } catch (error) {
+            console.error("Failed to destroy webContents", error);
           }
           throw error;
         }
@@ -965,15 +968,15 @@ export function registerWebContentsViewHandlers({
       if (win && !win.isDestroyed()) {
         try {
           win.contentView.removeChildView(entry.view);
-        } catch {
-          // ignore
+        } catch (error) {
+          console.error("Failed to remove view from window", error);
         }
       }
 
       try {
         entry.view.setVisible(false);
-      } catch {
-        // ignore
+      } catch (error) {
+        console.error("Failed to set visible", error);
       }
 
       entry.ownerWebContentsDestroyed = false;
@@ -1062,12 +1065,14 @@ export function registerWebContentsViewHandlers({
       let visible: ElectronWebContentsSnapshot["visible"] = null;
       try {
         bounds = toBounds(entry.view.getBounds());
-      } catch {
+      } catch (error) {
+        console.error("Failed to get bounds, setting bounds = null", error);
         bounds = null;
       }
       try {
         visible = entry.view.getVisible();
-      } catch {
+      } catch (error) {
+        console.error("Failed to get visible, setting visible = null", error);
         visible = null;
       }
 
@@ -1168,7 +1173,8 @@ export function getWebContentsLayoutSnapshot(
       destroyed: entry.view.webContents.isDestroyed(),
       visible: evaluateVisibility(normalized),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to get webContents layout snapshot", error);
     return null;
   }
 }
