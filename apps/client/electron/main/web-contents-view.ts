@@ -32,6 +32,7 @@ interface RegisterOptions {
 
 interface CreateOptions {
   url: string;
+  requestUrl?: string;
   bounds?: Rectangle;
   backgroundColor?: string;
   borderRadius?: number;
@@ -739,16 +740,17 @@ export function registerWebContentsViewHandlers({
         }
 
         const finalUrl = options.url ?? "about:blank";
+        const proxySourceUrl = options.requestUrl ?? finalUrl;
         let previewProxyCleanup: (() => void) | undefined;
         if (
           isTaskRunPreviewPersistKey(persistKey) &&
-          typeof finalUrl === "string" &&
-          finalUrl.startsWith("http")
+          typeof proxySourceUrl === "string" &&
+          proxySourceUrl.startsWith("http")
         ) {
           try {
             previewProxyCleanup = await configurePreviewProxyForView({
               webContents: view.webContents,
-              initialUrl: finalUrl,
+              initialUrl: proxySourceUrl,
               persistKey,
               logger,
             });

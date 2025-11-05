@@ -105,6 +105,9 @@ export function ElectronPreviewBrowser({
   const [canGoForward, setCanGoForward] = useState(false);
   const [isShowingErrorPage, setIsShowingErrorPage] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const committedUrlRef = useRef(src);
+  const pendingNavigationUrlRef = useRef<string | null>(null);
+  const pendingPreviousUrlRef = useRef<string | null>(null);
   const isNavigatingRef = useRef(false);
   const pendingRefocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -118,9 +121,17 @@ export function ElectronPreviewBrowser({
   useEffect(() => {
     setAddressValue(src);
     setCommittedUrl(src);
+    committedUrlRef.current = src;
     setCanGoBack(false);
     setCanGoForward(false);
+    pendingNavigationUrlRef.current = null;
+    pendingPreviousUrlRef.current = null;
+    isNavigatingRef.current = false;
   }, [src]);
+
+  useEffect(() => {
+    committedUrlRef.current = committedUrl;
+  }, [committedUrl]);
 
   const applyState = useCallback(
     (state: ElectronWebContentsState, reason?: string) => {
@@ -145,12 +156,21 @@ export function ElectronPreviewBrowser({
       setIsShowingErrorPage(showingError);
 
       const hasDisplayUrl = displayUrl.trim().length > 0;
+      const pendingPreviousUrl = pendingPreviousUrlRef.current;
+      const pendingTargetUrl = pendingNavigationUrlRef.current;
+      const isStaleNavigationUpdate =
+        Boolean(pendingTargetUrl) &&
+        Boolean(pendingPreviousUrl) &&
+        displayUrl === pendingPreviousUrl;
 
-      if (hasDisplayUrl) {
+      if (hasDisplayUrl && !isStaleNavigationUpdate) {
         setCommittedUrl(displayUrl);
+        committedUrlRef.current = displayUrl;
         if (!isEditing) {
           setAddressValue(displayUrl);
         }
+        pendingNavigationUrlRef.current = null;
+        pendingPreviousUrlRef.current = null;
       }
       setIsLoading(state.isLoading);
       setDevtoolsOpen(state.isDevToolsOpened);
@@ -229,7 +249,10 @@ export function ElectronPreviewBrowser({
     }
     const target = normalizeBrowserUrl(raw);
     console.log("[ElectronPreviewBrowser] navigate", { raw, target });
+    pendingPreviousUrlRef.current = committedUrlRef.current;
+    pendingNavigationUrlRef.current = target;
     setCommittedUrl(target);
+    committedUrlRef.current = target;
     setAddressValue(target);
     setIsEditing(false);
     isNavigatingRef.current = true;
@@ -808,6 +831,7 @@ export function ElectronPreviewBrowser({
           <PersistentWebView
             persistKey={persistKey}
             src={resolvedSrc}
+            requestUrl={requestUrl}
             className="h-full w-full border-0"
             borderRadius={0}
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads"
