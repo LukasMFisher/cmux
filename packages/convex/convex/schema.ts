@@ -96,6 +96,7 @@ const convexSchema = defineSchema({
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
+    isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
@@ -174,6 +175,7 @@ const convexSchema = defineSchema({
       v.literal("failed")
     ),
     isLocalWorkspace: v.optional(v.boolean()),
+    isCloudWorkspace: v.optional(v.boolean()),
     // Optional log retained for backward compatibility; no longer written to.
     log: v.optional(v.string()), // CLI output log (deprecated)
     worktreePath: v.optional(v.string()), // Path to the git worktree for this run

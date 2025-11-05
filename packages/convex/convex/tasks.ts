@@ -118,6 +118,7 @@ export const create = authMutation({
       ),
     ),
     environmentId: v.optional(v.id("environments")),
+    isCloudWorkspace: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -142,6 +143,7 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
+      isCloudWorkspace: args.isCloudWorkspace,
     });
 
     return taskId;
