@@ -12,6 +12,7 @@ import {
   useDeferredValue,
   useTransition,
 } from "react";
+import { useClipboard } from "@mantine/hooks";
 import type {
   ReactElement,
   ReactNode,
@@ -220,11 +221,11 @@ type HeatmapColorSettings = {
 const DEFAULT_HEATMAP_COLORS: HeatmapColorSettings = {
   line: {
     start: "#fefce8",
-    end: "#fdba74",
+    end: "#f8e1c9",
   },
   token: {
     start: "#fde047",
-    end: "#ea580c",
+    end: "#ffa270",
   },
 };
 
@@ -1011,6 +1012,7 @@ export function PullRequestDiffViewer({
   );
   const [, startHeatmapColorTransition] = useTransition();
   const deferredHeatmapColors = useDeferredValue(heatmapColors);
+  const clipboard = useClipboard({ timeout: 2000 });
   const handleHeatmapColorsChange = useCallback(
     (next: HeatmapColorSettings) => {
       startHeatmapColorTransition(() => {
@@ -2005,17 +2007,10 @@ export function PullRequestDiffViewer({
     () => buildHeatmapGradientStyles(deferredHeatmapColors),
     [deferredHeatmapColors]
   );
-  const handleCopyHeatmapStyles = useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) {
-      console.error("[heatmap-colors] Clipboard API unavailable");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(heatmapGradientCss);
-    } catch (error) {
-      console.error("[heatmap-colors] Failed to copy styles", error);
-    }
-  }, [heatmapGradientCss]);
+  const handleCopyHeatmapConfig = useCallback(() => {
+    const compact = JSON.stringify(heatmapColors);
+    clipboard.copy(compact);
+  }, [clipboard, heatmapColors]);
 
   const handlePromptLoadColors = useCallback(() => {
     if (typeof window === "undefined") {
@@ -2084,8 +2079,9 @@ export function PullRequestDiffViewer({
               onChange={setHeatmapThresholdInput}
               colors={heatmapColors}
               onColorsChange={handleHeatmapColorsChange}
-              onCopyStyles={handleCopyHeatmapStyles}
+              onCopyStyles={handleCopyHeatmapConfig}
               onLoadConfig={handlePromptLoadColors}
+              copyStatus={clipboard.copied}
             />
             <CmuxPromoCard />
             {targetCount > 0 ? (
@@ -2371,11 +2367,11 @@ const COLOR_SECTION_METADATA: Record<
 > = {
   line: {
     title: "Line highlight gradient",
-    helper: "Adjust the gutter + code background colors.",
+    helper: "",
   },
   token: {
     title: "Token highlight gradient",
-    helper: "Adjust inline emphasized word colors.",
+    helper: "",
   },
 };
 
@@ -2386,6 +2382,7 @@ function HeatmapThresholdControl({
   onColorsChange,
   onCopyStyles,
   onLoadConfig,
+  copyStatus,
 }: {
   value: number;
   onChange: (next: number) => void;
@@ -2393,6 +2390,7 @@ function HeatmapThresholdControl({
   onColorsChange: (next: HeatmapColorSettings) => void;
   onCopyStyles: () => void;
   onLoadConfig: () => void;
+  copyStatus: boolean;
 }) {
   const sliderId = useId();
   const descriptionId = `${sliderId}-description`;
@@ -2456,21 +2454,17 @@ function HeatmapThresholdControl({
       <p id={descriptionId} className="mt-2 text-xs text-neutral-500">
         Only show heatmap highlights with a score at or above this value.
       </p>
-      <div className="mt-4 space-y-4 border-t border-dashed border-neutral-200 pt-4">
+      <div className="mt-4 space-y-5">
         {(Object.keys(COLOR_SECTION_METADATA) as Array<
           keyof HeatmapColorSettings
         >).map((section) => {
           const meta = COLOR_SECTION_METADATA[section];
           return (
-            <fieldset
-              key={section}
-              className="rounded border border-neutral-200 px-3 py-3"
-            >
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <div key={section} className="space-y-2">
+              <p className="text-xs font-semibold text-neutral-700">
                 {meta.title}
-              </legend>
-              <p className="mt-1 text-[11px] text-neutral-500">{meta.helper}</p>
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex items-center justify-between gap-3 text-xs font-medium text-neutral-700">
                   <span className="flex-1 text-left">Low score</span>
                   <input
@@ -2492,9 +2486,25 @@ function HeatmapThresholdControl({
                   />
                 </label>
               </div>
-            </fieldset>
+            </div>
           );
         })}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onCopyStyles}
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+          >
+            {copyStatus ? "Copied!" : "Copy config"}
+          </button>
+          <button
+            type="button"
+            onClick={onLoadConfig}
+            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500"
+          >
+            Load config
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -3693,6 +3703,45 @@ type RgbColor = {
   g: number;
   b: number;
 };
+
+function normalizeHeatmapColorSettings(value: unknown): HeatmapColorSettings | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const line = normalizeHeatmapGradientStops(record.line);
+  const token = normalizeHeatmapGradientStops(record.token);
+  if (!line || !token) {
+    return null;
+  }
+  return { line, token };
+}
+
+function normalizeHeatmapGradientStops(value: unknown): HeatmapGradientStops | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as { start?: unknown; end?: unknown };
+  const start = typeof record.start === "string" ? normalizeHexColor(record.start) : null;
+  const end = typeof record.end === "string" ? normalizeHexColor(record.end) : null;
+  if (!start || !end) {
+    return null;
+  }
+  return { start, end };
+}
+
+function normalizeHexColor(value: string): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const withHash = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+  return isValidHexColor(withHash) ? withHash.toLowerCase() : null;
+}
 
 function buildHeatmapGradientStyles(colors: HeatmapColorSettings): string {
   const fallbackLineStart =
