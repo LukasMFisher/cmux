@@ -17,6 +17,7 @@ import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
+  CreateCloudWorkspace,
 } from "@cmux/shared";
 import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -115,14 +116,24 @@ type TeamCommandItem = {
 type LocalWorkspaceOption = {
   fullName: string;
   repoBaseName: string;
+  defaultBranch?: string;
   keywords: string[];
 };
 
-type CloudWorkspaceOption = {
-  environmentId: Id<"environments">;
-  name: string;
-  keywords: string[];
-};
+type CloudWorkspaceOption =
+  | {
+      type: "environment";
+      environmentId: Id<"environments">;
+      name: string;
+      keywords: string[];
+    }
+  | {
+      type: "repo";
+      projectFullName: string;
+      name: string;
+      keywords: string[];
+      defaultBranch?: string;
+    };
 
 type CommandListEntry = {
   value: string;
@@ -270,6 +281,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         return {
           fullName: repo.fullName,
           repoBaseName,
+          defaultBranch: repo.defaultBranch?.trim() || undefined,
           keywords: compactStrings([
             repo.fullName,
             repo.name,
@@ -285,25 +297,41 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const isLocalWorkspaceLoading = reposByOrg === undefined;
 
   const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
-    if (!environments) return [];
-    return environments
-      .sort((a, b) => {
-        // Sort by creation time, most recent first
-        return b.createdAt - a.createdAt;
-      })
-      .map((env) => ({
-        environmentId: env._id,
-        name: env.name,
-        keywords: compactStrings([
-          env.name,
-          env.description,
-          env.morphSnapshotId,
-          ...(env.selectedRepos ?? []),
-        ]),
-      }));
-  }, [environments]);
+    const options: CloudWorkspaceOption[] = [];
+    if (environments) {
+      options.push(
+        ...environments
+          .slice()
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .map((env) => ({
+            type: "environment" as const,
+            environmentId: env._id,
+            name: env.name,
+            keywords: compactStrings([
+              env.name,
+              env.description,
+              env.morphSnapshotId,
+              ...(env.selectedRepos ?? []),
+            ]),
+          }))
+      );
+    }
+    if (localWorkspaceOptions.length > 0) {
+      options.push(
+        ...localWorkspaceOptions.map((repo) => ({
+          type: "repo" as const,
+          projectFullName: repo.fullName,
+          name: repo.repoBaseName,
+          keywords: repo.keywords,
+          defaultBranch: repo.defaultBranch,
+        }))
+      );
+    }
+    return options;
+  }, [environments, localWorkspaceOptions]);
 
-  const isCloudWorkspaceLoading = environments === undefined;
+  const isCloudWorkspaceLoading =
+    environments === undefined && reposByOrg === undefined;
 
   const getClientSlug = useCallback((meta: unknown): string | undefined => {
     if (!isRecord(meta)) return undefined;
@@ -558,7 +586,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   );
 
   const createCloudWorkspace = useCallback(
-    async (environmentId: Id<"environments">) => {
+    async (option: CloudWorkspaceOption) => {
       if (isCreatingCloudWorkspace) {
         return;
       }
@@ -571,17 +599,25 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
       setIsCreatingCloudWorkspace(true);
 
-      try {
-        // Find environment name for the task text
-        const environment = environments?.find((env) => env._id === environmentId);
-        const environmentName = environment?.name ?? "Unknown Environment";
+      const isEnvironment = option.type === "environment";
+      const environmentId = isEnvironment ? option.environmentId : undefined;
+      const projectFullName =
+        option.type === "repo" ? option.projectFullName : undefined;
+      const repoUrl = projectFullName
+        ? `https://github.com/${projectFullName}.git`
+        : undefined;
+      const baseBranch =
+        option.type === "repo" ? option.defaultBranch : undefined;
+      const workspaceName = isEnvironment
+        ? option.name
+        : option.projectFullName;
 
-        // Create task in Convex without task description (it's just a workspace)
+      try {
         const taskId = await createTask({
           teamSlugOrId,
-          text: `Cloud Workspace: ${environmentName}`,
-          projectFullName: undefined, // No repo for cloud environment workspaces
-          baseBranch: undefined, // No branch for environments
+          text: `Cloud Workspace: ${workspaceName}`,
+          projectFullName,
+          baseBranch,
           environmentId,
           isCloudWorkspace: true,
         });
@@ -589,15 +625,24 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         // Hint the sidebar to auto-expand this task once it appears
         addTaskToExpand(taskId);
 
+        const payload: CreateCloudWorkspace = {
+          teamSlugOrId,
+          taskId,
+          theme,
+          ...(environmentId ? { environmentId } : {}),
+          ...(projectFullName
+            ? {
+                projectFullName,
+                repoUrl,
+                branch: baseBranch,
+              }
+            : {}),
+        };
+
         await new Promise<void>((resolve) => {
           socket.emit(
             "create-cloud-workspace",
-            {
-              teamSlugOrId,
-              environmentId,
-              taskId,
-              theme,
-            },
+            payload,
             async (response: CreateCloudWorkspaceResponse) => {
               try {
                 if (response.success) {
@@ -631,7 +676,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     [
       addTaskToExpand,
       createTask,
-      environments,
       isCreatingCloudWorkspace,
       socket,
       teamSlugOrId,
@@ -640,9 +684,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   );
 
   const handleCloudWorkspaceSelect = useCallback(
-    (environmentId: Id<"environments">) => {
+    (option: CloudWorkspaceOption) => {
       closeCommand();
-      void createCloudWorkspace(environmentId);
+      void createCloudWorkspace(option);
     },
     [closeCommand, createCloudWorkspace]
   );
@@ -1512,28 +1556,44 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return cloudWorkspaceOptions.map((option) => {
-      const value = `cloud-workspace:${option.environmentId}`;
+      const isEnvironment = option.type === "environment";
+      const value = isEnvironment
+        ? `cloud-workspace:env:${option.environmentId}`
+        : `cloud-workspace:repo:${option.projectFullName}`;
       return {
         value,
-        label: option.name,
+        label: isEnvironment ? option.name : option.projectFullName,
         keywords: option.keywords,
         searchText: buildSearchText(option.name, option.keywords, [
-          option.environmentId,
+          isEnvironment ? option.environmentId : option.projectFullName,
         ]),
         className: baseCommandItemClassName,
         disabled: isCreatingCloudWorkspace,
-        execute: () => handleCloudWorkspaceSelect(option.environmentId),
+        execute: () => handleCloudWorkspaceSelect(option),
         renderContent: () => (
           <>
-            <Server className="h-4 w-4 text-neutral-500" />
+            {isEnvironment ? (
+              <Server className="h-4 w-4 text-neutral-500" />
+            ) : (
+              <GitHubIcon className="h-4 w-4 text-neutral-500" />
+            )}
             <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-sm">{option.name}</span>
+              <span className="truncate text-sm">
+                {isEnvironment ? option.name : option.projectFullName}
+              </span>
+              <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                {isEnvironment ? "Environment" : option.name}
+              </span>
             </div>
           </>
         ),
       };
     });
-  }, [cloudWorkspaceOptions, handleCloudWorkspaceSelect, isCreatingCloudWorkspace]);
+  }, [
+    cloudWorkspaceOptions,
+    handleCloudWorkspaceSelect,
+    isCreatingCloudWorkspace,
+  ]);
 
   const {
     history: rootSuggestionHistory,
@@ -1917,11 +1977,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   ? isLocalWorkspaceLoading
                     ? "Loading repositories…"
                     : "No matching repositories."
-                  : activePage === "cloud-workspaces"
-                    ? isCloudWorkspaceLoading
-                      ? "Loading environments…"
-                      : "No matching environments."
-                    : "No results found."}
+              : activePage === "cloud-workspaces"
+                ? isCloudWorkspaceLoading
+                  ? "Loading environments and repositories…"
+                  : "No matching environments or repositories."
+                : "No results found."}
             </Command.Empty>
 
             {activePage === "root" ? (
@@ -1980,7 +2040,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               <>
                 {isCloudWorkspaceLoading ? (
                   <div className={placeholderClassName}>
-                    Loading environments…
+                    Loading environments and repositories…
                   </div>
                 ) : (
                   <>

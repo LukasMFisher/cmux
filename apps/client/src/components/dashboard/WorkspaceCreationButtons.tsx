@@ -11,6 +11,7 @@ import type { Id } from "@cmux/convex/dataModel";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
+  CreateCloudWorkspace,
 } from "@cmux/shared";
 import { useMutation } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
@@ -119,49 +120,55 @@ export function WorkspaceCreationButtons({
     }
 
     if (selectedProject.length === 0) {
-      toast.error("Please select an environment first");
+      toast.error("Please select a repository or environment first");
       return;
     }
 
-    if (!isEnvSelected) {
-      toast.error("Cloud workspaces require an environment, not a repository");
-      return;
-    }
-
-    const projectFullName = selectedProject[0];
-    const environmentId = projectFullName.replace(
-      /^env:/,
-      ""
-    ) as Id<"environments">;
-
-    // Extract environment name from the selectedProject (format is "env:id:name")
-    const environmentName = projectFullName.split(":")[2] || "Unknown Environment";
+    const selection = selectedProject[0];
+    const selectionIsEnvironment =
+      isEnvSelected || selection.startsWith("env:");
+    const environmentId = selectionIsEnvironment
+      ? (selection.replace(/^env:/, "") as Id<"environments">)
+      : undefined;
+    const projectFullName = selectionIsEnvironment ? undefined : selection;
+    const workspaceLabel = selectionIsEnvironment
+      ? selection.split(":")[2] || "Unknown Environment"
+      : projectFullName ?? "Unknown Repository";
+    const repoUrl = projectFullName
+      ? `https://github.com/${projectFullName}.git`
+      : undefined;
 
     setIsCreatingCloud(true);
 
     try {
-      // Create task in Convex with environment name
       const taskId = await createTask({
         teamSlugOrId,
-        text: `Cloud Workspace: ${environmentName}`,
-        projectFullName: undefined, // No repo for cloud environment workspaces
-        baseBranch: undefined, // No branch for environments
+        text: `Cloud Workspace: ${workspaceLabel}`,
+        projectFullName,
+        baseBranch: undefined,
         environmentId,
         isCloudWorkspace: true,
       });
 
-      // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
+
+      const payload: CreateCloudWorkspace = {
+        teamSlugOrId,
+        taskId,
+        theme,
+        ...(environmentId ? { environmentId } : {}),
+        ...(projectFullName
+          ? {
+              projectFullName,
+              repoUrl,
+            }
+          : {}),
+      };
 
       await new Promise<void>((resolve) => {
         socket.emit(
           "create-cloud-workspace",
-          {
-            teamSlugOrId,
-            environmentId,
-            taskId,
-            theme,
-          },
+          payload,
           async (response: CreateCloudWorkspaceResponse) => {
             if (response.success) {
               toast.success("Cloud workspace created successfully");
@@ -193,7 +200,7 @@ export function WorkspaceCreationButtons({
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
-  const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
+  const canCreateCloud = selectedProject.length > 0;
 
   const SHOW_WORKSPACE_BUTTONS = false;
 
@@ -244,10 +251,8 @@ export function WorkspaceCreationButtons({
         </TooltipTrigger>
         <TooltipContent>
           {!selectedProject.length
-            ? "Select an environment first"
-            : !isEnvSelected
-              ? "Switch to environment mode (not repository)"
-              : "Create workspace from selected environment"}
+            ? "Select a repository or environment first"
+            : "Create cloud workspace from the current selection"}
         </TooltipContent>
       </Tooltip>
     </div>
