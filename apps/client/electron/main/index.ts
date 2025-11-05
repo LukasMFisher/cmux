@@ -44,6 +44,10 @@ const { autoUpdater } = electronUpdater;
 import util from "node:util";
 import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
+import {
+  getProxyCredentialsForWebContents,
+  startPreviewProxy,
+} from "./task-run-preview-proxy";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -688,6 +692,18 @@ function createWindow(): void {
   }
 }
 
+app.on("login", (event, webContents, _request, authInfo, callback) => {
+  if (!authInfo.isProxy) {
+    return;
+  }
+  const creds = getProxyCredentialsForWebContents(webContents.id);
+  if (!creds) {
+    return;
+  }
+  event.preventDefault();
+  callback(creds.username, creds.password);
+});
+
 app.on("open-url", (_event, url) => {
   handleOrQueueProtocolUrl(url);
 });
@@ -711,6 +727,12 @@ app.whenReady().then(async () => {
       log: mainLog,
       warn: mainWarn,
     },
+  });
+
+  await startPreviewProxy({
+    log: mainLog,
+    warn: mainWarn,
+    error: mainError,
   });
 
   // Register before-input-event handlers for preview browser shortcuts

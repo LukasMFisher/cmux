@@ -16,6 +16,11 @@ import type {
 import type { WebContentsLayoutActualState } from "../../src/types/webcontents-debug";
 import { applyChromeCamouflage, type Logger } from "./chrome-camouflage";
 import { registerContextMenuForTarget } from "./context-menu";
+import {
+  configurePreviewProxyForView,
+  getPreviewPartitionForPersistKey,
+  isTaskRunPreviewPersistKey,
+} from "./task-run-preview-proxy";
 
 interface RegisterOptions {
   logger: Logger;
@@ -64,6 +69,8 @@ interface Entry {
   ownerWebContentsDestroyed: boolean;
   eventChannel: string;
   eventCleanup: Array<() => void>;
+  previewProxyCleanup?: () => void;
+  previewPartition?: string | null;
 }
 
 const viewEntries = new Map<number, Entry>();
@@ -439,6 +446,15 @@ function destroyView(id: number): boolean {
   if (!entry) return false;
   entriesByWebContentsId.delete(entry.view.webContents.id);
   try {
+    if (entry.previewProxyCleanup) {
+      try {
+        entry.previewProxyCleanup();
+      } catch {
+        // ignore cleanup failures
+      } finally {
+        entry.previewProxyCleanup = undefined;
+      }
+    }
     removeFromSuspended(entry);
     for (const cleanup of entry.eventCleanup) {
       try {
@@ -668,7 +684,12 @@ export function registerWebContentsViewHandlers({
           destroyConflictingEntries(persistKey, win.id, logger);
         }
 
-        const view = new WebContentsView();
+        const previewPartition = getPreviewPartitionForPersistKey(persistKey);
+        const view = previewPartition
+          ? new WebContentsView({
+              webPreferences: { partition: previewPartition },
+            })
+          : new WebContentsView();
         const disposeContextMenu = registerContextMenuForTarget(view);
 
         applyChromeCamouflage(view, logger);
@@ -699,6 +720,26 @@ export function registerWebContentsViewHandlers({
         }
 
         const finalUrl = options.url ?? "about:blank";
+        let previewProxyCleanup: (() => void) | undefined;
+        if (
+          isTaskRunPreviewPersistKey(persistKey) &&
+          typeof finalUrl === "string" &&
+          finalUrl.startsWith("http")
+        ) {
+          try {
+            previewProxyCleanup = await configurePreviewProxyForView({
+              webContents: view.webContents,
+              initialUrl: finalUrl,
+              persistKey,
+              logger,
+            });
+          } catch (error) {
+            logger.warn("Failed to enable preview proxy", {
+              persistKey,
+              error,
+            });
+          }
+        }
         void view.webContents.loadURL(finalUrl).catch((error) =>
           logger.warn("WebContentsView initial load failed", {
             url: finalUrl,
@@ -718,6 +759,8 @@ export function registerWebContentsViewHandlers({
           ownerWebContentsDestroyed: false,
           eventChannel: eventChannelFor(id),
           eventCleanup: [],
+          previewProxyCleanup,
+          previewPartition,
         };
         viewEntries.set(id, entry);
         setupEventForwarders(entry, logger);
