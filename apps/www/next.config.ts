@@ -13,8 +13,8 @@ const nextConfig: NextConfig = {
       config.externals = Array.isArray(config.externals)
         ? [...config.externals, ...externals]
         : config.externals
-          ? [config.externals, ...externals]
-          : externals;
+        ? [config.externals, ...externals]
+        : externals;
     }
     return config;
   },
@@ -24,6 +24,20 @@ const nextConfig: NextConfig = {
     "@cmux/convex",
     "refractor",
   ],
+  async rewrites() {
+    return [
+      {
+        source: "/ingest/static/:path*",
+        destination: "https://us-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ingest/:path*",
+        destination: "https://us.i.posthog.com/:path*",
+      },
+    ];
+  },
+  // This is required to support PostHog trailing slash API requests
+  skipTrailingSlashRedirect: true,
 };
 
 export default withSentryConfig(nextConfig, {
