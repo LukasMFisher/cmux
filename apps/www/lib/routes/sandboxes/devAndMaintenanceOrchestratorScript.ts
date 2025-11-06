@@ -141,6 +141,7 @@ const config = {
   convexUrl: requireEnv("CMUX_ORCH_CONVEX_URL"),
   taskRunJwt: requireEnv("CMUX_ORCH_TASK_RUN_JWT"),
   isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
+  isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
 };
 
 async function ensureTmuxSession(): Promise<void> {
@@ -183,6 +184,18 @@ async function ensureTmuxSession(): Promise<void> {
   );
 
   console.log("[ORCHESTRATOR] tmux session 'cmux' created successfully");
+
+  // Wait a moment for the session to be fully initialized
+  await delay(500);
+
+  // Verify the session exists
+  const verifyResult = await runCommand("tmux has-session -t cmux 2>/dev/null", {
+    throwOnError: false,
+  });
+
+  if (verifyResult.exitCode !== 0) {
+    throw new Error("Failed to create tmux session 'cmux'");
+  }
 }
 
 async function createWindows(): Promise<void> {
