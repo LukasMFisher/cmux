@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 type TaskRunListItem = (typeof api.taskRuns.getByTask._returnType)[number];
 type IframeStatusEntry = {
@@ -83,87 +84,96 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
   loader: async (opts) => {
     const { queryClient } = opts.context;
 
-    const [taskRuns] = await Promise.all([
-      queryClient.ensureQueryData(
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getByTask,
+      args: {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        taskId: opts.params.taskId,
+      },
+    });
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getById,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
+    });
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.crown.getCrownEvaluation,
+      args: {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        taskId: opts.params.taskId,
+      },
+    });
+
+    void (async () => {
+      const taskRuns = await queryClient.ensureQueryData(
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
         })
-      ),
-      queryClient.ensureQueryData(
-        convexQuery(api.tasks.getById, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          id: opts.params.taskId,
-        })
-      ),
-      queryClient.ensureQueryData(
-        convexQuery(api.crown.getCrownEvaluation, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      ),
-    ]);
+      );
 
-    if (!taskRuns?.length) {
-      return;
-    }
-
-    const taskRunIndex = buildTaskRunIndex(taskRuns);
-    const searchParams = new URLSearchParams(opts.location.search);
-    const runIdParam = searchParams.get("runId");
-    const parsedRunId = runIdParam
-      ? typedZid("taskRuns").safeParse(runIdParam)
-      : null;
-    const selectedRun = parsedRunId?.success
-      ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
-      : taskRuns[0];
-
-    const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-    if (!rawWorkspaceUrl) {
-      return;
-    }
-
-    const baseUrl = toMorphXtermBaseUrl(rawWorkspaceUrl);
-    if (!baseUrl) {
-      return;
-    }
-
-    const tabsKey = terminalTabsQueryKey(baseUrl, rawWorkspaceUrl);
-    let tabs = queryClient.getQueryData<TerminalTabId[]>(tabsKey);
-
-    if (!tabs) {
-      try {
-        tabs = await queryClient.ensureQueryData(
-          terminalTabsQueryOptions({
-            baseUrl,
-            contextKey: rawWorkspaceUrl,
-            enabled: true,
-          })
-        );
-      } catch (error) {
-        console.error("Failed to preload terminal tabs", error);
-      }
-    }
-
-    if (!tabs?.length) {
-      try {
-        const created = await createTerminalTab({
-          baseUrl,
-          request: {
-            cmd: "tmux",
-            args: ["new-session", "-A", "cmux"],
-          },
-        });
-        tabs = [created.id];
-      } catch (error) {
-        console.error("Failed to create default tmux terminal", error);
+      if (!taskRuns?.length) {
         return;
       }
-    }
 
-    if (tabs) {
-      queryClient.setQueryData<TerminalTabId[]>(tabsKey, tabs);
-    }
+      const taskRunIndex = buildTaskRunIndex(taskRuns);
+      const searchParams = new URLSearchParams(opts.location.search);
+      const runIdParam = searchParams.get("runId");
+      const parsedRunId = runIdParam
+        ? typedZid("taskRuns").safeParse(runIdParam)
+        : null;
+      const selectedRun = parsedRunId?.success
+        ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
+        : taskRuns[0];
+
+      const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
+      if (!rawWorkspaceUrl) {
+        return;
+      }
+
+      const baseUrl = toMorphXtermBaseUrl(rawWorkspaceUrl);
+      if (!baseUrl) {
+        return;
+      }
+
+      const tabsKey = terminalTabsQueryKey(baseUrl, rawWorkspaceUrl);
+      let tabs = queryClient.getQueryData<TerminalTabId[]>(tabsKey);
+
+      if (!tabs) {
+        try {
+          tabs = await queryClient.ensureQueryData(
+            terminalTabsQueryOptions({
+              baseUrl,
+              contextKey: rawWorkspaceUrl,
+              enabled: true,
+            })
+          );
+        } catch (error) {
+          console.error("Failed to preload terminal tabs", error);
+        }
+      }
+
+      if (!tabs?.length) {
+        try {
+          const created = await createTerminalTab({
+            baseUrl,
+            request: {
+              cmd: "tmux",
+              args: ["new-session", "-A", "cmux"],
+            },
+          });
+          tabs = [created.id];
+        } catch (error) {
+          console.error("Failed to create default tmux terminal", error);
+          return;
+        }
+      }
+
+      if (tabs) {
+        queryClient.setQueryData<TerminalTabId[]>(tabsKey, tabs);
+      }
+    })();
   },
 });
 

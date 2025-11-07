@@ -2,7 +2,6 @@ import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useClipboard } from "@mantine/hooks";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
@@ -12,6 +11,8 @@ import {
 } from "@tanstack/react-router";
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useQuery } from "convex/react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -20,6 +21,19 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
     taskId: typedZid("tasks").parse(params.taskId),
   }),
   loader: async (opts) => {
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getByTask,
+      args: {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        taskId: opts.params.taskId,
+      },
+    });
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getById,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
+    });
+
     await Promise.all([
       opts.context.queryClient.ensureQueryData(
         convexQuery(api.taskRuns.getByTask, {
@@ -45,18 +59,14 @@ type GetByTaskResultItem = (typeof api.taskRuns.getByTask._returnType)[number];
 
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
-  const { data: task } = useSuspenseQuery(
-    convexQuery(api.tasks.getById, {
-      teamSlugOrId,
-      id: taskId,
-    })
-  );
-  const { data: taskRuns } = useSuspenseQuery(
-    convexQuery(api.taskRuns.getByTask, {
-      teamSlugOrId,
-      taskId,
-    })
-  );
+  const task = useQuery(api.tasks.getById, {
+    teamSlugOrId,
+    id: taskId,
+  });
+  const taskRuns = useQuery(api.taskRuns.getByTask, {
+    teamSlugOrId,
+    taskId,
+  });
   const clipboard = useClipboard({ timeout: 2000 });
 
   // Get the deepest matched child to extract runId if present

@@ -26,6 +26,7 @@ import {
   type CreateTerminalTabResponse,
   type TerminalTabId,
 } from "@/queries/terminals";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -48,56 +49,62 @@ export const Route = createFileRoute(
     const { teamSlugOrId, runId } = params;
     const { queryClient } = context;
 
-    const taskRun = await queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId,
-        id: runId,
-      })
-    );
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId, id: runId },
+    });
 
-    const vscodeInfo = taskRun?.vscode;
-    const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-    const isMorphProvider = vscodeInfo?.provider === "morph";
+    void (async () => {
+      const taskRun = await queryClient.ensureQueryData(
+        convexQuery(api.taskRuns.get, {
+          teamSlugOrId,
+          id: runId,
+        })
+      );
+      const vscodeInfo = taskRun?.vscode;
+      const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+      const isMorphProvider = vscodeInfo?.provider === "morph";
 
-    if (!isMorphProvider || !rawMorphUrl) {
-      return;
-    }
+      if (!isMorphProvider || !rawMorphUrl) {
+        return;
+      }
 
-    const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
-    const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
+      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+      const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
 
-    const tabs = await queryClient.ensureQueryData(
-      terminalTabsQueryOptions({
-        baseUrl,
-        contextKey: runId,
-      })
-    );
+      const tabs = await queryClient.ensureQueryData(
+        terminalTabsQueryOptions({
+          baseUrl,
+          contextKey: runId,
+        })
+      );
 
-    if (tabs.length > 0) {
-      return;
-    }
+      if (tabs.length > 0) {
+        return;
+      }
 
-    try {
-      const created = await createTerminalTab({
-        baseUrl,
-        request: {
-          cmd: "tmux",
-          args: ["attach", "-t", "cmux"],
-        },
-      });
+      try {
+        const created = await createTerminalTab({
+          baseUrl,
+          request: {
+            cmd: "tmux",
+            args: ["attach", "-t", "cmux"],
+          },
+        });
 
-      queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
-        if (!current || current.length === 0) {
-          return [created.id];
-        }
-        if (current.includes(created.id)) {
-          return current;
-        }
-        return [...current, created.id];
-      });
-    } catch (error) {
-      console.error("Failed to auto-create tmux terminal", error);
-    }
+        queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
+          if (!current || current.length === 0) {
+            return [created.id];
+          }
+          if (current.includes(created.id)) {
+            return current;
+          }
+          return [...current, created.id];
+        });
+      } catch (error) {
+        console.error("Failed to auto-create tmux terminal", error);
+      }
+    })();
   },
 });
 

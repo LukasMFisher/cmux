@@ -20,6 +20,7 @@ import {
   localVSCodeServeWebQueryOptions,
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -40,28 +41,35 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    const [result, localServeWeb] = await Promise.all([
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.get, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          id: opts.params.runId,
-        })
-      ),
-      opts.context.queryClient.ensureQueryData(
-        localVSCodeServeWebQueryOptions()
-      ),
-    ]);
-    if (result) {
-      const workspaceUrl = result.vscode?.workspaceUrl;
-      void preloadTaskRunIframes([
-        {
-          url: workspaceUrl
-            ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
-            : "",
-          taskRunId: opts.params.runId,
-        },
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
+    });
+
+    void (async () => {
+      const [result, localServeWeb] = await Promise.all([
+        opts.context.queryClient.ensureQueryData(
+          convexQuery(api.taskRuns.get, {
+            teamSlugOrId: opts.params.teamSlugOrId,
+            id: opts.params.runId,
+          })
+        ),
+        opts.context.queryClient.ensureQueryData(
+          localVSCodeServeWebQueryOptions()
+        ),
       ]);
-    }
+      if (result) {
+        const workspaceUrl = result.vscode?.workspaceUrl;
+        await preloadTaskRunIframes([
+          {
+            url: workspaceUrl
+              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+              : "",
+            taskRunId: opts.params.runId,
+          },
+        ]);
+      }
+    })();
   },
 });
 
@@ -110,9 +118,9 @@ function VSCodeComponent() {
 
   const loadingFallback = useMemo(
     () =>
-      isLocalWorkspace
-        ? null
-        : <WorkspaceLoadingIndicator variant="vscode" status="loading" />,
+      isLocalWorkspace ? null : (
+        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+      ),
     [isLocalWorkspace]
   );
   const errorFallback = useMemo(

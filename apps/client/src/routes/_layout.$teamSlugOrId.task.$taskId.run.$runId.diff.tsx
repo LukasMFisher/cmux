@@ -41,6 +41,7 @@ import z from "zod";
 import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import LexicalEditor from "@/components/lexical/LexicalEditor";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -507,6 +508,11 @@ export const Route = createFileRoute(
   },
   loader: (opts) => {
     const { runId } = opts.params;
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getRunDiffContext,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, taskId: opts.params.taskId, runId },
+    });
 
     void opts.context.queryClient
       .ensureQueryData(

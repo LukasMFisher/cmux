@@ -17,6 +17,7 @@ import {
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { convexQuery } from "@convex-dev/react-query";
 import { isElectron } from "@/lib/electron";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -65,8 +66,13 @@ export const Route = createFileRoute(
     const { teamSlugOrId, runId } = params;
     const { queryClient } = context;
 
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId, id: runId },
+    });
+
     // Create terminal in background without blocking
-    (async () => {
+    void (async () => {
       const taskRun = await queryClient.ensureQueryData(
         convexQuery(api.taskRuns.get, {
           teamSlugOrId,

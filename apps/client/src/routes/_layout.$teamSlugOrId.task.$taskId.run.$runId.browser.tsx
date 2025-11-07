@@ -15,6 +15,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import z from "zod";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -33,12 +34,10 @@ export const Route = createFileRoute(
     }),
   },
   loader: async (opts) => {
-    await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.runId,
-      })
-    );
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
+    });
   },
 });
 
