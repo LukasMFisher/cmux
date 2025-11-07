@@ -21,54 +21,31 @@ export function parseGithubRepoUrl(input: string): {
 
   const trimmed = input.trim();
 
-  // Pattern 1: owner/repo (simple format)
+  // Try matching against different patterns
   const simpleMatch = trimmed.match(/^([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+)$/);
-  if (simpleMatch) {
-    const [, owner, repo] = simpleMatch;
-    if (!owner || !repo) return null;
-    const cleanRepo = repo.replace(/\.git$/, "");
-    return {
-      owner,
-      repo: cleanRepo,
-      fullName: `${owner}/${cleanRepo}`,
-      url: `https://github.com/${owner}/${cleanRepo}`,
-      gitUrl: `https://github.com/${owner}/${cleanRepo}.git`,
-    };
-  }
-
-  // Pattern 2: https://github.com/owner/repo or https://github.com/owner/repo.git
   const httpsMatch = trimmed.match(
     /^https?:\/\/github\.com\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:\/)?$/i
   );
-  if (httpsMatch) {
-    const [, owner, repo] = httpsMatch;
-    if (!owner || !repo) return null;
-    const cleanRepo = repo.replace(/\.git$/, "");
-    return {
-      owner,
-      repo: cleanRepo,
-      fullName: `${owner}/${cleanRepo}`,
-      url: `https://github.com/${owner}/${cleanRepo}`,
-      gitUrl: `https://github.com/${owner}/${cleanRepo}.git`,
-    };
-  }
-
-  // Pattern 3: git@github.com:owner/repo.git
   const sshMatch = trimmed.match(
     /^git@github\.com:([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/i
   );
-  if (sshMatch) {
-    const [, owner, repo] = sshMatch;
-    if (!owner || !repo) return null;
-    const cleanRepo = repo.replace(/\.git$/, "");
-    return {
-      owner,
-      repo: cleanRepo,
-      fullName: `${owner}/${cleanRepo}`,
-      url: `https://github.com/${owner}/${cleanRepo}`,
-      gitUrl: `https://github.com/${owner}/${cleanRepo}.git`,
-    };
+
+  const match = simpleMatch || httpsMatch || sshMatch;
+  if (!match) {
+    return null;
   }
 
-  return null;
+  const [, owner, repo] = match;
+  if (!owner || !repo) {
+    return null;
+  }
+
+  const cleanRepo = repo.replace(/\.git$/, "");
+  return {
+    owner,
+    repo: cleanRepo,
+    fullName: `${owner}/${cleanRepo}`,
+    url: `https://github.com/${owner}/${cleanRepo}`,
+    gitUrl: `https://github.com/${owner}/${cleanRepo}.git`,
+  };
 }
