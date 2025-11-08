@@ -31,7 +31,7 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { Info, Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -94,7 +94,7 @@ function DashboardComponent() {
   const { addTaskToExpand } = useExpandTasks();
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
-    const stored = localStorage.getItem("selectedProject");
+    const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
     return stored ? JSON.parse(stored) : [];
   });
   const [selectedBranch, setSelectedBranch] = useState<string[]>([]);
@@ -158,11 +158,11 @@ function DashboardComponent() {
     if (searchParams?.environmentId) {
       const val = `env:${searchParams.environmentId}`;
       setSelectedProject([val]);
-      localStorage.setItem("selectedProject", JSON.stringify([val]));
+      localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify([val]));
       setIsCloudMode(true);
       localStorage.setItem("isCloudMode", JSON.stringify(true));
     }
-  }, [searchParams?.environmentId]);
+  }, [searchParams?.environmentId, teamSlugOrId]);
 
   // Callback for task description changes
   const handleTaskDescriptionChange = useCallback((value: string) => {
@@ -207,7 +207,7 @@ function DashboardComponent() {
   const handleProjectChange = useCallback(
     (newProjects: string[]) => {
       setSelectedProject(newProjects);
-      localStorage.setItem("selectedProject", JSON.stringify(newProjects));
+      localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify(newProjects));
       if (newProjects[0] !== selectedProject[0]) {
         setSelectedBranch([]);
       }
@@ -217,7 +217,7 @@ function DashboardComponent() {
         localStorage.setItem("isCloudMode", JSON.stringify(true));
       }
     },
-    [selectedProject]
+    [selectedProject, teamSlugOrId]
   );
 
   // Callback for branch selection changes
@@ -357,6 +357,7 @@ function DashboardComponent() {
     }
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
+  const addManualRepo = useAction(api.github_http.addManualRepo);
 
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
@@ -709,6 +710,40 @@ function DashboardComponent() {
     localStorage.setItem("isCloudMode", JSON.stringify(newMode));
   }, [isCloudMode, isEnvSelected]);
 
+  // Handle paste of GitHub repo URL in the project search field
+  const handleProjectSearchPaste = useCallback(
+    async (input: string) => {
+      try {
+        const result = await addManualRepo({
+          teamSlugOrId,
+          repoUrl: input,
+        });
+
+        if (result.success) {
+          // Refetch repos to get the newly added one
+          await reposByOrgQuery.refetch();
+
+          // Select the newly added repo
+          setSelectedProject([result.fullName]);
+          localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify([result.fullName]));
+
+          toast.success(`Added ${result.fullName} to repositories`);
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        // Only show error toast for non-validation errors
+        // Validation errors mean it's not a GitHub URL, so just return false
+        if (error instanceof Error && error.message && !error.message.includes("Invalid GitHub")) {
+          toast.error(error.message);
+        }
+        return false; // Don't close dropdown if it's not a valid GitHub URL
+      }
+    },
+    [addManualRepo, teamSlugOrId, reposByOrgQuery]
+  );
+
   // Listen for VSCode spawned events
   useEffect(() => {
     if (!socket) return;
@@ -744,7 +779,7 @@ function DashboardComponent() {
       // This ensures CLI-provided repos take precedence
       setSelectedProject([data.repoFullName]);
       localStorage.setItem(
-        "selectedProject",
+        `selectedProject-${teamSlugOrId}`,
         JSON.stringify([data.repoFullName])
       );
 
@@ -759,7 +794,7 @@ function DashboardComponent() {
     return () => {
       socket.off("default-repo", handleDefaultRepo);
     };
-  }, [socket]);
+  }, [socket, teamSlugOrId]);
 
   // Global keydown handler for autofocus
   useEffect(() => {
@@ -893,6 +928,7 @@ function DashboardComponent() {
               projectOptions={projectOptions}
               selectedProject={selectedProject}
               onProjectChange={handleProjectChange}
+              onProjectSearchPaste={handleProjectSearchPaste}
               branchOptions={branchOptions}
               selectedBranch={effectiveSelectedBranch}
               onBranchChange={handleBranchChange}
@@ -958,7 +994,7 @@ function DashboardComponent() {
 }
 
 type DashboardMainCardProps = {
-  editorApiRef: React.MutableRefObject<EditorApi | null>;
+  editorApiRef: React.RefObject<EditorApi | null>;
   onTaskDescriptionChange: (value: string) => void;
   onSubmit: () => void;
   lexicalRepoUrl?: string;
@@ -967,6 +1003,7 @@ type DashboardMainCardProps = {
   projectOptions: SelectOption[];
   selectedProject: string[];
   onProjectChange: (newProjects: string[]) => void;
+  onProjectSearchPaste?: (value: string) => boolean | Promise<boolean>;
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (newBranches: string[]) => void;
@@ -994,6 +1031,7 @@ function DashboardMainCard({
   projectOptions,
   selectedProject,
   onProjectChange,
+  onProjectSearchPaste,
   branchOptions,
   selectedBranch,
   onBranchChange,
@@ -1028,6 +1066,7 @@ function DashboardMainCard({
           projectOptions={projectOptions}
           selectedProject={selectedProject}
           onProjectChange={onProjectChange}
+          onProjectSearchPaste={onProjectSearchPaste}
           branchOptions={branchOptions}
           selectedBranch={selectedBranch}
           onBranchChange={onBranchChange}

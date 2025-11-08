@@ -65,6 +65,7 @@ export interface SearchableSelectProps {
   options: SelectOption[];
   value: string[];
   onChange: (value: string[]) => void;
+  onSearchPaste?: (value: string) => boolean | Promise<boolean>;
   placeholder?: string;
   singleSelect?: boolean;
   className?: string;
@@ -232,6 +233,7 @@ const SearchableSelect = forwardRef<
     options,
     value,
     onChange,
+    onSearchPaste,
     placeholder = "Select",
     singleSelect = false,
     className,
@@ -583,13 +585,32 @@ const SearchableSelect = forwardRef<
             {showSearch ? (
               <CommandInput
                 showIcon={false}
-                placeholder="Search..."
+                placeholder={onSearchPaste ? "Search or paste a repo link..." : "Search..."}
                 value={search}
                 onValueChange={setSearch}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     // Clear the search box when pressing Enter
                     setSearch("");
+                  }
+                }}
+                onPaste={async (event) => {
+                  if (!onSearchPaste) {
+                    return;
+                  }
+                  const pasted = event.clipboardData?.getData("text/plain") ?? "";
+                  const trimmed = pasted.trim();
+                  if (!trimmed) {
+                    return;
+                  }
+                  try {
+                    const handled = await onSearchPaste(trimmed);
+                    if (handled) {
+                      setSearch("");
+                      setOpen(false);
+                    }
+                  } catch (error) {
+                    console.error("Failed to handle search paste:", error);
                   }
                 }}
                 className={clsx("text-[13.5px] py-2", classNames.commandInput)}

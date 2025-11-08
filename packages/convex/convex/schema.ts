@@ -470,13 +470,16 @@ const convexSchema = defineSchema({
     connectionId: v.optional(v.id("providerConnections")),
     lastSyncedAt: v.optional(v.number()),
     lastPushedAt: v.optional(v.number()),
+    // Manual repos (added via custom URL input)
+    manual: v.optional(v.boolean()),
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
     .index("by_team_user", ["teamId", "userId"]) // legacy user scoping
     .index("by_team", ["teamId"]) // team-scoped listing
     .index("by_providerRepoId", ["teamId", "providerRepoId"]) // provider id lookup
-    .index("by_connection", ["connectionId"]),
+    .index("by_connection", ["connectionId"])
+    .index("by_team_fullName", ["teamId", "fullName"]),
   branches: defineTable({
     repo: v.string(), // legacy string repo name (fullName)
     repoId: v.optional(v.id("repos")), // canonical link to repos table
