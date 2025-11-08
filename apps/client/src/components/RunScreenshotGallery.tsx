@@ -120,6 +120,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const panPointerIdRef = useRef<number | null>(null);
   const lastPanPositionRef = useRef<{ x: number; y: number } | null>(null);
   const defaultZoomRef = useRef(1);
+  const defaultOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const clampZoom = useCallback((value: number) => {
     return Math.min(4, Math.max(0.4, value));
@@ -151,11 +152,10 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   );
 
   const resetZoomState = useCallback(
-    (overrideZoom?: number) => {
-      const targetZoom =
-        overrideZoom !== undefined ? clampZoom(overrideZoom) : clampZoom(defaultZoomRef.current);
+    (options?: { zoom?: number; offset?: { x: number; y: number } }) => {
+      const targetZoom = clampZoom(options?.zoom ?? defaultZoomRef.current);
       setZoom(targetZoom);
-      setOffset({ x: 0, y: 0 });
+      setOffset(options?.offset ?? defaultOffsetRef.current);
       setIsPanning(false);
       panPointerIdRef.current = null;
       lastPanPositionRef.current = null;
@@ -185,8 +185,17 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     const { naturalWidth, naturalHeight } = event.currentTarget;
     const suggestedZoom = getSuggestedDefaultZoom(naturalWidth, naturalHeight);
     const clampedZoom = clampZoom(suggestedZoom);
+    const viewportRect = viewportRef.current?.getBoundingClientRect();
+    const initialOffset = { x: 0, y: 0 };
+    if (viewportRect) {
+      const scaledHeight = naturalHeight * clampedZoom;
+      if (scaledHeight > viewportRect.height) {
+        initialOffset.y = (scaledHeight - viewportRect.height) / 2;
+      }
+    }
     defaultZoomRef.current = clampedZoom;
-    resetZoomState(clampedZoom);
+    defaultOffsetRef.current = initialOffset;
+    resetZoomState({ zoom: clampedZoom, offset: initialOffset });
   };
 
   const activeImageIndex =
@@ -218,7 +227,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
 
   useEffect(() => {
     defaultZoomRef.current = 1;
-    resetZoomState(1);
+    defaultOffsetRef.current = { x: 0, y: 0 };
+    resetZoomState({ zoom: 1, offset: { x: 0, y: 0 } });
   }, [currentEntry?.key, resetZoomState]);
 
   const closeSlideshow = useCallback(() => {
@@ -420,168 +430,162 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           >
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 bg-neutral-950/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
-              <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 focus:outline-none">
-                <div className="relative flex h-full max-h-[calc(100vh-2rem)] w-full max-w-[min(1600px,95vw)] flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
-                        {activeOverallIndex !== null
-                          ? `${activeOverallIndex}. `
-                          : ""}
-                        {currentEntry.image.fileName ?? "Screenshot"}
-                      </Dialog.Title>
-                      <Dialog.Description className="text-xs text-neutral-600 dark:text-neutral-400">
-                        Image {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
-                        <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
-                        {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
-                          addSuffix: true,
-                        })}
-                      </Dialog.Description>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
-                        <button
-                          type="button"
-                          onClick={handleZoomOut}
-                          disabled={!canZoomOut}
-                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
-                          aria-label="Zoom out"
-                        >
-                          <ZoomOut className="h-3.5 w-3.5" />
-                        </button>
-                        <span className="min-w-[3rem] text-center tabular-nums">
-                          {zoomPercent}%
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleZoomIn}
-                          disabled={!canZoomIn}
-                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
-                          aria-label="Zoom in"
-                        >
-                          <ZoomIn className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={resetZoomState}
-                          disabled={!canResetZoom}
-                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
-                          aria-label="Reset zoom"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <Dialog.Close asChild>
-                        <button
-                          type="button"
-                          onClick={closeSlideshow}
-                          className="rounded-full p-1.5 text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:text-neutral-300 dark:hover:bg-neutral-800/80 dark:hover:text-neutral-100"
-                          aria-label="Close slideshow"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </Dialog.Close>
-                    </div>
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-full max-h-[calc(100vh-2rem)] w-full max-w-[min(1600px,95vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
+                      {activeOverallIndex !== null ? `${activeOverallIndex}. ` : ""}
+                      {currentEntry.image.fileName ?? "Screenshot"}
+                    </Dialog.Title>
+                    <Dialog.Description className="text-xs text-neutral-600 dark:text-neutral-400">
+                      Image {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
+                      <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
+                      {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
+                        addSuffix: true,
+                      })}
+                    </Dialog.Description>
                   </div>
-                  <div className="flex flex-1 items-center gap-4">
-                    {showNavButtons ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
                       <button
                         type="button"
-                        onClick={goPrev}
-                        className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                        aria-label="Previous screenshot"
+                        onClick={handleZoomOut}
+                        disabled={!canZoomOut}
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        aria-label="Zoom out"
                       >
-                        <ChevronLeft className="h-5 w-5" />
+                        <ZoomOut className="h-3.5 w-3.5" />
                       </button>
-                    ) : null}
-                    <div
-                      ref={viewportRef}
-                      className={cn(
-                        "relative flex h-[70vh] max-h-[calc(100vh-10rem)] min-h-[360px] w-full flex-1 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900",
-                        zoom > 1
-                          ? isPanning
-                            ? "cursor-grabbing"
-                            : "cursor-grab"
-                          : "cursor-zoom-in",
-                      )}
-                      onWheel={handleWheel}
-                      onPointerDown={startPanning}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onPointerLeave={handlePointerLeave}
-                      onPointerCancel={handlePointerCancel}
-                      onDoubleClick={resetZoomState}
-                      style={{ touchAction: "none" }}
+                      <span className="min-w-[3rem] text-center tabular-nums">
+                        {zoomPercent}%
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleZoomIn}
+                        disabled={!canZoomIn}
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        aria-label="Zoom in"
+                      >
+                        <ZoomIn className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resetZoomState()}
+                        disabled={!canResetZoom}
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        aria-label="Reset zoom"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <Dialog.Close asChild>
+                      <button
+                        type="button"
+                        onClick={closeSlideshow}
+                        className="rounded-full p-1.5 text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:text-neutral-300 dark:hover:bg-neutral-800/80 dark:hover:text-neutral-100"
+                        aria-label="Close slideshow"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </Dialog.Close>
+                  </div>
+                </div>
+                <div className="flex flex-1 items-center gap-4">
+                  {showNavButtons ? (
+                    <button
+                      type="button"
+                      onClick={goPrev}
+                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                      aria-label="Previous screenshot"
                     >
-                      <img
-                        src={currentEntry.image.url ?? undefined}
-                        alt={currentEntry.image.fileName ?? "Screenshot"}
-                        className="select-none object-contain"
-                        draggable={false}
-                        onLoad={handleImageLoad}
-                        style={{
-                          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
-                          transition: isPanning
-                            ? "none"
-                            : "transform 120ms ease-out",
-                        }}
-                      />
-                    </div>
-                    {showNavButtons ? (
-                      <button
-                        type="button"
-                        onClick={goNext}
-                        className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                        aria-label="Next screenshot"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
-                    ) : null}
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                  ) : null}
+                  <div
+                    ref={viewportRef}
+                    className={cn(
+                      "relative flex h-[70vh] max-h-[calc(100vh-10rem)] min-h-[360px] w-full flex-1 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900",
+                      zoom > 1
+                        ? isPanning
+                          ? "cursor-grabbing"
+                          : "cursor-grab"
+                        : "cursor-zoom-in",
+                    )}
+                    onWheel={handleWheel}
+                    onPointerDown={startPanning}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerLeave}
+                    onPointerCancel={handlePointerCancel}
+                    onDoubleClick={() => resetZoomState()}
+                    style={{ touchAction: "none" }}
+                  >
+                    <img
+                      src={currentEntry.image.url ?? undefined}
+                      alt={currentEntry.image.fileName ?? "Screenshot"}
+                      className="select-none object-contain"
+                      draggable={false}
+                      onLoad={handleImageLoad}
+                      style={{
+                        transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+                        transition: isPanning ? "none" : "transform 120ms ease-out",
+                      }}
+                    />
                   </div>
-                  {hasMultipleImages ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                        <span className="sr-only">All screenshots</span>
-                        <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
-                          {activeOverallIndex ?? "–"} / {flattenedImages.length}
-                        </span>
-                      </div>
-                      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                        {flattenedImages.map((entry) => {
-                          const isActiveThumb = entry.key === currentEntry?.key;
-                          const label = entry.globalIndex + 1;
-                          const displayName = entry.image.fileName ?? "Screenshot";
-                          return (
-                            <button
-                              key={entry.key}
-                              type="button"
-                              onClick={() => setActiveImageKey(entry.key)}
-                              className={cn(
-                                "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
-                                isActiveThumb &&
-                                  "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
-                              )}
-                              aria-label={`View ${displayName}`}
-                              aria-current={isActiveThumb ? "true" : undefined}
-                              title={displayName}
-                            >
-                              <img
-                                src={entry.image.url ?? undefined}
-                                alt={displayName}
-                                className="h-full w-full object-contain"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                              <span className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-neutral-950/80 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-neutral-900/90">
-                                {label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                  {showNavButtons ? (
+                    <button
+                      type="button"
+                      onClick={goNext}
+                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                      aria-label="Next screenshot"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
                   ) : null}
                 </div>
+                {hasMultipleImages ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                      <span className="sr-only">All screenshots</span>
+                      <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
+                        {activeOverallIndex ?? "–"} / {flattenedImages.length}
+                      </span>
+                    </div>
+                    <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                      {flattenedImages.map((entry) => {
+                        const isActiveThumb = entry.key === currentEntry?.key;
+                        const label = entry.globalIndex + 1;
+                        const displayName = entry.image.fileName ?? "Screenshot";
+                        return (
+                          <button
+                            key={entry.key}
+                            type="button"
+                            onClick={() => setActiveImageKey(entry.key)}
+                            className={cn(
+                              "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
+                              isActiveThumb &&
+                                "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
+                            )}
+                            aria-label={`View ${displayName}`}
+                            aria-current={isActiveThumb ? "true" : undefined}
+                            title={displayName}
+                          >
+                            <img
+                              src={entry.image.url ?? undefined}
+                              alt={displayName}
+                              className="h-full w-full object-contain"
+                              loading="lazy"
+                              decoding="async"
+                            />
+                            <span className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-neutral-950/80 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-neutral-900/90">
+                              {label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </Dialog.Content>
             </Dialog.Portal>
           </Dialog.Root>
