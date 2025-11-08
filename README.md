@@ -7,6 +7,10 @@
   </a>
 </p>
 
+<p align="center">
+  Join the <a href="https://discord.gg/SDbQmzQhRK">Discord</a> to talk more about cmux!
+</p>
+
 cmux lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
 
 Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready so parallel agent work stays verifiable, fast, and ready to ship.

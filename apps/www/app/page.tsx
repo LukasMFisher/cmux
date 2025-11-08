@@ -564,7 +564,7 @@ export default async function LandingPage() {
             </a>
             <a
               className="transition hover:text-white"
-              href="https://discord.gg/7VY58tftMg"
+              href="https://discord.gg/SDbQmzQhRK"
               rel="noopener noreferrer"
               target="_blank"
             >
