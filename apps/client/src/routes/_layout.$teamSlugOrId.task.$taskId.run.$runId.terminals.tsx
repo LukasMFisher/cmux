@@ -317,6 +317,21 @@ function TaskRunTerminals() {
         ? "Unable to close terminal."
         : null;
 
+  const closeTerminalTab = useCallback(
+    (tabId: TerminalTabId) => {
+      if ((isDeletingTerminal && deletingTerminalId === tabId) || !hasTerminalBackend) {
+        return;
+      }
+      deleteTerminalMutation.mutate(tabId);
+    },
+    [
+      deleteTerminalMutation,
+      deletingTerminalId,
+      hasTerminalBackend,
+      isDeletingTerminal,
+    ]
+  );
+
   useEffect(() => {
     if (!hasTerminalBackend || terminalIds.length === 0) {
       setActiveTerminalId(null);
@@ -405,6 +420,14 @@ function TaskRunTerminals() {
                     <button
                       type="button"
                       onClick={() => setActiveTerminalId(id)}
+                      onMouseDown={(event) => {
+                        if (event.button !== 1) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeTerminalTab(id);
+                      }}
                       className={clsx(
                         "flex items-center gap-2 rounded-md pl-3 pr-8 py-1.5 text-xs font-medium transition-colors",
                         isActive
@@ -428,10 +451,7 @@ function TaskRunTerminals() {
                       onClick={(event) => {
                         event.stopPropagation();
                         event.preventDefault();
-                        if (isDeletingThis || !hasTerminalBackend) {
-                          return;
-                        }
-                        deleteTerminalMutation.mutate(id);
+                        closeTerminalTab(id);
                       }}
                       disabled={isDeletingThis}
                       className={clsx(
