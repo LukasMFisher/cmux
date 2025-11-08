@@ -50,7 +50,10 @@ export function WorkspaceSetupPanel({
 
   const hasInitializedFromServerRef = useRef(false);
 
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(() => {
+    const saved = localStorage.getItem('workspace-setup-expanded');
+    return saved === 'true';
+  });
 
   useEffect(() => {
     if (!projectFullName) return;
@@ -58,8 +61,15 @@ export function WorkspaceSetupPanel({
     setEnvVars(ensureInitialEnvVars());
     originalConfigRef.current = { script: "", envContent: "" };
     hasInitializedFromServerRef.current = false;
-    setIsExpanded(false);
   }, [projectFullName]);
+
+  const toggleExpanded = useCallback(() => {
+    setIsExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem('workspace-setup-expanded', String(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (configQuery.isPending) return;
@@ -93,7 +103,6 @@ export function WorkspaceSetupPanel({
 
     if (!hasInitializedFromServerRef.current) {
       hasInitializedFromServerRef.current = true;
-      setIsExpanded(false);
     }
   }, [configQuery.data, configQuery.isPending, configQuery.error]);
 
@@ -230,7 +239,7 @@ export function WorkspaceSetupPanel({
       />
       <button
         type="button"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={toggleExpanded}
         className="w-full flex items-start justify-between gap-2 text-left px-2 py-1.5"
       >
         <div className="inline-flex items-center gap-1.5 pt-1 font-medium text-xs text-neutral-600 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200">
@@ -244,7 +253,7 @@ export function WorkspaceSetupPanel({
             <span className="font-semibold">{projectFullName}</span>
           </span>
           {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-500" />
+            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
           ) : (
             <AlertTriangle className="w-3.5 h-3.5" />
           )}
