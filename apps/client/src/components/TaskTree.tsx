@@ -1434,37 +1434,56 @@ function TaskRunDetails({
     environmentError?.maintenanceError || environmentError?.devError
   );
 
-  const environmentErrorIndicator = hasEnvironmentError ? (
-    <Tooltip delayDuration={0}>
-      <TooltipTrigger asChild>
-        <AlertTriangle className="w-3 h-3 text-neutral-700" />
-      </TooltipTrigger>
-      <TooltipContent
-        side="right"
-        sideOffset={6}
-        className="max-w-sm p-3 z-[var(--z-global-blocking)]"
-      >
-        <div className="space-y-1.5">
-          <p className="font-medium text-sm text-neutral-200">
-            Environment Issue
-          </p>
-          {environmentError?.maintenanceError && (
-            <p className="text-xs text-neutral-400">
-              Maintenance: {environmentError.maintenanceError}
-            </p>
-          )}
-          {environmentError?.devError && (
-            <p className="text-xs text-neutral-400">
-              Dev: {environmentError.devError}
-            </p>
-          )}
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  ) : null;
-
   return (
     <Fragment>
+      {hasEnvironmentError ? (
+        <div
+          className="flex items-center justify-between gap-2 px-2 py-1 text-xs rounded-md mt-px bg-red-50/50 dark:bg-red-950/20 border border-red-200/50 dark:border-red-800/30"
+          style={{ paddingLeft: `${24 + indentLevel * 8}px`, marginLeft: '10px', marginRight: '10px' }}
+        >
+          <span className="flex min-w-0 items-center">
+            <AlertTriangle className="w-3 h-3 mr-2 text-red-600 dark:text-red-400" />
+            <span className="text-red-700 dark:text-red-300 font-medium">
+              {environmentError?.maintenanceError ? 'Setup script failed' : 'Dev script failed'}
+            </span>
+          </span>
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <span className="text-[10px] text-red-600 dark:text-red-400 cursor-help">
+                View error
+              </span>
+            </TooltipTrigger>
+            <TooltipContent
+              side="right"
+              sideOffset={6}
+              className="max-w-sm p-3 z-[var(--z-global-blocking)]"
+            >
+              <div className="space-y-1.5">
+                <p className="font-medium text-sm text-neutral-200">
+                  Environment Setup Error
+                </p>
+                {environmentError?.maintenanceError && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-neutral-300">Setup script:</p>
+                    <p className="text-xs text-neutral-400 font-mono">
+                      {environmentError.maintenanceError}
+                    </p>
+                  </div>
+                )}
+                {environmentError?.devError && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-neutral-300">Dev script:</p>
+                    <p className="text-xs text-neutral-400 font-mono">
+                      {environmentError.devError}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
+
       {hasActiveVSCode ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId"
@@ -1479,7 +1498,6 @@ function TaskRunDetails({
           }
           label="VS Code"
           indentLevel={indentLevel}
-          trailing={environmentErrorIndicator}
         />
       ) : null}
 

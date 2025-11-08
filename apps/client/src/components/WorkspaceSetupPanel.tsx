@@ -21,13 +21,11 @@ import { toast } from "sonner";
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
   projectFullName: string | null;
-  mode: "local" | "cloud";
 };
 
 export function WorkspaceSetupPanel({
   teamSlugOrId,
   projectFullName,
-  mode,
 }: WorkspaceSetupPanelProps) {
   // Use the unified query for both modes
   const configQuery = useQuery({

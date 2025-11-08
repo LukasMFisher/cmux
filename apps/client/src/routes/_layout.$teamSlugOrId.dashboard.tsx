@@ -916,7 +916,6 @@ function DashboardComponent() {
               <WorkspaceSetupPanel
                 teamSlugOrId={teamSlugOrId}
                 projectFullName={selectedRepoFullName}
-                mode={isCloudMode ? "cloud" : "local"}
               />
             ) : null}
 
