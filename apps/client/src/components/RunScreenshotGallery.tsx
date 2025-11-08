@@ -541,7 +541,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                   {hasMultipleImages ? (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                        <span>All screenshots</span>
+                        <span className="sr-only">All screenshots</span>
                         <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
                           {activeOverallIndex ?? "–"} / {flattenedImages.length}
                         </span>
