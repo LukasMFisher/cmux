@@ -83,7 +83,7 @@ interface ExecError extends Error {
 
 const isWindows = process.platform === "win32";
 
-function sanitizeShellPath(candidate: string | undefined): string | null {
+function sanitizeShellPath(candidate: string | undefined | null): string | null {
   if (!candidate) {
     return null;
   }
