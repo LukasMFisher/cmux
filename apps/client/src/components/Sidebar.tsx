@@ -212,7 +212,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   const scrollContainerProps = {
     [SIDEBAR_SCROLL_CONTAINER_ATTR]: "",
-  } as const;
+  };
 
   return (
     <div

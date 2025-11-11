@@ -456,6 +456,10 @@ function TaskTreeInner({
     if (!isTaskSelected) {
       return;
     }
+    if (!isExpanded) {
+      setIsExpanded(true);
+    }
+    prefetchTaskRuns();
     const linkElement = taskLinkRef.current;
     if (!linkElement) {
       return;
@@ -491,7 +495,7 @@ function TaskTreeInner({
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [isTaskSelected]);
+  }, [isExpanded, isTaskSelected, prefetchTaskRuns]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
