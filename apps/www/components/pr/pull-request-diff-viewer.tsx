@@ -53,7 +53,12 @@ import {
   type RenderToken,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  usePathname,
+  useRouter,
+  useSearchParams,
+  type ReadonlyURLSearchParams,
+} from "next/navigation";
 
 import { api } from "@cmux/convex/api";
 import { useConvexQuery } from "@convex-dev/react-query";
@@ -92,6 +97,13 @@ import {
 } from "./review-completion-notification-card";
 import clsx from "clsx";
 import { kitties } from "./kitty";
+import {
+  HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
+  HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
+  HEATMAP_MODEL_QUERY_KEY,
+  normalizeHeatmapModelQueryValue,
+  type HeatmapModelQueryValue,
+} from "@/lib/services/code-review/model-config";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -205,21 +217,35 @@ const filenameLanguageMap: Record<string, string> = {
   "bun.lock": "toml",
 };
 
-const HEATMAP_MODEL_OPTIONS = [
-  {
-    value: "default",
-    label: "OpenAI GPT-5 (default)",
-    helper: "Balanced quality and latency.",
-  },
-  {
-    value: "ft0",
-    label: "Fine-tuned GPT-4.1 mini (experimental)",
-    helper: "SFT tuned for heatmap accuracy.",
-  },
-] as const;
+type HeatmapModelOptionValue = HeatmapModelQueryValue;
 
-type HeatmapModelOptionValue =
-  (typeof HEATMAP_MODEL_OPTIONS)[number]["value"];
+const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
+  value: HeatmapModelOptionValue;
+  label: string;
+}> = [
+  {
+    value: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
+    label: "OpenAI GPT-4.1 mini (fine-tuned)",
+  },
+  {
+    value: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
+    label: "Anthropic Claude Opus 4.1",
+  },
+];
+
+function deriveHeatmapModelFromSearchParams(
+  params: ReadonlyURLSearchParams | null
+): HeatmapModelOptionValue {
+  if (!params) {
+    return HEATMAP_MODEL_FINETUNE_QUERY_VALUE;
+  }
+  if (params.has("ft0")) {
+    return HEATMAP_MODEL_FINETUNE_QUERY_VALUE;
+  }
+  return normalizeHeatmapModelQueryValue(
+    params.get(HEATMAP_MODEL_QUERY_KEY)
+  );
+}
 
 type RefractorLike = {
   highlight(code: string, language: string): unknown;
@@ -564,14 +590,15 @@ export function PullRequestDiffViewer({
   const [heatmapModelPreference, setHeatmapModelPreference] =
     useLocalStorage<HeatmapModelOptionValue>({
       key: "cmux-heatmap-model",
-      defaultValue: "default",
+      defaultValue: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
     });
   const pendingModelPreferenceRef = useRef<HeatmapModelOptionValue | null>(
     null
   );
-  const urlModelValue: HeatmapModelOptionValue =
-    searchParams?.has("ft0") === true ? "ft0" : "default";
-  const isFineTunedModelSelected = heatmapModelPreference === "ft0";
+  const urlModelValue = useMemo(
+    () => deriveHeatmapModelFromSearchParams(searchParams),
+    [searchParams]
+  );
 
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
@@ -587,39 +614,29 @@ export function PullRequestDiffViewer({
     if (urlModelValue !== heatmapModelPreference) {
       setHeatmapModelPreference(urlModelValue);
     }
-  }, [
-    heatmapModelPreference,
-    setHeatmapModelPreference,
-    urlModelValue,
-  ]);
+  }, [heatmapModelPreference, setHeatmapModelPreference, urlModelValue]);
 
   const handleHeatmapModelPreferenceChange = useCallback(
     (value: HeatmapModelOptionValue) => {
-      if (value === heatmapModelPreference) {
+      const isQuerySynced =
+        value === urlModelValue && !searchParams.has("ft0");
+      if (value !== heatmapModelPreference) {
+        setHeatmapModelPreference(value);
+      }
+      if (isQuerySynced) {
+        pendingModelPreferenceRef.current = null;
         return;
       }
-      setHeatmapModelPreference(value);
 
-      const currentParams = new URLSearchParams(searchParams?.toString() ?? "");
-      const hasFt0 = currentParams.has("ft0");
-      const needsNavigation =
-        (value === "ft0" && !hasFt0) || (value === "default" && hasFt0);
-
-      if (needsNavigation) {
-        pendingModelPreferenceRef.current = value;
-        if (value === "ft0") {
-          currentParams.set("ft0", "1");
-        } else {
-          currentParams.delete("ft0");
-        }
-        const nextQuery = currentParams.toString();
-        const targetUrl =
-          nextQuery.length > 0 ? `${pathname}?${nextQuery}` : pathname;
-        router.replace(targetUrl);
-        router.refresh();
-      } else {
-        pendingModelPreferenceRef.current = null;
-      }
+      pendingModelPreferenceRef.current = value;
+      const currentParams = new URLSearchParams(searchParams.toString());
+      currentParams.delete("ft0");
+      currentParams.set(HEATMAP_MODEL_QUERY_KEY, value);
+      const nextQuery = currentParams.toString();
+      const targetUrl =
+        nextQuery.length > 0 ? `${pathname}?${nextQuery}` : pathname;
+      router.replace(targetUrl);
+      router.refresh();
     },
     [
       heatmapModelPreference,
@@ -627,6 +644,7 @@ export function PullRequestDiffViewer({
       router,
       searchParams,
       setHeatmapModelPreference,
+      urlModelValue,
     ]
   );
 
@@ -647,9 +665,7 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber: String(prNumber),
     });
-    if (isFineTunedModelSelected) {
-      params.set("ft0", "1");
-    }
+    params.set(HEATMAP_MODEL_QUERY_KEY, heatmapModelPreference);
 
     (async () => {
       try {
@@ -951,11 +967,11 @@ export function PullRequestDiffViewer({
       controller.abort();
     };
   }, [
+    heatmapModelPreference,
     normalizedJobType,
     prNumber,
     repoFullName,
     setStreamStateByFile,
-    isFineTunedModelSelected,
   ]);
 
   const prQueryArgs = useMemo(
@@ -2532,13 +2548,6 @@ function HeatmapThresholdControl({
     [onModelChange]
   );
 
-  const activeModelMeta = useMemo(() => {
-    return (
-      HEATMAP_MODEL_OPTIONS.find((option) => option.value === selectedModel) ??
-      HEATMAP_MODEL_OPTIONS[0]!
-    );
-  }, [selectedModel]);
-
   return (
     <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
       <div className="flex items-center justify-between gap-3">
@@ -2620,18 +2629,13 @@ function HeatmapThresholdControl({
         </div>
       </div>
       <div className="mt-4 space-y-2">
-        <p className="text-xs font-semibold text-neutral-700">
-          Heatmap model
-        </p>
-        <p className="text-[11px] text-neutral-500">
-          Choose which model powers future runs (saved locally).
-        </p>
-        <div className="relative">
+        <p className="text-xs font-semibold text-neutral-700">Model</p>
+        <div className="relative max-w-[220px]">
           <select
             value={selectedModel}
             onChange={handleModelSelectChange}
             aria-label="Heatmap model preference"
-            className="w-full appearance-none rounded border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="w-full appearance-none rounded border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-800 shadow-sm transition focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           >
             {HEATMAP_MODEL_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -2640,13 +2644,10 @@ function HeatmapThresholdControl({
             ))}
           </select>
           <ChevronDown
-            className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500"
+            className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-500"
             aria-hidden
           />
         </div>
-        <p className="text-[11px] text-neutral-500">
-          {activeModelMeta.helper}
-        </p>
       </div>
     </div>
   );
