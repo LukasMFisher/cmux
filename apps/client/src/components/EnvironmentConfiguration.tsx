@@ -1142,7 +1142,10 @@ export function EnvironmentConfiguration({
                           const v = e.target.value;
                           updateEnvVars((prev) => {
                             const next = [...prev];
-                            next[idx] = { ...next[idx]!, name: v };
+                            const current = next[idx];
+                            if (current) {
+                              next[idx] = { ...current, name: v };
+                            }
                             return next;
                           });
                         }}
@@ -1155,7 +1158,10 @@ export function EnvironmentConfiguration({
                           const v = e.target.value;
                           updateEnvVars((prev) => {
                             const next = [...prev];
-                            next[idx] = { ...next[idx]!, value: v };
+                            const current = next[idx];
+                            if (current) {
+                              next[idx] = { ...current, value: v };
+                            }
                             return next;
                           });
                         }}
