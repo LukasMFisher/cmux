@@ -645,10 +645,10 @@ export function EnvironmentConfiguration({
         ? null
         : {
             title: instanceId
-              ? "Waiting for browser VNC"
+              ? "Waiting for browser"
               : "Browser preview unavailable",
             description: instanceId
-              ? "We'll embed the browser VNC session as soon as the environment exposes it."
+              ? "We'll embed the browser session as soon as the environment exposes it."
               : "Launch an environment so the browser agent can handle screenshots and authentication flows.",
           },
     [browserUrl, instanceId]
@@ -803,7 +803,7 @@ export function EnvironmentConfiguration({
             }}
             title="Resize panels"
           >
-            <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "calc(50% + 2px)" }} />
+            <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "50%", transform: "translateY(-50%)" }} />
           </div>
         )}
         {expandedPanelInSplit && <div className="h-0" />}
@@ -1176,26 +1176,6 @@ export function EnvironmentConfiguration({
           </AccordionItem>
 
           <AccordionItem
-            key="browser-vnc"
-            aria-label="Browser VNC setup"
-            title="Browser VNC setup"
-          >
-            <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
-              <p>
-                Prepare the embedded browser so the Browser Agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
-              </p>
-              <ul className="list-disc space-y-1 pl-5">
-                <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
-                <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
-                <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
-              </ul>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-                Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
-              </p>
-            </div>
-          </AccordionItem>
-
-          <AccordionItem
             key="install-dependencies"
             aria-label="Install dependencies"
             title="Install dependencies"
@@ -1264,6 +1244,26 @@ export function EnvironmentConfiguration({
                   <p className="text-xs text-red-500">{portsError}</p>
                 )}
               </div>
+            </div>
+          </AccordionItem>
+
+          <AccordionItem
+            key="browser-vnc"
+            aria-label="Browser setup"
+            title="Browser setup"
+          >
+            <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
+              <p>
+                Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
+              </p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
+                <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
+                <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
+              </ul>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
+                Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
+              </p>
             </div>
           </AccordionItem>
         </Accordion>
