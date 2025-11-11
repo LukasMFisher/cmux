@@ -400,7 +400,10 @@ export function WorkspaceSetupPanel({
                                 const value = event.target.value;
                                 updateEnvVars((prev) => {
                                   const next = [...prev];
-                                  next[idx] = { ...next[idx]!, name: value };
+                                  const current = next[idx];
+                                  if (current) {
+                                    next[idx] = { ...current, name: value };
+                                  }
                                   return next;
                                 });
                               }}
@@ -419,7 +422,10 @@ export function WorkspaceSetupPanel({
                                       const value = event.target.value;
                                       updateEnvVars((prev) => {
                                         const next = [...prev];
-                                        next[idx] = { ...next[idx]!, value };
+                                        const current = next[idx];
+                                        if (current) {
+                                          next[idx] = { ...current, value };
+                                        }
                                         return next;
                                       });
                                     }
