@@ -20,6 +20,23 @@ import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
+const workspaceEnvVarRowKeys = new WeakMap<EnvVar, string>();
+
+const getWorkspaceEnvVarRowKey = (row: EnvVar): string => {
+  let key = workspaceEnvVarRowKeys.get(row);
+  if (!key) {
+    const random =
+      typeof globalThis.crypto !== "undefined" &&
+      typeof globalThis.crypto.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `workspace-env-var-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
+    workspaceEnvVarRowKeys.set(row, random);
+    key = random;
+  }
+  return key;
+};
 
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
@@ -372,7 +389,7 @@ export function WorkspaceSetupPanel({
                           areEnvValuesHidden && row.value.trim().length > 0;
                         return (
                           <div
-                            key={idx}
+                            key={getWorkspaceEnvVarRowKey(row)}
                             className="grid gap-2 items-center"
                             style={{
                               gridTemplateColumns: "3fr 7fr 36px",
@@ -397,14 +414,18 @@ export function WorkspaceSetupPanel({
                               value={
                                 shouldMaskValue ? MASKED_ENV_VALUE : row.value
                               }
-                              onChange={(event) => {
-                                const value = event.target.value;
-                                updateEnvVars((prev) => {
-                                  const next = [...prev];
-                                  next[idx] = { ...next[idx]!, value };
-                                  return next;
-                                });
-                              }}
+                              onChange={
+                                shouldMaskValue
+                                  ? undefined
+                                  : (event) => {
+                                      const value = event.target.value;
+                                      updateEnvVars((prev) => {
+                                        const next = [...prev];
+                                        next[idx] = { ...next[idx]!, value };
+                                        return next;
+                                      });
+                                    }
+                              }
                               placeholder="secret-value"
                               readOnly={shouldMaskValue}
                               aria-readonly={shouldMaskValue || undefined}

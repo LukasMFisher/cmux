@@ -31,8 +31,6 @@ import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import {
   ArrowLeft,
   Code2,
-  Eye,
-  EyeOff,
   Loader2,
   Minus,
   Monitor,
@@ -50,8 +48,6 @@ import {
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { toast } from "sonner";
-
-const MASKED_ENV_VALUE = "••••••••••••••••";
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -113,7 +109,6 @@ export function EnvironmentConfiguration({
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(persistedState?.envVars ?? initialEnvVars)
   );
-  const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
   const [maintenanceScript, setMaintenanceScript] = useState(
     () => persistedState?.maintenanceScript ?? initialMaintenanceScript
   );
@@ -813,33 +808,6 @@ export function EnvironmentConfiguration({
                 }
               }}
             >
-              <div className="flex items-center justify-end pb-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAreEnvValuesHidden((previous) => !previous)
-                  }
-                  className="inline-flex items-center gap-1 rounded-md border border-neutral-200 dark:border-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
-                  aria-pressed={!areEnvValuesHidden}
-                  aria-label={
-                    areEnvValuesHidden
-                      ? "Show environment variable values"
-                      : "Hide environment variable values"
-                  }
-                >
-                  {areEnvValuesHidden ? (
-                    <>
-                      <EyeOff className="h-3.5 w-3.5" />
-                      Reveal values
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="h-3.5 w-3.5" />
-                      Hide values
-                    </>
-                  )}
-                </button>
-              </div>
               <div
                 className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-1"
                 style={{
@@ -852,72 +820,66 @@ export function EnvironmentConfiguration({
               </div>
 
               <div className="space-y-2">
-                {envVars.map((row, idx) => {
-                  const shouldMaskValue =
-                    areEnvValuesHidden && row.value.trim().length > 0;
-                  return (
-                    <div
-                      key={idx}
-                      className="grid gap-3 items-center"
-                      style={{
-                        gridTemplateColumns:
-                          "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                {envVars.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="grid gap-3 items-center"
+                    style={{
+                      gridTemplateColumns:
+                        "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={row.name}
+                      ref={(el) => {
+                        keyInputRefs.current[idx] = el;
                       }}
-                    >
-                      <input
-                        type="text"
-                        value={row.name}
-                        ref={(el) => {
-                          keyInputRefs.current[idx] = el;
-                        }}
-                        onChange={(e) => {
-                          const v = e.target.value;
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        updateEnvVars((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx]!, name: v };
+                          return next;
+                        });
+                      }}
+                      placeholder="EXAMPLE_NAME"
+                      className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                    />
+                    <TextareaAutosize
+                      value={row.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        updateEnvVars((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx]!, value: v };
+                          return next;
+                        });
+                      }}
+                      placeholder="I9JU23NF394R6HH"
+                      minRows={1}
+                      maxRows={10}
+                      className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                    />
+                    <div className="self-start flex items-center justify-end w-[44px]">
+                      <button
+                        type="button"
+                        onClick={() => {
                           updateEnvVars((prev) => {
-                            const next = [...prev];
-                            next[idx] = { ...next[idx]!, name: v };
-                            return next;
+                            const next = prev.filter((_, i) => i !== idx);
+                            return next.length > 0
+                              ? next
+                              : [{ name: "", value: "", isSecret: true }];
                           });
                         }}
-                        placeholder="EXAMPLE_NAME"
-                        className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                      />
-                      <TextareaAutosize
-                        value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            next[idx] = { ...next[idx]!, value: v };
-                            return next;
-                          });
-                        }}
-                        placeholder="I9JU23NF394R6HH"
-                        minRows={1}
-                        maxRows={10}
-                        readOnly={shouldMaskValue}
-                        aria-readonly={shouldMaskValue || undefined}
-                        className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none transition"
-                      />
-                      <div className="self-start flex items-center justify-end w-[44px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateEnvVars((prev) => {
-                              const next = prev.filter((_, i) => i !== idx);
-                              return next.length > 0
-                                ? next
-                                : [{ name: "", value: "", isSecret: true }];
-                            });
-                          }}
-                          className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                          aria-label="Remove variable"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                      </div>
+                        className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                        aria-label="Remove variable"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
 
               <div className="pt-2">
