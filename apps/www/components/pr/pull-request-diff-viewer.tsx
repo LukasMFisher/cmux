@@ -225,11 +225,11 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
 }> = [
   {
     value: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
-    label: "OpenAI GPT-4.1 mini (fine-tuned)",
+    label: "GPT-4.1 mini (fine-tuned)",
   },
   {
     value: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
-    label: "Anthropic Claude Opus 4.1",
+    label: "Claude Opus 4.1",
   },
 ];
 
