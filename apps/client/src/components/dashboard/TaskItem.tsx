@@ -257,14 +257,29 @@ export const TaskItem = memo(function TaskItem({
                 </span>
               )}
             </div>
-            {task.updatedAt && (
-              <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0 tabular-nums">
-                {new Date(task.updatedAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
+            {task.updatedAt &&
+              (() => {
+                const date = new Date(task.updatedAt);
+                const today = new Date();
+                const isToday =
+                  date.getDate() === today.getDate() &&
+                  date.getMonth() === today.getMonth() &&
+                  date.getFullYear() === today.getFullYear();
+
+                return (
+                  <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0 tabular-nums min-w-[40px] text-right">
+                    {isToday
+                      ? date.toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })
+                      : date.toLocaleDateString([], {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                  </span>
+                );
+              })()}
           </div>
         </ContextMenu.Trigger>
         {renameError && (
