@@ -191,7 +191,7 @@ export const TaskItem = memo(function TaskItem({
           <div
             className={clsx(
               "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
-              "grid-cols-[24px_36px_1fr_120px_58px]",
+              "grid-cols-[24px_36px_1fr_120px_68px]",
               isOptimisticUpdate
                 ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
                 : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
