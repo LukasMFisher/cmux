@@ -1345,11 +1345,7 @@ export function PreviewConfigureClient({
     }
 
     if (resolvedVncUrl) {
-<<<<<<< HEAD
       iframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl);
-=======
-      iframeManager.getOrCreateIframe(browserPersistKey, resolvedVncUrl, true);
->>>>>>> 2eb0325c277eb57ac2a62e8dd8a1047cc0ae6e43
       const target = document.querySelector(`[data-iframe-target="${browserPersistKey}"]`) as HTMLElement;
       if (target) {
         cleanupFunctions.push(
