@@ -928,6 +928,61 @@ export const fail = authMutation({
   },
 });
 
+export const addCustomPreview = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.runId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const newPreview = {
+      url: args.url,
+      createdAt: Date.now(),
+    };
+
+    const customPreviews = doc.customPreviews || [];
+    const index = customPreviews.length;
+    
+    await ctx.db.patch(args.runId, {
+      customPreviews: [...customPreviews, newPreview],
+      updatedAt: Date.now(),
+    });
+
+    return index;
+  },
+});
+
+export const removeCustomPreview = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    index: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.runId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const customPreviews = doc.customPreviews || [];
+    const updated = customPreviews.filter((_, i) => i !== args.index);
+
+    await ctx.db.patch(args.runId, {
+      customPreviews: updated,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 export const listByTaskInternal = internalQuery({
   args: { taskId: v.id("tasks") },
   handler: async (ctx, args) => {

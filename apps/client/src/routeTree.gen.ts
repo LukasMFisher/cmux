@@ -45,7 +45,7 @@ import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRouteImport } fro
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPrRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.pr'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdDiffRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.diff'
 import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.browser'
-import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.preview.$port'
+import { Route as LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport } from './routes/_layout.$teamSlugOrId.task.$taskId.run.$runId.preview.$previewId'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -245,10 +245,10 @@ const LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRoute =
     path: '/run/$runId/browser',
     getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
   } as any)
-const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute =
-  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport.update({
-    id: '/run/$runId/preview/$port',
-    path: '/run/$runId/preview/$port',
+const LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute =
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport.update({
+    id: '/run/$runId/preview/$previewId',
+    path: '/run/$runId/preview/$previewId',
     getParentRoute: () => LayoutTeamSlugOrIdTaskTaskIdRoute,
   } as any)
 
@@ -288,7 +288,7 @@ export interface FileRoutesByFullPath {
   '/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/$teamSlugOrId/task/$taskId/run/$runId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -324,7 +324,7 @@ export interface FileRoutesByTo {
   '/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/$teamSlugOrId/task/$taskId/run/$runId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -364,7 +364,7 @@ export interface FileRoutesById {
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/vscode': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   '/_layout/$teamSlugOrId/task/$taskId/run/$runId/': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -404,7 +404,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/$teamSlugOrId/task/$taskId/run/$runId'
-    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -440,7 +440,7 @@ export interface FileRouteTypes {
     | '/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/$teamSlugOrId/task/$taskId/run/$runId'
-    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   id:
     | '__root__'
     | '/'
@@ -479,7 +479,7 @@ export interface FileRouteTypes {
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/terminals'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/vscode'
     | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/'
-    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
+    | '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -749,11 +749,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdBrowserRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
     }
-    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port': {
-      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
-      path: '/run/$runId/preview/$port'
-      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/preview/$port'
-      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRouteImport
+    '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId': {
+      id: '/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
+      path: '/run/$runId/preview/$previewId'
+      fullPath: '/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId'
+      preLoaderRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRouteImport
       parentRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRoute
     }
   }
@@ -805,7 +805,7 @@ interface LayoutTeamSlugOrIdTaskTaskIdRouteChildren {
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdTerminalsRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute
   LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute
-  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute
+  LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute: typeof LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute
 }
 
 const LayoutTeamSlugOrIdTaskTaskIdRouteChildren: LayoutTeamSlugOrIdTaskTaskIdRouteChildren =
@@ -824,8 +824,8 @@ const LayoutTeamSlugOrIdTaskTaskIdRouteChildren: LayoutTeamSlugOrIdTaskTaskIdRou
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdVscodeRoute,
     LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute:
       LayoutTeamSlugOrIdTaskTaskIdRunRunIdIndexRoute,
-    LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute:
-      LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPortRoute,
+    LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute:
+      LayoutTeamSlugOrIdTaskTaskIdRunRunIdPreviewPreviewIdRoute,
   }
 
 const LayoutTeamSlugOrIdTaskTaskIdRouteWithChildren =

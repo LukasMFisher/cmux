@@ -22,7 +22,7 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
-  port: z.string(),
+  previewId: z.string(),
 });
 
 const CLOUD_TMUX_BOOTSTRAP_SCRIPT = `set -euo pipefail
@@ -48,7 +48,7 @@ tmux select-window -t cmux:0 >/dev/null 2>&1 || true
 exec tmux attach -t cmux`;
 
 export const Route = createFileRoute(
-  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port"
+  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
 )({
   component: PreviewPage,
   params: {
@@ -57,7 +57,7 @@ export const Route = createFileRoute(
       return {
         taskId: params.taskId,
         runId: params.runId,
-        port: params.port,
+        previewId: params.previewId,
       };
     },
   },
@@ -135,7 +135,7 @@ export const Route = createFileRoute(
 });
 
 function PreviewPage() {
-  const { taskId, teamSlugOrId, runId, port } = Route.useParams();
+  const { taskId, teamSlugOrId, runId, previewId } = Route.useParams();
 
   const taskRuns = useConvexQuery(api.taskRuns.getByTask, {
     teamSlugOrId,
@@ -147,12 +147,36 @@ function PreviewPage() {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
 
-  // Find the service URL for the requested port
+  // Find the service URL - check if previewId is a port or custom preview
   const { previewUrl, displayUrl } = useMemo(() => {
-    if (!selectedRun?.networking) {
+    if (!selectedRun) {
       return { previewUrl: null, displayUrl: null };
     }
-    const portNum = Number.parseInt(port, 10);
+
+    // Try parsing as index for custom preview
+    const index = Number.parseInt(previewId, 10);
+    if (!Number.isNaN(index) && selectedRun.customPreviews) {
+      const customPreview = selectedRun.customPreviews[index];
+      if (customPreview) {
+        return {
+          previewUrl: customPreview.url,
+          displayUrl: customPreview.url,
+        };
+      }
+      // Index exists but preview not yet synced (optimistic)
+      if (index === selectedRun.customPreviews.length) {
+        return {
+          previewUrl: "about:blank",
+          displayUrl: "about:blank",
+        };
+      }
+    }
+
+    // Fall back to port-based preview
+    if (!selectedRun.networking) {
+      return { previewUrl: null, displayUrl: null };
+    }
+    const portNum = Number.parseInt(previewId, 10);
     if (Number.isNaN(portNum)) {
       return { previewUrl: null, displayUrl: null };
     }
@@ -169,11 +193,11 @@ function PreviewPage() {
       previewUrl: service.url,
       displayUrl: isElectron ? electronDisplayUrl : service.url,
     };
-  }, [selectedRun, port]);
+  }, [selectedRun, previewId]);
 
   const persistKey = useMemo(() => {
-    return getTaskRunPreviewPersistKey(runId, port);
-  }, [runId, port]);
+    return getTaskRunPreviewPersistKey(runId, previewId);
+  }, [runId, previewId]);
 
   // Terminal setup
   const vscodeInfo = selectedRun?.vscode;
@@ -287,7 +311,7 @@ function PreviewPage() {
           <div className="text-center">
             <p className="mb-2 text-sm text-neutral-500 dark:text-neutral-400">
               {selectedRun
-                ? `Port ${port} is not available for this run`
+                ? `Preview ${previewId} is not available for this run`
                 : "Loading..."}
             </p>
             {selectedRun?.networking && selectedRun.networking.length > 0 && (

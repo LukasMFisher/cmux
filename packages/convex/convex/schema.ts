@@ -283,6 +283,14 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    customPreviews: v.optional(
+      v.array(
+        v.object({
+          url: v.string(),
+          createdAt: v.number(),
+        })
+      )
+    ),
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])

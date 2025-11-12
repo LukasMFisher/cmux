@@ -19,7 +19,7 @@ import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
-import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, type LinkProps } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -47,8 +47,10 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Plus,
   TerminalSquare,
   Loader2,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import {
@@ -1342,7 +1344,7 @@ function TaskRunTreeInner({
     [hasActiveVSCode, run]
   );
 
-  // Collect running preview ports
+  // Collect running preview ports and custom previews
   const previewServices = useMemo(() => {
     if (!run.networking) return [];
     return run.networking.filter((service) => service.status === "running");
@@ -1529,6 +1531,7 @@ function TaskRunTreeInner({
         shouldRenderTerminalLink={shouldRenderTerminalLink}
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
         previewServices={previewServices}
+        customPreviews={run.customPreviews || []}
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
@@ -1583,6 +1586,46 @@ function TaskRunDetailLink({
   );
 }
 
+interface AddPreviewInputProps {
+  indentLevel: number;
+  onAdd: (url: string) => Promise<number>;
+  currentCount: number;
+  taskId: Id<"tasks">;
+  runId: Id<"taskRuns">;
+  teamSlugOrId: string;
+}
+
+function AddPreviewInput({ indentLevel, onAdd, currentCount, taskId, runId, teamSlugOrId }: AddPreviewInputProps) {
+  const navigate = useNavigate();
+
+  const handleClick = () => {
+    // Use next index as optimistic previewId
+    const previewId = String(currentCount);
+    
+    // Navigate immediately (optimistic)
+    void navigate({
+      to: "/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId",
+      params: { teamSlugOrId, taskId, runId, previewId },
+    });
+    
+    // Persist in background
+    void onAdd("about:blank").catch((error) => {
+      console.error("Failed to create preview", error);
+    });
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      className="w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-200/45 dark:hover:bg-neutral-800/45 mt-px text-neutral-500 dark:text-neutral-400"
+      style={{ paddingLeft: `${24 + indentLevel * 8}px` }}
+    >
+      <Plus className="w-3 h-3 text-neutral-400" />
+      <span>Add preview URL</span>
+    </button>
+  );
+}
+
 interface TaskRunDetailsProps {
   run: AnnotatedTaskRun;
   level: number;
@@ -1595,6 +1638,10 @@ interface TaskRunDetailsProps {
   shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
   previewServices: PreviewService[];
+  customPreviews: Array<{
+    url: string;
+    createdAt: number;
+  }>;
   environmentError?: {
     maintenanceError?: string;
     devError?: string;
@@ -1615,10 +1662,124 @@ function TaskRunDetails({
   shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
   previewServices,
+  customPreviews,
   environmentError,
   onArchiveToggle,
   showRunNumbers,
 }: TaskRunDetailsProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  // Extract current previewId from URL if on preview route
+  const currentPreviewId = location.pathname.includes('/preview/') 
+    ? location.pathname.split('/preview/')[1]?.split('/')[0]
+    : undefined;
+  
+  const addCustomPreview = useMutation(api.taskRuns.addCustomPreview).withOptimisticUpdate(
+    (localStore, args) => {
+      const newPreview = {
+        url: args.url,
+        createdAt: Date.now(),
+      };
+      
+      // Update all queries that might have this task run
+      const taskRunsQuery = localStore.getQuery(api.taskRuns.getByTask, {
+        teamSlugOrId: args.teamSlugOrId,
+        taskId,
+      });
+      
+      if (taskRunsQuery) {
+        localStore.setQuery(
+          api.taskRuns.getByTask,
+          { teamSlugOrId: args.teamSlugOrId, taskId },
+          taskRunsQuery.map((r) =>
+            r._id === args.runId
+              ? { ...r, customPreviews: [...(r.customPreviews || []), newPreview] }
+              : r
+          )
+        );
+      }
+    }
+  );
+  
+  const removeCustomPreview = useMutation(api.taskRuns.removeCustomPreview).withOptimisticUpdate(
+    (localStore, args) => {
+      // Update all queries that might have this task run
+      const taskRunsQuery = localStore.getQuery(api.taskRuns.getByTask, {
+        teamSlugOrId: args.teamSlugOrId,
+        taskId,
+      });
+      
+      if (taskRunsQuery) {
+        localStore.setQuery(
+          api.taskRuns.getByTask,
+          { teamSlugOrId: args.teamSlugOrId, taskId },
+          taskRunsQuery.map((r) =>
+            r._id === args.runId
+              ? { ...r, customPreviews: (r.customPreviews || []).filter((_, i) => i !== args.index) }
+              : r
+          )
+        );
+      }
+    }
+  );
+
+  const handleAddPreview = useCallback(
+    async (url: string): Promise<number> => {
+      try {
+        const index = await addCustomPreview({
+          teamSlugOrId,
+          runId: run._id,
+          url,
+        });
+        return index;
+      } catch (error) {
+        console.error("Failed to add preview", error);
+        throw error;
+      }
+    },
+    [addCustomPreview, run._id, teamSlugOrId]
+  );
+
+  const handleRemovePreview = useCallback(
+    (index: number, currentPreviewId?: string) => {
+      void removeCustomPreview({
+        teamSlugOrId,
+        runId: run._id,
+        index,
+      }).catch((error) => {
+        console.error("Failed to remove preview", error);
+      });
+
+      // If we're currently viewing the tab being closed, navigate to another tab
+      if (currentPreviewId === String(index)) {
+        const remainingPreviews = customPreviews.filter((_, i) => i !== index);
+        
+        if (remainingPreviews.length > 0) {
+          // Navigate to previous tab (or next if it was the first)
+          const nextIndex = index > 0 ? index - 1 : 0;
+          void navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId",
+            params: { teamSlugOrId, taskId, runId: run._id, previewId: String(nextIndex) },
+          });
+        } else if (previewServices.length > 0) {
+          // Navigate to first port preview if available
+          void navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId",
+            params: { teamSlugOrId, taskId, runId: run._id, previewId: String(previewServices[0].port) },
+          });
+        } else {
+          // No tabs left, navigate to main taskrun page
+          void navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId",
+            params: { teamSlugOrId, taskId, runId: run._id, taskRunId: run._id },
+          });
+        }
+      }
+    },
+    [removeCustomPreview, run._id, teamSlugOrId, customPreviews, previewServices, navigate, taskId]
+  );
+
   if (!isExpanded) {
     return null;
   }
@@ -1716,12 +1877,12 @@ function TaskRunDetails({
       {previewServices.map((service) => (
         <div key={service.port} className="relative group mt-px">
           <TaskRunDetailLink
-            to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$port"
+            to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
             params={{
               teamSlugOrId,
               taskId,
               runId: run._id,
-              port: `${service.port}`,
+              previewId: `${service.port}`,
             }}
             icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
             label={`Preview (port ${service.port})`}
@@ -1770,6 +1931,80 @@ function TaskRunDetails({
           </Dropdown.Root>
         </div>
       ))}
+
+      {customPreviews.map((preview, index) => (
+        <div key={index} className="relative group mt-px">
+          <TaskRunDetailLink
+            to="/$teamSlugOrId/task/$taskId/run/$runId/preview/$previewId"
+            params={{
+              teamSlugOrId,
+              taskId,
+              runId: run._id,
+              previewId: String(index),
+            }}
+            icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+            label={preview.url}
+            indentLevel={indentLevel}
+            className="pr-10"
+            onClick={(event) => {
+              if (event.metaKey || event.ctrlKey) {
+                event.preventDefault();
+                window.open(preview.url, "_blank", "noopener,noreferrer");
+              }
+            }}
+          />
+
+          <Dropdown.Root>
+            <Dropdown.Trigger
+              onClick={(event) => event.stopPropagation()}
+              className={clsx(
+                "absolute right-2 top-1/2 -translate-y-1/2",
+                "p-1 rounded flex items-center gap-1",
+                "bg-neutral-100/80 dark:bg-neutral-700/80",
+                "hover:bg-neutral-200/80 dark:hover:bg-neutral-600/80",
+                "text-neutral-600 dark:text-neutral-400"
+              )}
+            >
+              <EllipsisVertical className="w-2.5 h-2.5" />
+            </Dropdown.Trigger>
+            <Dropdown.Portal>
+              <Dropdown.Positioner
+                sideOffset={8}
+                side={isElectron ? "left" : "bottom"}
+              >
+                <Dropdown.Popup>
+                  <Dropdown.Arrow />
+                  <Dropdown.Item
+                    onClick={() => {
+                      window.open(preview.url, "_blank", "noopener,noreferrer");
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open in new tab
+                  </Dropdown.Item>
+                  <Dropdown.Item
+                    onClick={() => handleRemovePreview(index, currentPreviewId)}
+                    className="flex items-center gap-2 text-red-600 dark:text-red-400"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Remove preview
+                  </Dropdown.Item>
+                </Dropdown.Popup>
+              </Dropdown.Positioner>
+            </Dropdown.Portal>
+          </Dropdown.Root>
+        </div>
+      ))}
+
+      <AddPreviewInput 
+        indentLevel={indentLevel} 
+        onAdd={handleAddPreview}
+        currentCount={customPreviews.length}
+        taskId={taskId}
+        runId={run._id}
+        teamSlugOrId={teamSlugOrId}
+      />
 
       {hasChildren ? (
         <div className="flex flex-col">
