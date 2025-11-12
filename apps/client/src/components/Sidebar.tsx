@@ -252,10 +252,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         </Link>
       </div>
       <nav className="grow flex flex-col overflow-hidden">
-        <div
-          className="flex-1 overflow-y-auto pb-8"
-          data-sidebar-scroll-container=""
-        >
+        <div className="flex-1 overflow-y-auto pb-8">
           <ul className="flex flex-col gap-px">
             {navItems.map((item) => (
               <li key={item.label}>
