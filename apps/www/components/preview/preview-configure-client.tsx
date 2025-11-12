@@ -1118,36 +1118,15 @@ export function PreviewConfigureClient({
       const envData = await envResponse.json();
       const environmentId = envData.id;
 
-      const snapshotResponse = await fetch(`/api/environments/${environmentId}/snapshots`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          teamSlugOrId,
-          morphInstanceId: instance.instanceId,
-          label: envName,
-          activate: true,
-          maintenanceScript: requestMaintenanceScript,
-          devScript: requestDevScript,
-        }),
-      });
-
-      if (!snapshotResponse.ok) {
-        throw new Error(await snapshotResponse.text());
-      }
-
-      const snapshotData = await snapshotResponse.json();
-      const snapshotId = snapshotData.id;
-
       const previewResponse = await fetch("/api/preview/configs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           teamSlugOrId,
           repoFullName: repo,
-          environmentSnapshotId: snapshotId,
+          environmentId,
           repoInstallationId: _installationId ? Number(_installationId) : undefined,
           repoDefaultBranch: "main",
-          browserProfile: "chromium",
           status: "active",
         }),
       });

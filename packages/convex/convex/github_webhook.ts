@@ -552,7 +552,6 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       teamId,
                       repoFullName,
                       repoInstallationId: installation,
-                      providerConnectionId: previewConfig.providerConnectionId,
                       prNumber,
                       prUrl,
                       headSha,

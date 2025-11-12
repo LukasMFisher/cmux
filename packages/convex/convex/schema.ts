@@ -110,7 +110,6 @@ const convexSchema = defineSchema({
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
     environmentId: v.optional(v.id("environments")),
-    pinned: v.optional(v.boolean()),
     crownEvaluationStatus: v.optional(
       v.union(
         v.literal("pending"),
@@ -540,16 +539,8 @@ const convexSchema = defineSchema({
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
     repoInstallationId: v.optional(v.number()),
-    providerConnectionId: v.optional(v.id("providerConnections")),
     repoDefaultBranch: v.optional(v.string()),
-    environmentSnapshotId: v.optional(v.id("environmentSnapshotVersions")),
-    browserProfile: v.optional(
-      v.union(
-        v.literal("chromium"),
-        v.literal("firefox"),
-        v.literal("webkit"),
-      ),
-    ),
+    environmentId: v.optional(v.id("environments")),
     status: v.optional(
       v.union(
         v.literal("active"),
@@ -564,13 +555,12 @@ const convexSchema = defineSchema({
     .index("by_team_repo", ["teamId", "repoFullName"])
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_status", ["teamId", "status", "updatedAt"])
-    .index("by_environmentSnapshot", ["environmentSnapshotId"]),
+    .index("by_environment", ["environmentId"]),
   previewRuns: defineTable({
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
     repoFullName: v.string(),
     repoInstallationId: v.optional(v.number()),
-    providerConnectionId: v.optional(v.id("providerConnections")),
     prNumber: v.number(),
     prUrl: v.string(),
     headSha: v.string(),

@@ -9,16 +9,13 @@ import { HTTPException } from "hono/http-exception";
 
 export const previewRouter = new OpenAPIHono();
 
-const BrowserProfileSchema = z.enum(["chromium", "firefox", "webkit"]);
-
 const PreviewConfigSchema = z
   .object({
     id: z.string(),
     repoFullName: z.string(),
-    environmentSnapshotId: z.string().optional().nullable(),
+    environmentId: z.string().optional().nullable(),
     repoInstallationId: z.number().optional().nullable(),
     repoDefaultBranch: z.string().optional().nullable(),
-    browserProfile: BrowserProfileSchema,
     status: z.enum(["active", "paused", "disabled"]),
     lastRunAt: z.number().optional().nullable(),
     createdAt: z.number(),
@@ -37,10 +34,9 @@ const PreviewConfigMutationBody = z
     previewConfigId: z.string().optional(),
     teamSlugOrId: z.string(),
     repoFullName: z.string(),
-    environmentSnapshotId: z.string().optional(),
+    environmentId: z.string().optional(),
     repoInstallationId: z.number().optional(),
     repoDefaultBranch: z.string().optional(),
-    browserProfile: BrowserProfileSchema.optional(),
     status: z.enum(["active", "paused", "disabled"]).optional(),
   })
   .openapi("PreviewConfigMutationBody");
@@ -75,10 +71,9 @@ function formatPreviewConfig(config: PreviewConfigDoc) {
   return {
     id: config._id,
     repoFullName: config.repoFullName,
-    environmentSnapshotId: config.environmentSnapshotId ?? null,
+    environmentId: config.environmentId ?? null,
     repoInstallationId: config.repoInstallationId ?? null,
     repoDefaultBranch: config.repoDefaultBranch ?? null,
-    browserProfile: config.browserProfile ?? "chromium",
     status: config.status ?? "active",
     lastRunAt: config.lastRunAt ?? null,
     createdAt: config.createdAt,
@@ -186,12 +181,11 @@ previewRouter.openapi(
     const previewConfigId = await convex.mutation(api.previewConfigs.upsert, {
       teamSlugOrId: body.teamSlugOrId,
       repoFullName: body.repoFullName,
-      environmentSnapshotId: body.environmentSnapshotId
-        ? typedZid("environmentSnapshotVersions").parse(body.environmentSnapshotId)
+      environmentId: body.environmentId
+        ? typedZid("environments").parse(body.environmentId)
         : undefined,
       repoInstallationId: body.repoInstallationId,
       repoDefaultBranch: body.repoDefaultBranch,
-      browserProfile: body.browserProfile,
       status: body.status,
     });
 

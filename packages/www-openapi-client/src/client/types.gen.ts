@@ -626,10 +626,9 @@ export type WorkspaceConfigBody = {
 export type PreviewConfig = {
     id: string;
     repoFullName: string;
-    environmentSnapshotId?: string | null;
+    environmentId?: string | null;
     repoInstallationId?: number | null;
     repoDefaultBranch?: string | null;
-    browserProfile: 'chromium' | 'firefox' | 'webkit';
     status: 'active' | 'paused' | 'disabled';
     lastRunAt?: number | null;
     createdAt: number;
@@ -644,10 +643,9 @@ export type PreviewConfigMutationBody = {
     previewConfigId?: string;
     teamSlugOrId: string;
     repoFullName: string;
-    environmentSnapshotId?: string;
+    environmentId?: string;
     repoInstallationId?: number;
     repoDefaultBranch?: string;
-    browserProfile?: 'chromium' | 'firefox' | 'webkit';
     status?: 'active' | 'paused' | 'disabled';
 };
 
