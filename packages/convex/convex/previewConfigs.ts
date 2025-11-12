@@ -15,14 +15,6 @@ function normalizeRepoFullName(value: string): string {
   return trimmed.replace(/\.git$/i, "").toLowerCase();
 }
 
-function normalizeScript(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 function normalizeBrowser(profile?: BrowserProfile | null): BrowserProfile {
   if (profile === "firefox" || profile === "webkit") {
     return profile;
@@ -82,11 +74,10 @@ export const upsert = authMutation({
   args: {
     teamSlugOrId: v.string(),
     repoFullName: v.string(),
+    environmentSnapshotId: v.optional(v.id("environmentSnapshotVersions")),
     repoInstallationId: v.optional(v.number()),
     providerConnectionId: v.optional(v.id("providerConnections")),
     repoDefaultBranch: v.optional(v.string()),
-    devScript: v.optional(v.string()),
-    maintenanceScript: v.optional(v.string()),
     browserProfile: v.optional(
       v.union(
         v.literal("chromium"),
@@ -94,8 +85,6 @@ export const upsert = authMutation({
         v.literal("webkit"),
       ),
     ),
-    envDataVaultKey: v.optional(v.string()),
-    morphSnapshotId: v.optional(v.string()),
     status: v.optional(
       v.union(
         v.literal("active"),
@@ -111,10 +100,16 @@ export const upsert = authMutation({
     }
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const repoFullName = normalizeRepoFullName(args.repoFullName);
-    const devScript = normalizeScript(args.devScript);
-    const maintenanceScript = normalizeScript(args.maintenanceScript);
     const browserProfile = normalizeBrowser(args.browserProfile);
     const now = Date.now();
+
+    // Verify environment snapshot exists and belongs to team if provided
+    if (args.environmentSnapshotId) {
+      const snapshot = await ctx.db.get(args.environmentSnapshotId);
+      if (!snapshot || snapshot.teamId !== teamId) {
+        throw new Error("Environment snapshot not found");
+      }
+    }
 
     const existing = await ctx.db
       .query("previewConfigs")
@@ -125,15 +120,12 @@ export const upsert = authMutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
+        environmentSnapshotId: args.environmentSnapshotId ?? existing.environmentSnapshotId,
         repoInstallationId: args.repoInstallationId ?? existing.repoInstallationId,
         providerConnectionId:
           args.providerConnectionId ?? existing.providerConnectionId,
         repoDefaultBranch: args.repoDefaultBranch ?? existing.repoDefaultBranch,
-        devScript,
-        maintenanceScript,
         browserProfile,
-        envDataVaultKey: args.envDataVaultKey ?? existing.envDataVaultKey,
-        morphSnapshotId: args.morphSnapshotId ?? existing.morphSnapshotId,
         status: args.status ?? existing.status ?? "active",
         updatedAt: now,
       });
@@ -145,39 +137,17 @@ export const upsert = authMutation({
       createdByUserId: userId,
       repoFullName,
       repoProvider: "github",
+      environmentSnapshotId: args.environmentSnapshotId,
       repoInstallationId: args.repoInstallationId,
       providerConnectionId: args.providerConnectionId,
       repoDefaultBranch: args.repoDefaultBranch,
-      devScript,
-      maintenanceScript,
       browserProfile,
-      envDataVaultKey: args.envDataVaultKey,
-      morphSnapshotId: args.morphSnapshotId,
       status: args.status ?? "active",
       lastRunAt: undefined,
       createdAt: now,
       updatedAt: now,
     });
     return id;
-  },
-});
-
-export const updateEnvKey = authMutation({
-  args: {
-    teamSlugOrId: v.string(),
-    previewConfigId: v.id("previewConfigs"),
-    envDataVaultKey: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const config = await ctx.db.get(args.previewConfigId);
-    if (!config || config.teamId !== teamId) {
-      throw new Error("Preview configuration not found");
-    }
-    await ctx.db.patch(config._id, {
-      envDataVaultKey: args.envDataVaultKey,
-      updatedAt: Date.now(),
-    });
   },
 });
 

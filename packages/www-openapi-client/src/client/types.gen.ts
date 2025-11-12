@@ -611,29 +611,24 @@ export type CodeReviewStartBody = {
 
 export type WorkspaceConfigResponse = {
     projectFullName: string;
-    maintenanceScript?: string;
-    envVarsContent: string;
+    environmentId?: string;
     updatedAt?: number;
 } | null;
 
 export type WorkspaceConfigBody = {
     teamSlugOrId: string;
     projectFullName: string;
-    maintenanceScript?: string;
-    envVarsContent?: string;
+    environmentId?: string;
 };
 
 export type PreviewConfig = {
     id: string;
     repoFullName: string;
+    environmentSnapshotId?: string | null;
     repoInstallationId?: number | null;
     repoDefaultBranch?: string | null;
-    devScript?: string | null;
-    maintenanceScript?: string | null;
     browserProfile: 'chromium' | 'firefox' | 'webkit';
     status: 'active' | 'paused' | 'disabled';
-    hasEnvVars: boolean;
-    morphSnapshotId?: string | null;
     lastRunAt?: number | null;
     createdAt: number;
     updatedAt: number;
@@ -647,23 +642,11 @@ export type PreviewConfigMutationBody = {
     previewConfigId?: string;
     teamSlugOrId: string;
     repoFullName: string;
+    environmentSnapshotId?: string;
     repoInstallationId?: number;
     repoDefaultBranch?: string;
-    devScript?: string;
-    maintenanceScript?: string;
     browserProfile?: 'chromium' | 'firefox' | 'webkit';
-    morphSnapshotId?: string;
     status?: 'active' | 'paused' | 'disabled';
-    envVarsContent?: string;
-};
-
-export type PreviewEnvResponse = {
-    envVarsContent: string;
-};
-
-export type PreviewEnvUpdateBody = {
-    teamSlugOrId: string;
-    envVarsContent: string;
 };
 
 export type PreviewRun = {
@@ -2404,66 +2387,6 @@ export type PostApiPreviewConfigsResponses = {
 };
 
 export type PostApiPreviewConfigsResponse = PostApiPreviewConfigsResponses[keyof PostApiPreviewConfigsResponses];
-
-export type GetApiPreviewConfigsByPreviewConfigIdEnvData = {
-    body?: never;
-    path: {
-        previewConfigId: string;
-    };
-    query: {
-        teamSlugOrId: string;
-    };
-    url: '/api/preview/configs/{previewConfigId}/env';
-};
-
-export type GetApiPreviewConfigsByPreviewConfigIdEnvErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Not found
-     */
-    404: unknown;
-};
-
-export type GetApiPreviewConfigsByPreviewConfigIdEnvResponses = {
-    /**
-     * Env vars fetched
-     */
-    200: PreviewEnvResponse;
-};
-
-export type GetApiPreviewConfigsByPreviewConfigIdEnvResponse = GetApiPreviewConfigsByPreviewConfigIdEnvResponses[keyof GetApiPreviewConfigsByPreviewConfigIdEnvResponses];
-
-export type PutApiPreviewConfigsByPreviewConfigIdEnvData = {
-    body: PreviewEnvUpdateBody;
-    path: {
-        previewConfigId: string;
-    };
-    query?: never;
-    url: '/api/preview/configs/{previewConfigId}/env';
-};
-
-export type PutApiPreviewConfigsByPreviewConfigIdEnvErrors = {
-    /**
-     * Unauthorized
-     */
-    401: unknown;
-    /**
-     * Not found
-     */
-    404: unknown;
-};
-
-export type PutApiPreviewConfigsByPreviewConfigIdEnvResponses = {
-    /**
-     * Updated
-     */
-    204: void;
-};
-
-export type PutApiPreviewConfigsByPreviewConfigIdEnvResponse = PutApiPreviewConfigsByPreviewConfigIdEnvResponses[keyof PutApiPreviewConfigsByPreviewConfigIdEnvResponses];
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsData = {
     body?: never;

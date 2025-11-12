@@ -1,5 +1,4 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { authQuery } from "./users/utils";
 import { internalMutation, internalQuery } from "./_generated/server";

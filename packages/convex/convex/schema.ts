@@ -526,8 +526,7 @@ const convexSchema = defineSchema({
   }).index("by_team_user", ["teamId", "userId"]),
   workspaceConfigs: defineTable({
     projectFullName: v.string(),
-    maintenanceScript: v.optional(v.string()),
-    dataVaultKey: v.optional(v.string()),
+    environmentId: v.optional(v.id("environments")),
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
@@ -541,8 +540,7 @@ const convexSchema = defineSchema({
     repoInstallationId: v.optional(v.number()),
     providerConnectionId: v.optional(v.id("providerConnections")),
     repoDefaultBranch: v.optional(v.string()),
-    devScript: v.optional(v.string()),
-    maintenanceScript: v.optional(v.string()),
+    environmentSnapshotId: v.optional(v.id("environmentSnapshotVersions")),
     browserProfile: v.optional(
       v.union(
         v.literal("chromium"),
@@ -550,8 +548,6 @@ const convexSchema = defineSchema({
         v.literal("webkit"),
       ),
     ),
-    envDataVaultKey: v.optional(v.string()),
-    morphSnapshotId: v.optional(v.string()),
     status: v.optional(
       v.union(
         v.literal("active"),
@@ -565,7 +561,8 @@ const convexSchema = defineSchema({
   })
     .index("by_team_repo", ["teamId", "repoFullName"])
     .index("by_team", ["teamId", "updatedAt"])
-    .index("by_team_status", ["teamId", "status", "updatedAt"]),
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_environmentSnapshot", ["environmentSnapshotId"]),
   previewRuns: defineTable({
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),

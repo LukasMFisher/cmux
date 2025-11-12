@@ -1,10 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { stackServerApp, stackServerAppJs } from "@/lib/utils/stack";
+import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
-import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
 import { PreviewConfigurationPanel } from "@/components/preview/preview-configuration-panel";
 
 export const dynamic = "force-dynamic";
@@ -42,39 +40,37 @@ function getTeamDisplayName(team: StackTeam): string {
   );
 }
 
-function serializeConfig(config: Doc<"previewConfigs"> | null) {
-  if (!config) {
-    return null;
-  }
-  return {
-    id: config._id,
-    repoFullName: config.repoFullName,
-    repoDefaultBranch: config.repoDefaultBranch ?? "main",
-    devScript: config.devScript ?? "",
-    maintenanceScript: config.maintenanceScript ?? "",
-    browserProfile: (config.browserProfile ?? "chromium") as "chromium" | "firefox" | "webkit",
-    morphSnapshotId: config.morphSnapshotId ?? null,
-  } as const;
-}
-
-function serializeRuns(runs: Doc<"previewRuns">[]) {
-  return runs.map((run) => ({
-    id: run._id,
-    prNumber: run.prNumber,
-    prUrl: run.prUrl,
-    headSha: run.headSha,
-    status: run.status,
-    stateReason: run.stateReason ?? null,
-    createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
+function serializeProviderConnections(
+  connections: Array<{
+    installationId: number;
+    accountLogin: string | null | undefined;
+    accountType: string | null | undefined;
+    type: string | null | undefined;
+    isActive: boolean;
+  }>
+) {
+  return connections.map((conn) => ({
+    installationId: conn.installationId,
+    accountLogin: conn.accountLogin ?? null,
+    accountType: conn.accountType ?? null,
+    isActive: conn.isActive,
   }));
 }
 
 export default async function PreviewGetStartedPage({ searchParams }: PageProps) {
-  const user = await stackServerApp.getUser({ or: "redirect" });
+  const user = await stackServerApp.getUser();
+
+  // If user is not authenticated, redirect to sign-in with return URL
+  if (!user) {
+    const { redirect: nextRedirect } = await import("next/navigation");
+    const currentUrl = "/preview/get-started";
+    const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(currentUrl)}`;
+    return nextRedirect(signInUrl);
+  }
+
   const [{ accessToken }, teams, resolvedSearch] = await Promise.all([
     user.getAuthJson(),
-    stackServerApp.listTeams(),
+    user.listTeams(),
     searchParams,
   ]);
 
@@ -102,32 +98,11 @@ export default async function PreviewGetStartedPage({ searchParams }: PageProps)
   const selectedTeamSlugOrId = getTeamSlugOrId(selectedTeam);
 
   const convex = getConvex({ accessToken });
-  const [configs, providerConnections] = await Promise.all([
-    convex.query(api.previewConfigs.listByTeam, {
-      teamSlugOrId: selectedTeamSlugOrId,
-    }),
+  const [providerConnections] = await Promise.all([
     convex.query(api.github.listProviderConnections, {
       teamSlugOrId: selectedTeamSlugOrId,
     }),
   ]);
-
-  const primaryConfig = configs[0] ?? null;
-  const runs = primaryConfig
-    ? await convex.query(api.previewRuns.listByConfig, {
-        teamSlugOrId: selectedTeamSlugOrId,
-        previewConfigId: primaryConfig._id,
-        limit: 10,
-      })
-    : [];
-
-  let envVarsContent = "";
-  if (primaryConfig?.envDataVaultKey) {
-    const store = await stackServerAppJs.getDataVaultStore("cmux-preview-envs");
-    envVarsContent =
-      (await store.getValue(primaryConfig.envDataVaultKey, {
-        secret: env.STACK_DATA_VAULT_SECRET,
-      })) ?? "";
-  }
 
   const hasGithubAppInstallation = providerConnections.some(
     (connection) => connection.isActive,
@@ -178,9 +153,7 @@ export default async function PreviewGetStartedPage({ searchParams }: PageProps)
         <PreviewConfigurationPanel
           teamSlugOrId={selectedTeamSlugOrId}
           hasGithubAppInstallation={hasGithubAppInstallation}
-          initialConfig={serializeConfig(primaryConfig)}
-          initialEnvVars={envVarsContent}
-          initialRuns={serializeRuns(runs)}
+          providerConnections={serializeProviderConnections(providerConnections)}
         />
       </div>
     </div>

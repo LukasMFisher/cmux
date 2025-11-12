@@ -1,20 +1,15 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
-import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
-import { HTTPException } from "hono/http-exception";
-import { randomBytes } from "node:crypto";
 
 export const workspaceConfigsRouter = new OpenAPIHono();
 
 const WorkspaceConfigResponse = z
   .object({
     projectFullName: z.string(),
-    maintenanceScript: z.string().optional(),
-    envVarsContent: z.string(),
+    environmentId: z.string().optional(),
     updatedAt: z.number().optional(),
   })
   .openapi("WorkspaceConfigResponse");
@@ -30,21 +25,9 @@ const WorkspaceConfigBody = z
   .object({
     teamSlugOrId: z.string(),
     projectFullName: z.string(),
-    maintenanceScript: z.string().optional(),
-    envVarsContent: z.string().default(""),
+    environmentId: z.string().optional(),
   })
   .openapi("WorkspaceConfigBody");
-
-async function loadEnvVarsContent(
-  dataVaultKey: string | undefined,
-): Promise<string> {
-  if (!dataVaultKey) return "";
-  const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
-  const value = await store.getValue(dataVaultKey, {
-    secret: env.STACK_DATA_VAULT_SECRET,
-  });
-  return value ?? "";
-}
 
 workspaceConfigsRouter.openapi(
   createRoute({
@@ -88,12 +71,9 @@ workspaceConfigsRouter.openapi(
       return c.json(null);
     }
 
-    const envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
-
     return c.json({
       projectFullName: config.projectFullName,
-      maintenanceScript: config.maintenanceScript ?? undefined,
-      envVarsContent,
+      environmentId: config.environmentId,
       updatedAt: config.updatedAt,
     });
   },
@@ -140,42 +120,18 @@ workspaceConfigsRouter.openapi(
     });
 
     const convex = getConvex({ accessToken });
-    const existing = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-    });
-
-    const store = await stackServerAppJs.getDataVaultStore(
-      "cmux-snapshot-envs",
-    );
-    const envVarsContent = body.envVarsContent ?? "";
-    let dataVaultKey = existing?.dataVaultKey;
-    if (!dataVaultKey) {
-      dataVaultKey = `workspace_${randomBytes(16).toString("hex")}`;
-    }
-
-    try {
-      await store.setValue(dataVaultKey, envVarsContent, {
-        secret: env.STACK_DATA_VAULT_SECRET,
-      });
-    } catch (error) {
-      throw new HTTPException(500, {
-        message: "Failed to persist environment variables",
-        cause: error,
-      });
-    }
 
     await convex.mutation(api.workspaceConfigs.upsert, {
       teamSlugOrId: body.teamSlugOrId,
       projectFullName: body.projectFullName,
-      maintenanceScript: body.maintenanceScript,
-      dataVaultKey,
+      // Type will be validated by Convex at runtime
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      environmentId: body.environmentId as any,
     });
 
     return c.json({
       projectFullName: body.projectFullName,
-      maintenanceScript: body.maintenanceScript,
-      envVarsContent,
+      environmentId: body.environmentId,
       updatedAt: Date.now(),
     });
   },

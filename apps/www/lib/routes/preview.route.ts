@@ -1,11 +1,8 @@
-import { randomBytes } from "node:crypto";
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
-import { stackServerAppJs } from "@/lib/utils/stack";
-import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
-import type { Doc, Id } from "@cmux/convex/dataModel";
+import type { Doc } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -18,14 +15,11 @@ const PreviewConfigSchema = z
   .object({
     id: z.string(),
     repoFullName: z.string(),
+    environmentSnapshotId: z.string().optional().nullable(),
     repoInstallationId: z.number().optional().nullable(),
     repoDefaultBranch: z.string().optional().nullable(),
-    devScript: z.string().optional().nullable(),
-    maintenanceScript: z.string().optional().nullable(),
     browserProfile: BrowserProfileSchema,
     status: z.enum(["active", "paused", "disabled"]),
-    hasEnvVars: z.boolean(),
-    morphSnapshotId: z.string().optional().nullable(),
     lastRunAt: z.number().optional().nullable(),
     createdAt: z.number(),
     updatedAt: z.number(),
@@ -43,29 +37,13 @@ const PreviewConfigMutationBody = z
     previewConfigId: z.string().optional(),
     teamSlugOrId: z.string(),
     repoFullName: z.string(),
+    environmentSnapshotId: z.string().optional(),
     repoInstallationId: z.number().optional(),
     repoDefaultBranch: z.string().optional(),
-    devScript: z.string().optional(),
-    maintenanceScript: z.string().optional(),
     browserProfile: BrowserProfileSchema.optional(),
-    morphSnapshotId: z.string().optional(),
     status: z.enum(["active", "paused", "disabled"]).optional(),
-    envVarsContent: z.string().optional(),
   })
   .openapi("PreviewConfigMutationBody");
-
-const EnvResponse = z
-  .object({
-    envVarsContent: z.string(),
-  })
-  .openapi("PreviewEnvResponse");
-
-const UpdateEnvBody = z
-  .object({
-    teamSlugOrId: z.string(),
-    envVarsContent: z.string(),
-  })
-  .openapi("PreviewEnvUpdateBody");
 
 const PreviewRunSchema = z
   .object({
@@ -97,14 +75,11 @@ function formatPreviewConfig(config: PreviewConfigDoc) {
   return {
     id: config._id,
     repoFullName: config.repoFullName,
+    environmentSnapshotId: config.environmentSnapshotId ?? null,
     repoInstallationId: config.repoInstallationId ?? null,
     repoDefaultBranch: config.repoDefaultBranch ?? null,
-    devScript: config.devScript ?? null,
-    maintenanceScript: config.maintenanceScript ?? null,
     browserProfile: config.browserProfile ?? "chromium",
     status: config.status ?? "active",
-    hasEnvVars: Boolean(config.envDataVaultKey),
-    morphSnapshotId: config.morphSnapshotId ?? null,
     lastRunAt: config.lastRunAt ?? null,
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
@@ -126,24 +101,6 @@ function formatPreviewRun(run: PreviewRunDoc) {
     startedAt: run.startedAt ?? null,
     completedAt: run.completedAt ?? null,
   } satisfies z.infer<typeof PreviewRunSchema>;
-}
-
-async function loadEnvVarsContent(dataVaultKey?: string | null): Promise<string> {
-  if (!dataVaultKey) {
-    return "";
-  }
-  const store = await stackServerAppJs.getDataVaultStore("cmux-preview-envs");
-  const content = await store.getValue(dataVaultKey, {
-    secret: env.STACK_DATA_VAULT_SECRET,
-  });
-  return content ?? "";
-}
-
-async function persistEnvVarsContent(key: string, content: string): Promise<void> {
-  const store = await stackServerAppJs.getDataVaultStore("cmux-preview-envs");
-  await store.setValue(key, content, {
-    secret: env.STACK_DATA_VAULT_SECRET,
-  });
 }
 
 const ListQuery = z
@@ -226,33 +183,16 @@ previewRouter.openapi(
     await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: body.teamSlugOrId });
     const convex = getConvex({ accessToken });
 
-    const existing = body.previewConfigId
-      ? await convex.query(api.previewConfigs.get, {
-          teamSlugOrId: body.teamSlugOrId,
-          previewConfigId: typedZid("previewConfigs").parse(body.previewConfigId),
-        })
-      : await convex.query(api.previewConfigs.getByRepo, {
-          teamSlugOrId: body.teamSlugOrId,
-          repoFullName: body.repoFullName,
-        });
-
-    let envDataVaultKey = existing?.envDataVaultKey ?? null;
-    if (body.envVarsContent !== undefined) {
-      envDataVaultKey = envDataVaultKey ?? `preview_${randomBytes(16).toString("hex")}`;
-      await persistEnvVarsContent(envDataVaultKey, body.envVarsContent);
-    }
-
     const previewConfigId = await convex.mutation(api.previewConfigs.upsert, {
       teamSlugOrId: body.teamSlugOrId,
       repoFullName: body.repoFullName,
+      environmentSnapshotId: body.environmentSnapshotId
+        ? typedZid("environmentSnapshotVersions").parse(body.environmentSnapshotId)
+        : undefined,
       repoInstallationId: body.repoInstallationId,
       repoDefaultBranch: body.repoDefaultBranch,
-      devScript: body.devScript,
-      maintenanceScript: body.maintenanceScript,
       browserProfile: body.browserProfile,
-      morphSnapshotId: body.morphSnapshotId,
       status: body.status,
-      envDataVaultKey: envDataVaultKey ?? undefined,
     });
 
     const saved = await convex.query(api.previewConfigs.get, {
@@ -263,102 +203,6 @@ previewRouter.openapi(
       throw new HTTPException(500, { message: "Failed to load saved configuration" });
     }
     return c.json(formatPreviewConfig(saved));
-  },
-);
-
-previewRouter.openapi(
-  createRoute({
-    method: "get" as const,
-    path: "/preview/configs/{previewConfigId}/env",
-    tags: ["Preview"],
-    summary: "Fetch environment variables for a preview configuration",
-    request: {
-      params: z.object({ previewConfigId: z.string() }),
-      query: z.object({ teamSlugOrId: z.string() }),
-    },
-    responses: {
-      200: {
-        description: "Env vars fetched",
-        content: {
-          "application/json": {
-            schema: EnvResponse,
-          },
-        },
-      },
-      401: { description: "Unauthorized" },
-      404: { description: "Not found" },
-    },
-  }),
-  async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
-    const params = c.req.valid("param");
-    const query = c.req.valid("query");
-    await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: query.teamSlugOrId });
-    const convex = getConvex({ accessToken });
-    const previewConfigId = typedZid("previewConfigs").parse(params.previewConfigId);
-    const config = await convex.query(api.previewConfigs.get, {
-      teamSlugOrId: query.teamSlugOrId,
-      previewConfigId,
-    });
-    if (!config) {
-      return c.text("Not found", 404);
-    }
-    const envVarsContent = await loadEnvVarsContent(config.envDataVaultKey);
-    return c.json({ envVarsContent });
-  },
-);
-
-previewRouter.openapi(
-  createRoute({
-    method: "put" as const,
-    path: "/preview/configs/{previewConfigId}/env",
-    tags: ["Preview"],
-    summary: "Update environment variables for a preview configuration",
-    request: {
-      params: z.object({ previewConfigId: z.string() }),
-      body: {
-        content: {
-          "application/json": {
-            schema: UpdateEnvBody,
-          },
-        },
-        required: true,
-      },
-    },
-    responses: {
-      204: { description: "Updated" },
-      401: { description: "Unauthorized" },
-      404: { description: "Not found" },
-    },
-  }),
-  async (c) => {
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) {
-      return c.text("Unauthorized", 401);
-    }
-    const params = c.req.valid("param");
-    const body = c.req.valid("json");
-    await verifyTeamAccess({ req: c.req.raw, teamSlugOrId: body.teamSlugOrId });
-    const convex = getConvex({ accessToken });
-    const previewConfigId = typedZid("previewConfigs").parse(params.previewConfigId);
-    const config = await convex.query(api.previewConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      previewConfigId,
-    });
-    if (!config) {
-      return c.text("Not found", 404);
-    }
-    const envDataVaultKey = config.envDataVaultKey ?? `preview_${randomBytes(16).toString("hex")}`;
-    await persistEnvVarsContent(envDataVaultKey, body.envVarsContent);
-    await convex.mutation(api.previewConfigs.updateEnvKey, {
-      teamSlugOrId: body.teamSlugOrId,
-      previewConfigId,
-      envDataVaultKey,
-    });
-    return c.body(null, 204);
   },
 );
 
