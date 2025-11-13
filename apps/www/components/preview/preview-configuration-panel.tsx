@@ -133,9 +133,10 @@ export function PreviewConfigurationPanel({
     const params = new URLSearchParams({
       repo: selectedRepo,
       installationId: String(selectedInstallationId ?? ""),
+      team: teamSlugOrId,
     });
     window.location.href = `/preview/configure?${params.toString()}`;
-  }, [selectedRepo, selectedInstallationId]);
+  }, [selectedRepo, selectedInstallationId, teamSlugOrId]);
 
   const selectedConnection = activeConnections.find(
     (c) => c.installationId === selectedInstallationId
