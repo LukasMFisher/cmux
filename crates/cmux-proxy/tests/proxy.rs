@@ -336,6 +336,25 @@ async fn test_http_proxy_routes_by_header() {
     let s = String::from_utf8(body.to_vec()).unwrap();
     assert!(s.contains("ok:GET:/hello"), "unexpected body: {}", s);
 
+    // Same request but with a custom host should fail without override
+    let url_custom = format!(
+        "http://{}:{}/hello",
+        proxy_addr.ip(),
+        proxy_addr.port()
+    );
+    let req_custom = Request::builder()
+        .method("GET")
+        .uri(url_custom)
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .header("Host", "cmux.tld")
+        .body(Empty::new())
+        .unwrap();
+    let resp_custom = timeout(Duration::from_secs(5), client.request(req_custom))
+        .await
+        .expect("resp custom timeout")
+        .unwrap();
+    assert_eq!(resp_custom.status(), StatusCode::BAD_GATEWAY);
+
     // Missing header -> 400
     let url2 = format!("http://{}:{}/missing", proxy_addr.ip(), proxy_addr.port());
     let req2 = Request::builder()
