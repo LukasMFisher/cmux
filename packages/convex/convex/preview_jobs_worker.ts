@@ -7,7 +7,6 @@ import {
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
 import { SignJWT } from "jose";
-import { io as socketIOClient } from "socket.io-client";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
@@ -344,6 +343,19 @@ export async function runPreviewJob(
   });
 
   try {
+    // Generate JWT for screenshot upload authentication if we have a taskRunId
+    const previewJwt = run.taskRunId
+      ? await new SignJWT({
+          taskRunId: run.taskRunId,
+          teamId: run.teamId,
+          userId: (await ctx.runQuery(internal.taskRuns.getById, { id: run.taskRunId }))?.userId,
+        })
+          .setProtectedHeader({ alg: "HS256" })
+          .setIssuedAt()
+          .setExpirationTime("12h")
+          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
+      : null;
+
     instance = await startMorphInstance(morphClient, {
       snapshotId,
       metadata: {
@@ -352,6 +364,15 @@ export async function runPreviewJob(
         repo: run.repoFullName,
         prNumber: String(run.prNumber),
         headSha: run.headSha,
+        // Pass minimal preview job flag - worker will fetch rest from Convex
+        ...(run.taskRunId && previewJwt
+          ? {
+              previewJob: "true",
+              previewTaskRunId: run.taskRunId,
+              previewToken: previewJwt,
+              previewConvexUrl: env.BASE_APP_URL,
+            }
+          : {}),
       },
       ttlSeconds: 600,
       ttlAction: "stop",
@@ -626,130 +647,19 @@ export async function runPreviewJob(
       stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
-    // Step 4: Run screenshot workflow
+    // Step 4: Worker will automatically run screenshot workflow based on metadata
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
       stateReason: "Collecting screenshots",
     });
 
-    console.log("[preview-jobs] Running screenshot workflow", {
+    console.log("[preview-jobs] Morph instance started with preview data, worker will auto-run screenshots", {
       previewRunId,
       instanceId: instance.id,
       hasTaskRunId: Boolean(run.taskRunId),
+      previewMetadataSet: Boolean(run.taskRunId && previewJwt),
     });
-
-    // Run screenshot collection only if we have a taskRunId
-    if (run.taskRunId) {
-      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
-        id: run.taskRunId,
-      });
-
-      if (taskRun) {
-        console.log("[preview-jobs] Executing runTaskScreenshots on Morph instance", {
-          previewRunId,
-          taskId: taskRun.taskId,
-          taskRunId: run.taskRunId,
-        });
-
-        // Generate JWT for screenshot upload authentication
-        const jwt = await new SignJWT({
-          taskRunId: run.taskRunId,
-          teamId: run.teamId,
-          userId: taskRun.userId,
-        })
-          .setProtectedHeader({ alg: "HS256" })
-          .setIssuedAt()
-          .setExpirationTime("12h")
-          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
-
-        // Connect to worker Socket.IO and trigger screenshot workflow
-        const workerSocketUrl = `${workerService.url}/management`;
-        console.log("[preview-jobs] Connecting to worker Socket.IO", {
-          previewRunId,
-          workerSocketUrl,
-        });
-
-        const socket = socketIOClient(workerSocketUrl, {
-          transports: ["websocket", "polling"],
-          timeout: 10000,
-        });
-
-        try {
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              socket.close();
-              reject(new Error("Socket.IO connection timeout"));
-            }, 10000);
-
-            socket.on("connect", () => {
-              clearTimeout(timeout);
-              console.log("[preview-jobs] Connected to worker Socket.IO", {
-                previewRunId,
-              });
-              resolve();
-            });
-
-            socket.on("connect_error", (error) => {
-              clearTimeout(timeout);
-              reject(error);
-            });
-          });
-
-          // Emit worker:run-task-screenshots event
-          const screenshotResult = await new Promise<{ success: true } | { error: string }>((resolve) => {
-            socket.emit(
-              "worker:run-task-screenshots",
-              {
-                taskId: taskRun.taskId,
-                taskRunId: run.taskRunId,
-                token: jwt,
-                convexUrl: env.BASE_APP_URL,
-                anthropicApiKey: env.ANTHROPIC_API_KEY,
-                taskRunJwt: jwt,
-              },
-              (response: { error: Error | null; data: { success: true } | null }) => {
-                if (response.error) {
-                  resolve({ error: response.error.message });
-                } else if (response.data) {
-                  resolve(response.data);
-                } else {
-                  resolve({ error: "No response from worker" });
-                }
-              }
-            );
-          });
-
-          socket.close();
-
-          if ("error" in screenshotResult) {
-            console.error("[preview-jobs] Screenshot workflow failed", {
-              previewRunId,
-              error: screenshotResult.error,
-            });
-          } else {
-            console.log("[preview-jobs] Screenshot workflow completed successfully", {
-              previewRunId,
-            });
-          }
-        } catch (socketError) {
-          console.error("[preview-jobs] Failed to connect to worker Socket.IO", {
-            previewRunId,
-            error: socketError instanceof Error ? socketError.message : String(socketError),
-          });
-          socket.close();
-        }
-      } else {
-        console.warn("[preview-jobs] TaskRun not found for preview run", {
-          previewRunId,
-          taskRunId: run.taskRunId,
-        });
-      }
-    } else {
-      console.warn("[preview-jobs] No taskRunId linked to preview run, skipping screenshot workflow", {
-        previewRunId,
-      });
-    }
 
     // Step 5: Check if screenshots were uploaded and post to GitHub
     if (run.taskRunId) {

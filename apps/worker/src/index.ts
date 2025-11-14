@@ -1447,6 +1447,78 @@ if (ENABLE_HEARTBEAT) {
   }, 30000);
 }
 
+// Check for preview job data from environment variables and run immediately
+async function checkPreviewJob() {
+  const isPreviewJob = process.env.MORPH_METADATA_previewJob === "true";
+
+  if (!isPreviewJob) {
+    return;
+  }
+
+  const taskRunId = process.env.MORPH_METADATA_previewTaskRunId;
+  const token = process.env.MORPH_METADATA_previewToken;
+  const convexUrl = process.env.MORPH_METADATA_previewConvexUrl;
+
+  if (!taskRunId || !token || !convexUrl) {
+    log("ERROR", "Preview job detected but missing required metadata", {
+      hasTaskRunId: Boolean(taskRunId),
+      hasToken: Boolean(token),
+      hasConvexUrl: Boolean(convexUrl),
+    });
+    return;
+  }
+
+  log("INFO", "Preview job detected, fetching task info and running screenshot workflow", {
+    taskRunId,
+  });
+
+  try {
+    // Fetch task info from Convex (same as crown workflow does)
+    const info = await fetch(`${convexUrl}/api/crown/check`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        taskRunId,
+        checkType: "info",
+      }),
+    });
+
+    if (!info.ok) {
+      throw new Error(`Failed to fetch task info: ${info.status} ${info.statusText}`);
+    }
+
+    const data = await info.json();
+
+    if (!data.ok || !data.taskRun) {
+      throw new Error("Invalid task info response");
+    }
+
+    log("INFO", "Fetched task info, running screenshots", {
+      taskRunId,
+      taskId: data.taskRun.taskId,
+    });
+
+    await runTaskScreenshots({
+      taskId: data.taskRun.taskId as Id<"tasks">,
+      taskRunId: taskRunId as Id<"taskRuns">,
+      token,
+      convexUrl,
+    });
+
+    log("INFO", "Preview job screenshot workflow completed successfully", {
+      taskRunId,
+    });
+  } catch (error) {
+    log("ERROR", "Preview job screenshot workflow failed", {
+      taskRunId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 // Start server
 httpServer.listen(WORKER_PORT, () => {
   log(
@@ -1470,6 +1542,11 @@ httpServer.listen(WORKER_PORT, () => {
     undefined,
     WORKER_ID
   );
+
+  // Check if this is a preview job and run screenshot workflow immediately
+  checkPreviewJob().catch((error) => {
+    log("ERROR", "Preview job check failed", error);
+  });
 });
 
 // Start AMP proxy via shared provider module
