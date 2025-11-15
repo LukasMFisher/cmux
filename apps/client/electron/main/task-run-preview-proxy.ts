@@ -8,6 +8,7 @@ import http2 from "node:http2";
 import net, { type Socket } from "node:net";
 import tls, { type TLSSocket } from "node:tls";
 import { randomBytes, createHash } from "node:crypto";
+import { pipeline as streamPipeline } from "node:stream/promises";
 import { URL } from "node:url";
 import type { Session, WebContents } from "electron";
 import { isLoopbackHostname } from "@cmux/shared";
@@ -43,6 +44,20 @@ const CMUX_DOMAINS = [
   "autobuild.app",
 ] as const;
 
+const HTTP1_KEEP_ALIVE_AGENT = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10_000,
+  maxSockets: 256,
+  maxFreeSockets: 64,
+});
+
+const HTTPS1_KEEP_ALIVE_AGENT = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10_000,
+  maxSockets: 256,
+  maxFreeSockets: 64,
+});
+
 interface ProxyRoute {
   morphId: string;
   scope: string;
@@ -53,6 +68,7 @@ interface ProxyRoute {
 interface ProxyContext {
   username: string;
   password: string;
+  authToken: string;
   route: ProxyRoute | null;
   session: Session;
   webContentsId: number;
@@ -92,6 +108,7 @@ export function setPreviewProxyLoggingEnabled(enabled: boolean): void {
 
 const contextsByUsername = new Map<string, ProxyContext>();
 const contextsByWebContentsId = new Map<number, ProxyContext>();
+const contextsByAuthToken = new Map<string, ProxyContext>();
 
 function proxyLog(event: string, data?: Record<string, unknown>): void {
   if (!proxyLoggingEnabled) {
@@ -144,6 +161,7 @@ export function releasePreviewProxy(webContentsId: number): void {
   if (!context) return;
   contextsByWebContentsId.delete(webContentsId);
   contextsByUsername.delete(context.username);
+  contextsByAuthToken.delete(context.authToken);
   proxyLog("reset-session-proxy", {
     webContentsId,
     persistKey: context.persistKey,
@@ -169,10 +187,12 @@ export async function configurePreviewProxyForView(
   const port = await ensureProxyServer(logger);
   const username = `wc-${webContents.id}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(12).toString("hex");
+  const authToken = Buffer.from(`${username}:${password}`).toString("base64");
 
   const context: ProxyContext = {
     username,
     password,
+    authToken,
     route,
     session: webContents.session,
     webContentsId: webContents.id,
@@ -181,6 +201,7 @@ export async function configurePreviewProxyForView(
 
   contextsByUsername.set(username, context);
   contextsByWebContentsId.set(webContents.id, context);
+  contextsByAuthToken.set(authToken, context);
 
   try {
     await webContents.session.setProxy({
@@ -190,6 +211,7 @@ export async function configurePreviewProxyForView(
   } catch (error) {
     contextsByUsername.delete(username);
     contextsByWebContentsId.delete(webContents.id);
+    contextsByAuthToken.delete(authToken);
     logger.warn("Failed to configure preview proxy", { error });
     throw error;
   }
@@ -500,22 +522,29 @@ function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
 function authenticateRequest(
   headers: IncomingHttpHeaders
 ): ProxyContext | null {
-  const raw = headers["proxy-authorization"];
-  if (typeof raw !== "string") {
+  const token = extractBasicToken(headers["proxy-authorization"]);
+  if (!token) {
     return null;
   }
-  const match = raw.match(/^Basic\s+(.+)$/i);
-  if (!match) return null;
-  const decoded = Buffer.from(match[1], "base64").toString("utf8");
-  const separatorIndex = decoded.indexOf(":");
-  if (separatorIndex === -1) return null;
-  const username = decoded.slice(0, separatorIndex);
-  const password = decoded.slice(separatorIndex + 1);
-  const context = contextsByUsername.get(username);
-  if (!context || context.password !== password) {
+  const cached = contextsByAuthToken.get(token);
+  if (cached) {
+    return cached;
+  }
+  // Fallback: decode to locate username map entry in case the cache missed an update.
+  try {
+    const decoded = Buffer.from(token, "base64").toString("utf8");
+    const separatorIndex = decoded.indexOf(":");
+    if (separatorIndex === -1) return null;
+    const username = decoded.slice(0, separatorIndex);
+    const password = decoded.slice(separatorIndex + 1);
+    const context = contextsByUsername.get(username);
+    if (!context || context.password !== password) {
+      return null;
+    }
+    return context;
+  } catch {
     return null;
   }
-  return context;
 }
 
 function respondProxyAuthRequired(res: ServerResponse) {
@@ -530,6 +559,28 @@ function respondProxyAuthRequiredSocket(socket: Socket) {
     'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Cmux Preview Proxy"\r\n\r\n'
   );
   socket.end();
+}
+
+function extractBasicToken(
+  raw: string | string[] | undefined
+): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const spaceIndex = trimmed.indexOf(" ");
+  if (spaceIndex === -1) {
+    return null;
+  }
+  const scheme = trimmed.slice(0, spaceIndex).toLowerCase();
+  if (scheme !== "basic") {
+    return null;
+  }
+  const token = trimmed.slice(spaceIndex + 1).trim();
+  return token || null;
 }
 
 function parseProxyRequestTarget(req: IncomingMessage): URL | null {
@@ -693,6 +744,7 @@ function forwardHttpRequestViaHttp1(
   return new Promise((resolve) => {
     const { url, secure, connectPort } = target;
     const requestHeaders = buildHttp1Headers(clientReq.headers, target);
+    const agent = secure ? HTTPS1_KEEP_ALIVE_AGENT : HTTP1_KEEP_ALIVE_AGENT;
 
     const requestOptions = {
       protocol: secure ? "https:" : "http:",
@@ -702,6 +754,7 @@ function forwardHttpRequestViaHttp1(
       path: url.pathname + url.search,
       headers: requestHeaders.headers,
       setHost: requestHeaders.setHost,
+      agent,
     };
 
     const httpModule = secure ? https : http;
@@ -713,8 +766,23 @@ function forwardHttpRequestViaHttp1(
           proxyRes.headers
         );
       }
-      proxyRes.pipe(clientRes);
-      proxyRes.on("end", resolve);
+      void streamPipeline(proxyRes, clientRes)
+        .then(() => {
+          resolve();
+        })
+        .catch((pipelineError) => {
+          proxyWarn("http1-response-pipeline-error", {
+            error: pipelineError,
+            host: url.hostname,
+          });
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(502);
+            clientRes.end("Bad Gateway");
+          } else if (!clientRes.writableEnded) {
+            clientRes.end();
+          }
+          resolve();
+        });
     });
 
     proxyReq.on("error", (error) => {
