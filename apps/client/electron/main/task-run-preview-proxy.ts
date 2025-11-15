@@ -117,6 +117,10 @@ interface ProxyTarget {
   cmuxProxy?: CmuxProxyMetadata;
 }
 
+interface ConnectTunnelOptions {
+  clientResponseAlreadySent?: boolean;
+}
+
 interface ConfigureOptions {
   webContents: WebContents;
   initialUrl: string;
@@ -578,7 +582,7 @@ function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
       rewrittenPort: rewritten.connectPort,
       persistKey: context.persistKey,
     });
-    establishMitmTunnel(socket, head, target.hostname, context);
+    establishMitmTunnel(socket, head, target.hostname, target.port, context, rewritten);
     return;
   }
 
@@ -590,28 +594,7 @@ function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
     rewrittenPort: rewritten.connectPort,
     persistKey: context.persistKey,
   });
-  if (rewritten.cmuxProxy) {
-    establishCmuxProxyConnect(socket, head, rewritten);
-    return;
-  }
-  const upstream = net.connect(rewritten.connectPort, rewritten.url.hostname, () => {
-    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-    if (head.length > 0) {
-      upstream.write(head);
-    }
-    upstream.pipe(socket);
-    socket.pipe(upstream);
-  });
-
-  upstream.on("error", (error) => {
-    proxyLogger?.warn("CONNECT upstream error", { error });
-    socket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-    socket.end();
-  });
-
-  socket.on("error", () => {
-    upstream.destroy();
-  });
+  forwardConnectTunnel(socket, head, rewritten);
 }
 
 function shouldInterceptTls(
@@ -638,6 +621,149 @@ function looksLikeTlsHandshake(data: Buffer): boolean {
     return false;
   }
   return true;
+}
+
+type MitmInitialClassification =
+  | { kind: "need-more" }
+  | { kind: "plain" }
+  | { kind: "tls"; alpnProtocols?: string[] };
+
+function classifyMitmInitialBytes(buffer: Buffer): MitmInitialClassification {
+  if (buffer.length < 3) {
+    return { kind: "need-more" };
+  }
+  if (!looksLikeTlsHandshake(buffer)) {
+    return { kind: "plain" };
+  }
+  const clientHello = parseClientHello(buffer);
+  if (!clientHello) {
+    return { kind: "need-more" };
+  }
+  if (!clientHello.isTls) {
+    return { kind: "plain" };
+  }
+  return { kind: "tls", alpnProtocols: clientHello.alpnProtocols };
+}
+
+interface ClientHelloInfo {
+  isTls: boolean;
+  alpnProtocols?: string[];
+}
+
+function parseClientHello(buffer: Buffer): ClientHelloInfo | null {
+  if (buffer.length < 5) {
+    return null;
+  }
+  if (buffer[0] !== 0x16) {
+    return { isTls: false };
+  }
+  const recordLength = buffer.readUInt16BE(3);
+  if (buffer.length < 5 + recordLength) {
+    return null;
+  }
+  if (buffer.length < 9) {
+    return null;
+  }
+  const handshakeType = buffer[5];
+  if (handshakeType !== 0x01) {
+    return { isTls: true };
+  }
+  const handshakeLength = buffer.readUIntBE(6, 3);
+  const handshakeEnd = 9 + handshakeLength;
+  if (buffer.length < handshakeEnd) {
+    return null;
+  }
+  const clientHello = buffer.subarray(9, handshakeEnd);
+  if (clientHello.length < 34) {
+    return null;
+  }
+  let offset = 0;
+  offset += 2; // legacy_version
+  offset += 32; // random
+  if (offset >= clientHello.length) {
+    return null;
+  }
+  const sessionIdLength = clientHello[offset] ?? 0;
+  offset += 1;
+  if (offset + sessionIdLength > clientHello.length) {
+    return null;
+  }
+  offset += sessionIdLength;
+  if (offset + 2 > clientHello.length) {
+    return null;
+  }
+  const cipherSuitesLength = clientHello.readUInt16BE(offset);
+  offset += 2;
+  if (offset + cipherSuitesLength > clientHello.length) {
+    return null;
+  }
+  offset += cipherSuitesLength;
+  if (offset >= clientHello.length) {
+    return null;
+  }
+  const compressionMethodsLength = clientHello[offset] ?? 0;
+  offset += 1;
+  if (offset + compressionMethodsLength > clientHello.length) {
+    return null;
+  }
+  offset += compressionMethodsLength;
+  if (offset + 2 > clientHello.length) {
+    return null;
+  }
+  const extensionsLength = clientHello.readUInt16BE(offset);
+  offset += 2;
+  if (offset + extensionsLength > clientHello.length) {
+    return null;
+  }
+  const extensionsEnd = offset + extensionsLength;
+  const alpnProtocols: string[] = [];
+  let foundAlpn = false;
+  while (offset + 4 <= extensionsEnd) {
+    const extensionType = clientHello.readUInt16BE(offset);
+    offset += 2;
+    const extensionSize = clientHello.readUInt16BE(offset);
+    offset += 2;
+    if (offset + extensionSize > extensionsEnd) {
+      return null;
+    }
+    if (extensionType === 0x0010 && extensionSize >= 2) {
+      const listLength = clientHello.readUInt16BE(offset);
+      let cursor = offset + 2;
+      const listEnd = cursor + listLength;
+      if (listEnd > offset + extensionSize) {
+        return null;
+      }
+      while (cursor < listEnd) {
+        const nameLength = clientHello[cursor];
+        cursor += 1;
+        if (!nameLength || cursor + nameLength > listEnd) {
+          break;
+        }
+        const protocol = clientHello
+          .subarray(cursor, cursor + nameLength)
+          .toString("utf8");
+        alpnProtocols.push(protocol);
+        cursor += nameLength;
+      }
+      foundAlpn = alpnProtocols.length > 0;
+    }
+    offset += extensionSize;
+  }
+  return {
+    isTls: true,
+    alpnProtocols: foundAlpn ? alpnProtocols : undefined,
+  };
+}
+
+function containsHttp2Protocol(protocols: string[] | undefined): boolean {
+  if (!protocols || protocols.length === 0) {
+    return false;
+  }
+  return protocols.some((protocol) => {
+    if (!protocol) return false;
+    const normalized = protocol.toLowerCase();
+    return normalized === "h2" || normalized.startsWith("h2-") || normalized === "h2c";
+  });
 }
 
 function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
@@ -1243,10 +1369,41 @@ function createUpstreamSocket(target: ProxyTarget): Socket | TLSSocket {
   return net.connect(target.connectPort, target.url.hostname);
 }
 
+function establishDirectConnect(
+  clientSocket: Socket,
+  head: Buffer,
+  target: ProxyTarget,
+  options?: ConnectTunnelOptions
+) {
+  const upstream = net.connect(target.connectPort, target.url.hostname, () => {
+    if (!options?.clientResponseAlreadySent) {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    }
+    if (head.length > 0) {
+      upstream.write(head);
+    }
+    upstream.pipe(clientSocket);
+    clientSocket.pipe(upstream);
+  });
+
+  upstream.on("error", (error) => {
+    proxyLogger?.warn("CONNECT upstream error", { error });
+    if (!options?.clientResponseAlreadySent) {
+      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    }
+    clientSocket.end();
+  });
+
+  clientSocket.on("error", () => {
+    upstream.destroy();
+  });
+}
+
 function establishCmuxProxyConnect(
   clientSocket: Socket,
   head: Buffer,
-  target: ProxyTarget
+  target: ProxyTarget,
+  options?: ConnectTunnelOptions
 ) {
   const upstream = createUpstreamSocket(target);
   const sendConnectRequest = () => {
@@ -1262,7 +1419,9 @@ function establishCmuxProxyConnect(
 
   const onError = (error: Error) => {
     proxyLogger?.warn("CONNECT cmux upstream error", { error });
-    clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    if (!options?.clientResponseAlreadySent) {
+      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    }
     clientSocket.end();
     upstream.destroy();
   };
@@ -1279,12 +1438,16 @@ function establishCmuxProxyConnect(
     const headerText = combined.slice(0, headerEnd).toString("utf8");
     if (!/^HTTP\/1\.1 200/.test(headerText)) {
       upstream.removeListener("data", handleData);
-      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      if (!options?.clientResponseAlreadySent) {
+        clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      }
       clientSocket.end();
       upstream.destroy();
       return;
     }
-    clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (!options?.clientResponseAlreadySent) {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    }
     const remaining = combined.slice(headerEnd + 4);
     if (remaining.length > 0) {
       clientSocket.write(remaining);
@@ -1309,11 +1472,26 @@ function establishCmuxProxyConnect(
   }
 }
 
+function forwardConnectTunnel(
+  clientSocket: Socket,
+  head: Buffer,
+  target: ProxyTarget,
+  options?: ConnectTunnelOptions
+) {
+  if (target.cmuxProxy) {
+    establishCmuxProxyConnect(clientSocket, head, target, options);
+    return;
+  }
+  establishDirectConnect(clientSocket, head, target, options);
+}
+
 function establishMitmTunnel(
   clientSocket: Socket,
   head: Buffer,
   originalHostname: string,
-  context: ProxyContext
+  originalPort: number,
+  context: ProxyContext,
+  target: ProxyTarget
 ) {
   if (!proxyServer) {
     clientSocket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
@@ -1358,6 +1536,26 @@ function establishMitmTunnel(
     });
   };
 
+  const handleHttp2Bypass = (initial: Buffer, alpnProtocols?: string[]) => {
+    proxyLog("connect-http2-bypass", {
+      username: context.username,
+      requestedHost: originalHostname,
+      requestedPort: originalPort,
+      rewrittenHost: target.url.hostname,
+      rewrittenPort: target.connectPort,
+      persistKey: context.persistKey,
+      alpnProtocols,
+    });
+    proxyLog("mitm-http2-bypass", {
+      host: originalHostname,
+      targetHost: target.url.hostname,
+      alpnProtocols,
+    });
+    forwardConnectTunnel(clientSocket, initial, target, {
+      clientResponseAlreadySent: true,
+    });
+  };
+
   const handlePlainTunnel = (initial: Buffer) => {
     proxyLog("mitm-plain-tunnel", {
       host: originalHostname,
@@ -1370,15 +1568,20 @@ function establishMitmTunnel(
   };
 
   const classify = () => {
-    if (buffered.length < 3) {
+    const result = classifyMitmInitialBytes(buffered);
+    if (result.kind === "need-more") {
       return false;
     }
     cleanup();
-    if (looksLikeTlsHandshake(buffered)) {
-      handleTlsTunnel(buffered);
-    } else {
+    if (result.kind === "plain") {
       handlePlainTunnel(buffered);
+      return true;
     }
+    if (containsHttp2Protocol(result.alpnProtocols)) {
+      handleHttp2Bypass(buffered, result.alpnProtocols);
+      return true;
+    }
+    handleTlsTunnel(buffered);
     return true;
   };
 
