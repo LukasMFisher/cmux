@@ -13,6 +13,10 @@ import { URL } from "node:url";
 import type { Session, WebContents } from "electron";
 import { isLoopbackHostname } from "@cmux/shared";
 import type { Logger } from "./chrome-camouflage";
+import {
+  getPreviewProxyCertificateAuthority,
+  getSecureContextForHostname,
+} from "./preview-proxy-ca";
 
 type ProxyServer = http.Server;
 type ClientHttp2Session = http2.ClientHttp2Session;
@@ -34,7 +38,28 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 const TASK_RUN_PREVIEW_PREFIX = "task-run-preview:";
-const DEFAULT_PROXY_LOGGING_ENABLED = false;
+
+function envFlagEnabled(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") {
+    return true;
+  }
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return defaultValue;
+}
+
+const DEFAULT_PROXY_LOGGING_ENABLED = envFlagEnabled(
+  process.env.CMUX_PREVIEW_PROXY_LOG ?? process.env.CMUX_PREVIEW_PROXY_LOGGING,
+  false
+);
 const CMUX_DOMAINS = [
   "cmux.app",
   "cmux.sh",
@@ -57,6 +82,11 @@ const HTTPS1_KEEP_ALIVE_AGENT = new https.Agent({
   maxSockets: 256,
   maxFreeSockets: 64,
 });
+
+const ENABLE_TLS_MITM =
+  process.env.CMUX_PREVIEW_TLS_MITM === undefined ||
+  process.env.CMUX_PREVIEW_TLS_MITM === "" ||
+  process.env.CMUX_PREVIEW_TLS_MITM === "1";
 
 interface ProxyRoute {
   morphId: string;
@@ -109,6 +139,45 @@ export function setPreviewProxyLoggingEnabled(enabled: boolean): void {
 const contextsByUsername = new Map<string, ProxyContext>();
 const contextsByWebContentsId = new Map<number, ProxyContext>();
 const contextsByAuthToken = new Map<string, ProxyContext>();
+const SOCKET_CONTEXT_SYMBOL = Symbol("cmuxPreviewProxyContext");
+
+type ContextAwareSocket = (Socket | TLSSocket) & {
+  [SOCKET_CONTEXT_SYMBOL]?: ProxyContext;
+};
+
+function attachContextToSocket(
+  socket: Socket | TLSSocket,
+  context: ProxyContext
+): void {
+  (socket as ContextAwareSocket)[SOCKET_CONTEXT_SYMBOL] = context;
+}
+
+function getContextForSocket(
+  socket: Socket | TLSSocket | undefined
+): ProxyContext | null {
+  if (!socket) {
+    return null;
+  }
+  const stored = (socket as ContextAwareSocket)[SOCKET_CONTEXT_SYMBOL];
+  return stored ?? null;
+}
+
+export function getPreviewProxyCertificateAuthorityInfo() {
+  return getPreviewProxyCertificateAuthority();
+}
+
+function logPreviewProxyToConsole(
+  level: "log" | "warn",
+  event: string,
+  data?: Record<string, unknown>
+): void {
+  const prefix = `[cmux-preview-proxy] ${event}`;
+  if (data && Object.keys(data).length > 0) {
+    console[level](prefix, data);
+  } else {
+    console[level](prefix);
+  }
+}
 
 function proxyLog(event: string, data?: Record<string, unknown>): void {
   if (!proxyLoggingEnabled) {
@@ -116,6 +185,7 @@ function proxyLog(event: string, data?: Record<string, unknown>): void {
   }
   try {
     proxyLogger?.log("Preview proxy", { event, ...(data ?? {}) });
+    logPreviewProxyToConsole("log", event, data);
   } catch (error) {
     console.error("Failed to log preview proxy", error);
   }
@@ -127,6 +197,7 @@ function proxyWarn(event: string, data?: Record<string, unknown>): void {
   }
   try {
     proxyLogger?.warn("Preview proxy", { event, ...(data ?? {}) });
+    logPreviewProxyToConsole("warn", event, data);
   } catch (error) {
     console.error("Failed to log preview proxy", error);
   }
@@ -175,11 +246,22 @@ export async function configurePreviewProxyForView(
   options: ConfigureOptions
 ): Promise<() => void> {
   const { webContents, initialUrl, persistKey, logger } = options;
+  proxyLog("session-proxy-setup-called", {
+    webContentsId: webContents.id,
+    initialUrl,
+    persistKey,
+  });
   const route = deriveRoute(initialUrl);
   if (!route) {
     logger.warn("Preview proxy skipped; unable to parse cmux host", {
       url: initialUrl,
       persistKey,
+    });
+    proxyLog("session-proxy-skipped", {
+      webContentsId: webContents.id,
+      persistKey,
+      reason: "no-route",
+      initialUrl,
     });
     return () => {};
   }
@@ -205,14 +287,26 @@ export async function configurePreviewProxyForView(
 
   try {
     await webContents.session.setProxy({
+      mode: "fixed_servers",
       proxyRules: `http=127.0.0.1:${port};https=127.0.0.1:${port}`,
       proxyBypassRules: "<-loopback>",
+    });
+    proxyLog("session-proxy-configured", {
+      webContentsId: webContents.id,
+      persistKey,
+      route,
+      port,
     });
   } catch (error) {
     contextsByUsername.delete(username);
     contextsByWebContentsId.delete(webContents.id);
     contextsByAuthToken.delete(authToken);
     logger.warn("Failed to configure preview proxy", { error });
+    proxyWarn("session-proxy-error", {
+      webContentsId: webContents.id,
+      persistKey,
+      error,
+    });
     throw error;
   }
 
@@ -309,6 +403,13 @@ function listen(server: ProxyServer, port: number): Promise<void> {
 
 function attachServerHandlers(server: ProxyServer) {
   server.on("request", handleHttpRequest);
+  server.on("request", (req) => {
+    proxyLog("raw-http-request", {
+      method: req.method,
+      url: req.url,
+      host: req.headers.host,
+    });
+  });
   server.on("connect", handleConnect);
   server.on("upgrade", handleUpgrade);
   server.on("clientError", (error, socket) => {
@@ -398,7 +499,7 @@ function monitorHttp2Session(originKey: string, session: ClientHttp2Session) {
 }
 
 function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
-  const context = authenticateRequest(req.headers);
+  const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequired(res);
     return;
@@ -437,7 +538,7 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 }
 
 function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
-  const context = authenticateRequest(req.headers);
+  const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequiredSocket(socket);
     return;
@@ -456,6 +557,30 @@ function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
   const targetUrl = new URL(`https://${target.hostname}`);
   targetUrl.port = String(target.port);
   const rewritten = rewriteTarget(targetUrl, context);
+
+  const tlsCandidate = shouldInterceptTls(target.hostname, context, head);
+  proxyLog("connect-classify", {
+    username: context.username,
+    requestedHost: target.hostname,
+    requestedPort: target.port,
+    route: context.route ? `${context.route.morphId}:${context.route.scope}` : null,
+    headLength: head.length,
+    headSample: head.length > 0 ? head.subarray(0, 8).toString("hex") : "",
+    tlsCandidate,
+  });
+
+  if (tlsCandidate) {
+    proxyLog("connect-mitm", {
+      username: context.username,
+      requestedHost: target.hostname,
+      requestedPort: target.port,
+      rewrittenHost: rewritten.url.hostname,
+      rewrittenPort: rewritten.connectPort,
+      persistKey: context.persistKey,
+    });
+    establishMitmTunnel(socket, head, target.hostname, context);
+    return;
+  }
 
   proxyLog("connect-request", {
     username: context.username,
@@ -489,12 +614,50 @@ function handleConnect(req: IncomingMessage, socket: Socket, head: Buffer) {
   });
 }
 
+function shouldInterceptTls(
+  hostname: string,
+  context: ProxyContext,
+  _head: Buffer
+): boolean {
+  if (!ENABLE_TLS_MITM) {
+    return false;
+  }
+  if (!context.route || !isLoopbackHostname(hostname)) {
+    return false;
+  }
+  return true;
+}
+
+function looksLikeTlsHandshake(data: Buffer): boolean {
+  const first = data[0];
+  const versionMajor = data[1];
+  if (first !== 0x16) {
+    return false;
+  }
+  if (versionMajor !== 0x03) {
+    return false;
+  }
+  return true;
+}
+
 function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
-  const context = authenticateRequest(req.headers);
+  const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequiredSocket(socket);
+    proxyWarn("upgrade-auth-required", {
+      url: req.url,
+      host: req.headers.host,
+    });
     return;
   }
+
+  proxyLog("upgrade-request", {
+    username: context.username,
+    url: req.url,
+    host: req.headers.host,
+    upgrade: req.headers.upgrade,
+    origin: req.headers.origin,
+  });
 
   const target = parseProxyRequestTarget(req);
   if (!target) {
@@ -520,10 +683,15 @@ function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
 }
 
 function authenticateRequest(
-  headers: IncomingHttpHeaders
+  headers: IncomingHttpHeaders,
+  socket?: Socket | TLSSocket
 ): ProxyContext | null {
   const token = extractBasicToken(headers["proxy-authorization"]);
   if (!token) {
+    const socketContext = getContextForSocket(socket);
+    if (socketContext) {
+      return socketContext;
+    }
     return null;
   }
   const cached = contextsByAuthToken.get(token);
@@ -918,17 +1086,46 @@ function buildHttp1Headers(
   return { headers, setHost: target.cmuxProxy ? false : undefined };
 }
 
+function normalizeHeaderName(name: string): string {
+  if (/^[A-Z0-9-]+$/.test(name)) {
+    return name;
+  }
+  return name.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`);
+}
+
+function deleteHeaderCaseInsensitive(
+  headers: Record<string, string>,
+  targetName: string
+): void {
+  const lower = targetName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      delete headers[key];
+    }
+  }
+}
+
+function setHeader(
+  headers: Record<string, string>,
+  name: string,
+  value: string
+): void {
+  const normalized = normalizeHeaderName(name);
+  deleteHeaderCaseInsensitive(headers, normalized);
+  headers[normalized] = value;
+}
+
 function injectCmuxProxyHeaders(
   headers: Record<string, string>,
   metadata: CmuxProxyMetadata | undefined
 ) {
-  delete headers["x-cmux-port-internal"];
-  delete headers["x-cmux-host-override"];
+  deleteHeaderCaseInsensitive(headers, "X-Cmux-Port-Internal");
+  deleteHeaderCaseInsensitive(headers, "X-Cmux-Host-Override");
   if (!metadata) {
     return;
   }
-  headers["x-cmux-port-internal"] = String(metadata.upstreamPort);
-  headers["x-cmux-host-override"] = metadata.hostOverride;
+  setHeader(headers, "X-Cmux-Port-Internal", String(metadata.upstreamPort));
+  setHeader(headers, "X-Cmux-Host-Override", metadata.hostOverride);
 }
 
 function forwardUpgradeRequest(
@@ -939,8 +1136,20 @@ function forwardUpgradeRequest(
 ) {
   const { url } = target;
   const upstream = createUpstreamSocket(target);
+  const logForward = (event: string, data?: Record<string, unknown>) => {
+    proxyLog("upgrade-forward", {
+      event,
+      targetHost: url.hostname,
+      targetPort: target.connectPort,
+      ...(data ?? {}),
+    });
+  };
 
   const handleConnected = () => {
+    logForward("upstream-connected", {
+      secure: target.secure,
+      cmuxProxy: Boolean(target.cmuxProxy),
+    });
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(clientReq.headers)) {
       if (!value) continue;
@@ -949,10 +1158,13 @@ function forwardUpgradeRequest(
       if (lowerKey === "host" && target.cmuxProxy) continue;
       headers[lowerKey] = Array.isArray(value) ? value.join(", ") : value;
     }
-    if (!target.cmuxProxy) {
-      headers.host = url.host;
-    }
+    // Cloud Run expects a Host header during WebSocket upgrades even when we route via cmux proxy headers.
+    headers.host = url.host;
     injectCmuxProxyHeaders(headers, target.cmuxProxy);
+
+    logForward("request-headers", {
+      headers,
+    });
 
     const lines = [
       `${clientReq.method ?? "GET"} ${url.pathname}${url.search} HTTP/1.1`,
@@ -962,12 +1174,31 @@ function forwardUpgradeRequest(
     }
     lines.push("\r\n");
     upstream.write(lines.join("\r\n"));
+    logForward("request-forwarded", {
+      method: clientReq.method,
+      path: `${url.pathname}${url.search}`,
+      headerCount: Object.keys(headers).length,
+    });
     if (head.length > 0) {
       upstream.write(head);
     }
 
+    let loggedResponse = false;
+    const logInitialResponse = (chunk: Buffer) => {
+      if (loggedResponse) {
+        return;
+      }
+      loggedResponse = true;
+      const sample = chunk.subarray(0, 64).toString("utf8");
+      logForward("response-initial-chunk", {
+        sample,
+      });
+    };
+    upstream.once("data", logInitialResponse);
+
     upstream.pipe(socket);
     socket.pipe(upstream);
+    logForward("pipes-established");
   };
 
   if (target.secure && upstream instanceof tls.TLSSocket) {
@@ -982,12 +1213,22 @@ function forwardUpgradeRequest(
       host: url.hostname,
       port: target.connectPort,
     });
+    logForward("upstream-error", { message: (error as Error).message });
     socket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
     socket.end();
   });
 
-  socket.on("error", () => {
+  upstream.on("close", () => {
+    logForward("upstream-closed");
+  });
+
+  socket.on("error", (error) => {
+    logForward("client-error", { message: (error as Error).message });
     upstream.destroy();
+  });
+
+  socket.on("close", () => {
+    logForward("client-closed");
   });
 }
 
@@ -1065,6 +1306,115 @@ function establishCmuxProxyConnect(
     upstream.once("secureConnect", sendConnectRequest);
   } else {
     upstream.once("connect", sendConnectRequest);
+  }
+}
+
+function establishMitmTunnel(
+  clientSocket: Socket,
+  head: Buffer,
+  originalHostname: string,
+  context: ProxyContext
+) {
+  if (!proxyServer) {
+    clientSocket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+    clientSocket.end();
+    return;
+  }
+  const server = proxyServer;
+
+  const secureContext = getSecureContextForHostname(originalHostname);
+  let buffered = head;
+  let settled = false;
+
+  const cleanup = () => {
+    settled = true;
+    clientSocket.removeListener("data", handleData);
+    clientSocket.removeListener("error", handleClientError);
+    clientSocket.removeListener("close", handleClientClose);
+  };
+
+  const handleTlsTunnel = (initial: Buffer) => {
+    const tlsSocket = new tls.TLSSocket(clientSocket, {
+      isServer: true,
+      secureContext,
+    });
+    attachContextToSocket(tlsSocket, context);
+    if (initial.length > 0) {
+      tlsSocket.unshift(initial);
+    }
+    tlsSocket.on("error", (error) => {
+      proxyLogger?.warn("MITM TLS error", {
+        error,
+        host: originalHostname,
+        initialHead: initial.toString("hex"),
+      });
+      tlsSocket.destroy();
+    });
+    tlsSocket.once("secure", () => {
+      proxyLog("mitm-tls-secure", {
+        host: originalHostname,
+      });
+      server.emit("connection", tlsSocket);
+    });
+  };
+
+  const handlePlainTunnel = (initial: Buffer) => {
+    proxyLog("mitm-plain-tunnel", {
+      host: originalHostname,
+    });
+    attachContextToSocket(clientSocket, context);
+    if (initial.length > 0) {
+      clientSocket.unshift(initial);
+    }
+    server.emit("connection", clientSocket);
+  };
+
+  const classify = () => {
+    if (buffered.length < 3) {
+      return false;
+    }
+    cleanup();
+    if (looksLikeTlsHandshake(buffered)) {
+      handleTlsTunnel(buffered);
+    } else {
+      handlePlainTunnel(buffered);
+    }
+    return true;
+  };
+
+  const handleData = (chunk: Buffer) => {
+    buffered =
+      buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
+    if (classify()) {
+      return;
+    }
+  };
+
+  const handleClientError = (error: Error) => {
+    if (settled) {
+      return;
+    }
+    proxyLogger?.warn("MITM tunnel client error", {
+      error,
+      host: originalHostname,
+    });
+    cleanup();
+    clientSocket.destroy();
+  };
+
+  const handleClientClose = () => {
+    if (settled) {
+      return;
+    }
+    cleanup();
+  };
+
+  clientSocket.once("error", handleClientError);
+  clientSocket.once("close", handleClientClose);
+  clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+
+  if (!classify()) {
+    clientSocket.on("data", handleData);
   }
 }
 
