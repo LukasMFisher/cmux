@@ -147,7 +147,9 @@ function buildLoginShellArgs(
     return ["-l", "-c", command];
   }
 
-  return ["-l", "-c", command];
+  // Use interactive login shells so ~/.zshrc, ~/.bashrc, etc. run and populate
+  // PATH the same way users expect in their terminals.
+  return ["-l", "-i", "-c", command];
 }
 
 function isExecError(error: unknown): error is ExecError {
@@ -209,6 +211,8 @@ export function setupSocketHandlers(
       : typeof qJson === "string"
         ? qJson
         : undefined;
+    let currentAuthToken = token;
+    let currentAuthHeaderJson = tokenJson;
 
     // authenticate the token
     if (!token) {
@@ -218,9 +222,23 @@ export function setupSocketHandlers(
     }
 
     socket.use((_, next) => {
-      runWithAuth(token, tokenJson, () => next());
+      runWithAuth(currentAuthToken, currentAuthHeaderJson, () => next());
     });
     serverLogger.info("Client connected:", socket.id);
+
+    socket.on("authenticate", (data, callback) => {
+      const nextToken = data?.authToken;
+      if (!nextToken) {
+        callback?.({ ok: false, error: "Missing auth token" });
+        return;
+      }
+      const nextAuthJson = data?.authJson;
+      currentAuthToken = nextToken;
+      currentAuthHeaderJson = nextAuthJson;
+      runWithAuth(currentAuthToken, currentAuthHeaderJson, () => {
+        callback?.({ ok: true });
+      });
+    });
 
     // Rust N-API test endpoint
     socket.on("rust-get-time", async (callback) => {

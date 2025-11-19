@@ -232,6 +232,7 @@ RUN --mount=type=secret,id=github_token,required=false if [ -z "${CODE_RELEASE}"
 
 # Copy package files for monorepo dependency installation
 WORKDIR /cmux
+ENV BUN_INSTALL_CACHE_DIR=/cmux/node_modules/.bun
 COPY package.json bun.lock .npmrc ./
 COPY --parents apps/*/package.json packages/*/package.json scripts/package.json ./
 
@@ -253,6 +254,8 @@ COPY packages/convex ./packages/convex/
 
 # Copy Chrome DevTools proxy source
 COPY scripts/cdp-proxy ./scripts/cdp-proxy/
+# Copy VNC websocket proxy source
+COPY scripts/vnc-proxy ./scripts/vnc-proxy/
 
 # Build Chrome DevTools proxy binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
@@ -279,6 +282,33 @@ export CGO_ENABLED=0
 cd /cmux/scripts/cdp-proxy
 go build -trimpath -ldflags="-s -w" -o /usr/local/lib/cmux/cmux-cdp-proxy .
 test -x /usr/local/lib/cmux/cmux-cdp-proxy
+EOF
+
+# Build VNC websocket proxy binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  --mount=type=cache,target=/go/pkg/mod \
+  <<'EOF'
+set -eux
+mkdir -p /usr/local/lib/cmux
+export PATH="/usr/local/go/bin:${PATH}"
+case "${TARGETPLATFORM:-}" in
+  linux/amd64 | linux/amd64/*)
+    export GOOS=linux
+    export GOARCH=amd64
+    ;;
+  linux/arm64 | linux/arm64/*)
+    export GOOS=linux
+    export GOARCH=arm64
+    ;;
+  *)
+    echo "Unsupported TARGETPLATFORM: ${TARGETPLATFORM:-}" >&2
+    exit 1
+    ;;
+esac
+export CGO_ENABLED=0
+cd /cmux/scripts/vnc-proxy
+go build -trimpath -ldflags="-s -w" -o /usr/local/lib/cmux/cmux-vnc-proxy .
+test -x /usr/local/lib/cmux/cmux-vnc-proxy
 EOF
 
 # Verify bun is still working in builder
@@ -483,10 +513,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   dbus \
   kmod \
   util-linux \
+  tigervnc-standalone-server \
+  tigervnc-common \
   xvfb \
-  x11vnc \
   fluxbox \
-  websockify \
   novnc \
   xauth \
   xdg-utils \
@@ -681,6 +711,7 @@ RUN curl -fsSL https://bun.sh/install | bash && \
   bunx --version
 
 ENV PATH="/usr/local/bin:$PATH"
+ENV BUN_INSTALL_CACHE_DIR=/cmux/node_modules/.bun
 
 RUN --mount=type=cache,target=/root/.bun/install/cache \
   bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff @devcontainers/cli @sourcegraph/amp
@@ -827,8 +858,8 @@ COPY configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.servi
 COPY configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
 COPY configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
 COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
-COPY configs/systemd/cmux-x11vnc.service /usr/lib/systemd/system/cmux-x11vnc.service
-COPY configs/systemd/cmux-websockify.service /usr/lib/systemd/system/cmux-websockify.service
+COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
@@ -838,7 +869,8 @@ COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-doc
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
-RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy && \
+COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy && \
   chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd && \
   chmod +x /usr/local/sbin/cmux-configure-memory && \
   touch /usr/local/lib/cmux/dockerd.flag && \
@@ -852,9 +884,8 @@ RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-s
   ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service && \
   ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service && \
-  ln -sf /usr/lib/systemd/system/cmux-xvfb.service /etc/systemd/system/cmux.target.wants/cmux-xvfb.service && \
-  ln -sf /usr/lib/systemd/system/cmux-x11vnc.service /etc/systemd/system/cmux.target.wants/cmux-x11vnc.service && \
-  ln -sf /usr/lib/systemd/system/cmux-websockify.service /etc/systemd/system/cmux.target.wants/cmux-websockify.service && \
+  ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service && \
+  ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service && \
   ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service && \
@@ -876,7 +907,7 @@ RUN mkdir -p /root/.openvscode-server/data/User && \
 # 39377: Worker service
 # 39378: OpenVSCode server
 # 39379: cmux-proxy
-# 39380: VNC over Websockify (noVNC)
+# 39380: VNC websocket proxy (noVNC)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
 # 39383: cmux-xterm server
@@ -916,13 +947,36 @@ RUN --mount=type=secret,id=github_token,required=false <<-'EOF'
     set -eux; \
     arch="$(uname -m)"; \
     DOCKER_CHANNEL="${DOCKER_CHANNEL:-stable}"; \
-    DOCKER_VERSION="${DOCKER_VERSION:-$(github-curl -fsSL https://api.github.com/repos/docker/docker/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    FALLBACK_DOCKER_VERSION="27.4.0"; \
+    raw_version="${DOCKER_VERSION:-}"; \
+    if [ -z "$raw_version" ]; then \
+        raw_version="$(github-curl -fsSL https://api.github.com/repos/docker/docker/releases/latest | jq -r '.tag_name' | sed 's/^v//')"; \
+    fi; \
+    sanitize_version() { \
+        local value="$1"; \
+        value="${value#docker-}"; \
+        value="${value#v}"; \
+        printf '%s' "$value"; \
+    }; \
+    DOCKER_VERSION="$(sanitize_version "$raw_version")"; \
     case "$arch" in \
         x86_64) dockerArch='x86_64' ;; \
         aarch64) dockerArch='aarch64' ;; \
         *) echo >&2 "error: unsupported architecture ($arch)"; exit 1 ;; \
     esac; \
-    wget -O docker.tgz "https://download.docker.com/linux/static/${DOCKER_CHANNEL}/${dockerArch}/docker-${DOCKER_VERSION}.tgz"; \
+    download_docker() { \
+        local version="$1"; \
+        wget -O docker.tgz "https://download.docker.com/linux/static/${DOCKER_CHANNEL}/${dockerArch}/docker-${version}.tgz"; \
+    }; \
+    if ! download_docker "$DOCKER_VERSION"; then \
+        if [ -z "${raw_version}" ]; then \
+            DOCKER_VERSION="$FALLBACK_DOCKER_VERSION"; \
+            download_docker "$DOCKER_VERSION"; \
+        else \
+            echo "Failed to download docker-${DOCKER_VERSION}.tgz" >&2; \
+            exit 1; \
+        fi; \
+    fi; \
     tar --extract --file docker.tgz --strip-components 1 --directory /usr/local/bin/; \
     rm docker.tgz; \
     dockerd --version || echo "dockerd --version failed (ignored during build)"; \
@@ -939,17 +993,53 @@ RUN --mount=type=secret,id=github_token,required=false <<-'EOF'
         aarch64) composeArch='aarch64'; buildxAsset='linux-arm64'; buildkitAsset='linux-arm64' ;; \
         *) echo >&2 "error: unsupported architecture ($arch)"; exit 1 ;; \
     esac; \
-    DOCKER_COMPOSE_VERSION="${DOCKER_COMPOSE_VERSION:-$(github-curl -fsSL https://api.github.com/repos/docker/compose/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    FALLBACK_VERSION="2.24.7"; \
+    raw_compose="${DOCKER_COMPOSE_VERSION:-$(github-curl -fsSL https://api.github.com/repos/docker/compose/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    sanitize_version() { \
+        local value="$1"; \
+        value="${value#docker-}"; \
+        value="${value#v}"; \
+        printf '%s' "$value"; \
+    }; \
+    DOCKER_COMPOSE_VERSION="$(sanitize_version "$raw_compose")"; \
     github-curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${composeArch}" \
-        -o /usr/local/lib/docker/cli-plugins/docker-compose; \
+        -o /usr/local/lib/docker/cli-plugins/docker-compose || { \
+            if [ -z "${raw_compose}" ]; then \
+                DOCKER_COMPOSE_VERSION="$FALLBACK_VERSION"; \
+                github-curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${composeArch}" \
+                    -o /usr/local/lib/docker/cli-plugins/docker-compose; \
+            else \
+                exit 1; \
+            fi; \
+        }; \
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose; \
-    BUILDX_VERSION="${BUILDX_VERSION:-$(github-curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    BUILDX_FALLBACK="0.15.1"; \
+    raw_buildx="${BUILDX_VERSION:-$(github-curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    BUILDX_VERSION="$(sanitize_version "$raw_buildx")"; \
     github-curl -fsSL "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.${buildxAsset}" \
-        -o /usr/local/lib/docker/cli-plugins/docker-buildx; \
+        -o /usr/local/lib/docker/cli-plugins/docker-buildx || { \
+            if [ -z "${raw_buildx}" ]; then \
+                BUILDX_VERSION="$BUILDX_FALLBACK"; \
+                github-curl -fsSL "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.${buildxAsset}" \
+                    -o /usr/local/lib/docker/cli-plugins/docker-buildx; \
+            else \
+                exit 1; \
+            fi; \
+        }; \
     chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx; \
-    BUILDKIT_VERSION="${BUILDKIT_VERSION:-$(github-curl -fsSL https://api.github.com/repos/moby/buildkit/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    BUILDKIT_FALLBACK="0.15.2"; \
+    raw_buildkit="${BUILDKIT_VERSION:-$(github-curl -fsSL https://api.github.com/repos/moby/buildkit/releases/latest | jq -r '.tag_name' | sed 's/^v//')}"; \
+    BUILDKIT_VERSION="$(sanitize_version "$raw_buildkit")"; \
     github-curl -fsSL "https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.${buildkitAsset}.tar.gz" \
-        -o /tmp/buildkit.tar.gz; \
+        -o /tmp/buildkit.tar.gz || { \
+            if [ -z "${raw_buildkit}" ]; then \
+                BUILDKIT_VERSION="$BUILDKIT_FALLBACK"; \
+                github-curl -fsSL "https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.${buildkitAsset}.tar.gz" \
+                    -o /tmp/buildkit.tar.gz; \
+            else \
+                exit 1; \
+            fi; \
+        }; \
     tar -xzf /tmp/buildkit.tar.gz -C /tmp; \
     install -m 0755 /tmp/bin/buildctl /usr/local/bin/buildctl; \
     install -m 0755 /tmp/bin/buildkitd /usr/local/bin/buildkitd; \

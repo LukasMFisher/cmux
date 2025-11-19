@@ -1,7 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_BASENAME="${1:-cmux-local-sanity}"
+IMAGE_BASENAME="cmux-local-sanity"
+KEEP_SANITY_CONTAINER=0
+IMAGE_BASENAME_SET=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --keep-container)
+      KEEP_SANITY_CONTAINER=1
+      shift
+      ;;
+    --image-basename)
+      if [[ $# -lt 2 ]]; then
+        echo "[sanity] ERROR: --image-basename requires a value" >&2
+        exit 1
+      fi
+      IMAGE_BASENAME="$2"
+      IMAGE_BASENAME_SET=1
+      shift 2
+      ;;
+    *)
+      if [[ "$IMAGE_BASENAME_SET" == "0" ]]; then
+        IMAGE_BASENAME="$1"
+        IMAGE_BASENAME_SET=1
+        shift
+      else
+        echo "[sanity] ERROR: Unknown argument $1" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 OPENVSCODE_URL="http://localhost:39378/?folder=/root/workspace"
 NOVNC_URL="http://localhost:39380/vnc.html"
 CDP_PORT=39381
@@ -108,6 +138,85 @@ wait_for_cdp() {
   exit 1
 }
 
+check_vnc_handshake() {
+  local container="$1"
+  local platform="$2"
+  echo "[sanity][$platform] Checking TigerVNC handshake on 127.0.0.1:5901..."
+  if ! docker exec "$container" python3 - <<'PY'
+import socket
+import sys
+
+addr = ("127.0.0.1", 5901)
+try:
+    with socket.create_connection(addr, timeout=5) as sock:
+        sock.settimeout(5)
+        banner = sock.recv(12)
+        if not banner.startswith(b"RFB "):
+            print(f"Unexpected banner: {banner!r}", file=sys.stderr)
+            sys.exit(1)
+        sock.sendall(b"RFB 003.008\n")
+        response = sock.recv(4)
+        if not response:
+            print("Empty security response from server", file=sys.stderr)
+            sys.exit(1)
+except Exception as exc:
+    print(f"Handshake failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "[sanity][$platform] ERROR: TigerVNC handshake failed" >&2
+    docker exec "$container" ss -ltnp | grep 5901 || true
+    docker exec "$container" bash -lc 'tail -n 80 /var/log/cmux/tigervnc.log 2>/dev/null || true' || true
+    exit 1
+  fi
+  echo "[sanity][$platform] TigerVNC handshake succeeded"
+}
+
+check_vnc_websocket() {
+  local container="$1"
+  local platform="$2"
+  echo "[sanity][$platform] Checking VNC websocket proxy upgrade on 127.0.0.1:39380..."
+  if ! docker exec "$container" python3 - <<'PY'
+import os
+import socket
+import sys
+
+host = "127.0.0.1"
+port = 39380
+path = "/websockify"
+key = os.urandom(16)
+import base64
+sec_key = base64.b64encode(key).decode()
+
+request = (
+    f"GET {path} HTTP/1.1\r\n"
+    f"Host: {host}:{port}\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    f"Sec-WebSocket-Key: {sec_key}\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "\r\n"
+)
+
+with socket.create_connection((host, port), timeout=5) as sock:
+    sock.settimeout(5)
+    sock.sendall(request.encode("ascii"))
+    resp = sock.recv(1024).decode("latin1", "replace")
+
+status_line = resp.splitlines()[0] if resp else ""
+if not status_line.startswith("HTTP/1.1 101"):
+    print(f"Unexpected websocket response: {status_line!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "[sanity][$platform] ERROR: VNC websocket proxy handshake failed" >&2
+    docker exec "$container" systemctl status cmux-vnc-proxy.service --no-pager || true
+    docker exec "$container" bash -lc 'tail -n 80 /var/log/cmux/vnc-proxy.log 2>/dev/null || true' || true
+    exit 1
+  fi
+  echo "[sanity][$platform] VNC websocket proxy handshake succeeded"
+}
+
 check_unit() {
   local container="$1"
   local unit="$2"
@@ -127,6 +236,86 @@ check_gh_cli() {
     exit 1
   fi
   echo "[sanity][$platform] GitHub CLI available"
+}
+
+wait_for_command_in_container() {
+  local container="$1"
+  local platform="$2"
+  local description="$3"
+  local cmd="$4"
+  local max_attempts="${5:-60}"
+
+  echo "[sanity][$platform] Waiting for ${description}..."
+  for _ in $(seq 1 "$max_attempts"); do
+    if docker exec "$container" bash -lc "$cmd" >/dev/null 2>&1; then
+      echo "[sanity][$platform] ${description} ready"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[sanity][$platform] ERROR: ${description} not ready after ${max_attempts}s" >&2
+  return 1
+}
+
+cleanup_vite_server() {
+  local container="$1"
+  docker exec "$container" bash -lc 'if [[ -f /tmp/vite-dev.pid ]]; then kill "$(cat /tmp/vite-dev.pid)" >/dev/null 2>&1 || true; rm -f /tmp/vite-dev.pid; fi' >/dev/null 2>&1 || true
+}
+
+run_vite_proxy_sanity() {
+  local container="$1"
+  local platform="$2"
+  local app_dir="/root/vite-sanity"
+
+  echo "[sanity][$platform] Creating Vite sample app via bun..."
+  docker exec "$container" bash -lc "set -euo pipefail; rm -rf ${app_dir}; cd /root; bun create vite@latest vite-sanity -- --template react >/tmp/vite-create.log 2>&1"
+
+  echo "[sanity][$platform] Installing dependencies..."
+  docker exec "$container" bash -lc "set -euo pipefail; cd ${app_dir}; bun install >/tmp/vite-install.log 2>&1"
+
+  echo "[sanity][$platform] Starting Vite dev server on port 3006..."
+  cleanup_vite_server "$container"
+  docker exec "$container" bash -lc "set -euo pipefail; cd ${app_dir}; nohup bun run dev -- --host 0.0.0.0 --port 3006 >/tmp/vite-dev.log 2>&1 & echo \$! >/tmp/vite-dev.pid"
+
+  if ! wait_for_command_in_container "$container" "$platform" "local Vite dev server" "curl -fsS http://127.0.0.1:3006" 60; then
+    docker exec "$container" bash -lc 'cat /tmp/vite-dev.log || true' >&2 || true
+    cleanup_vite_server "$container"
+    exit 1
+  fi
+
+  echo "[sanity][$platform] Curling Vite through cmux proxy (port 39379)..."
+  local proxy_url="http://127.0.0.1:39379/"
+  local success=0
+  for _ in $(seq 1 60); do
+    if curl -fsS "$proxy_url" \
+      -H "X-Cmux-Port-Internal: 3006" \
+      -H "X-Cmux-Host-Override: localhost:3006" \
+      -H "Host: localhost:3006" | grep -qi "vite"; then
+      success=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ "$success" != "1" ]]; then
+    echo "[sanity][$platform] ERROR: cmux proxy could not reach Vite dev server" >&2
+    exit 1
+  fi
+
+  local host_curl_cmd='curl --http2-prior-knowledge -i "http://127.0.0.1:39379/" -H "X-Cmux-Port-Internal: 3006" -H "X-Cmux-Host-Override: localhost:3006" -H "Host: localhost:3006"'
+  echo "[sanity][$platform] Host curl command to hit Vite via proxy:"
+  echo "  $host_curl_cmd"
+
+  if [[ "$KEEP_SANITY_CONTAINER" != "1" ]]; then
+    cleanup_vite_server "$container"
+    docker exec "$container" bash -lc "rm -rf ${app_dir}" >/dev/null 2>&1 || true
+  else
+    local vite_pid
+    vite_pid=$(docker exec "$container" bash -lc 'cat /tmp/vite-dev.pid 2>/dev/null || echo unavailable')
+    echo "[sanity][$platform] Keeping Vite dev server running (PID ${vite_pid})"
+  fi
+
+  echo "[sanity][$platform] Vite dev server reachable via cmux proxy"
 }
 
 HOST_ARCH=$(uname -m)
@@ -229,11 +418,28 @@ run_checks_for_platform() {
   wait_for_novnc "$container_name" "$NOVNC_URL" "$platform"
   wait_for_cdp "$CDP_PORT" "$platform"
 
+  check_unit "$container_name" cmux-tigervnc.service
+  check_unit "$container_name" cmux-vnc-proxy.service
+  check_vnc_handshake "$container_name" "$platform"
+  check_vnc_websocket "$container_name" "$platform"
   check_unit "$container_name" cmux-openvscode.service
   check_unit "$container_name" cmux-worker.service
   check_gh_cli "$container_name" "$platform"
+  run_vite_proxy_sanity "$container_name" "$platform"
 
   run_dind_hello_world "$container_name" "$platform"
+
+  if [[ "$KEEP_SANITY_CONTAINER" == "1" ]]; then
+    local host_curl_cmd='curl --http2-prior-knowledge -i "http://127.0.0.1:39379/" -H "X-Cmux-Port-Internal: 3006" -H "X-Cmux-Host-Override: localhost:3006" -H "Host: localhost:3006"'
+    echo "[sanity][$platform] Container $container_name is still running for manual inspection."
+    echo "[sanity][$platform] From the host, run:"
+    echo "  $host_curl_cmd"
+    read -n 1 -s -r -p "[sanity][$platform] Press any key to stop and remove $container_name..." _
+    echo
+  fi
+
+  cleanup_vite_server "$container_name"
+  docker exec "$container_name" bash -lc "rm -rf /root/vite-sanity" >/dev/null 2>&1 || true
 
   cleanup_container "$container_name"
   remove_active_container "$container_name"
