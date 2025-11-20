@@ -594,6 +594,7 @@ const convexSchema = defineSchema({
     completedAt: v.optional(v.number()),
     screenshotSetId: v.optional(v.id("previewScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
+    githubCommentId: v.optional(v.number()),
     morphInstanceId: v.optional(v.string()),
     morphInstanceStoppedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -601,6 +602,7 @@ const convexSchema = defineSchema({
   })
     .index("by_config_status", ["previewConfigId", "status", "createdAt"])
     .index("by_config_head", ["previewConfigId", "headSha"])
+    .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
     .index("by_team_created", ["teamId", "createdAt"]),
   previewScreenshotSets: defineTable({
     previewRunId: v.id("previewRuns"),

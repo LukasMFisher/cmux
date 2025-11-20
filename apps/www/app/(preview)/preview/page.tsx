@@ -1,24 +1,136 @@
 import Link from "next/link";
 import { stackServerApp } from "@/lib/utils/stack";
 import { ArrowRight, Eye, Zap, Shield } from "lucide-react";
+import { getConvex } from "@/lib/utils/get-convex";
+import { api } from "@cmux/convex/api";
+import { PreviewDashboard } from "@/components/preview/preview-dashboard";
 
 export const dynamic = "force-dynamic";
 
-export default async function PreviewLandingPage() {
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+type StackTeam = Awaited<ReturnType<typeof stackServerApp.listTeams>>[number];
+
+function getTeamSlugOrId(team: StackTeam): string {
+  const candidate = team as unknown as {
+    slug?: string | null;
+    teamId?: string;
+    id?: string;
+  };
+  return candidate.slug ?? candidate.teamId ?? candidate.id ?? "";
+}
+
+function getTeamDisplayName(team: StackTeam): string {
+  const candidate = team as unknown as {
+    displayName?: string | null;
+    name?: string | null;
+    slug?: string | null;
+    teamId?: string;
+    id?: string;
+  };
+  return (
+    candidate.displayName ??
+    candidate.name ??
+    candidate.slug ??
+    candidate.teamId ??
+    candidate.id ??
+    "team"
+  );
+}
+
+function serializeProviderConnections(
+  connections: Array<{
+    installationId: number;
+    accountLogin: string | null | undefined;
+    accountType: string | null | undefined;
+    type: string | null | undefined;
+    isActive: boolean;
+  }>
+) {
+  return connections.map((conn) => ({
+    installationId: conn.installationId,
+    accountLogin: conn.accountLogin ?? null,
+    accountType: conn.accountType ?? null,
+    isActive: conn.isActive,
+  }));
+}
+
+export default async function PreviewLandingPage({ searchParams }: PageProps) {
   const user = await stackServerApp.getUser();
-  const teams = user ? await user.listTeams() : [];
+  
+  // If user is logged in, show the dashboard
+  if (user) {
+    const [{ accessToken }, teams, resolvedSearch] = await Promise.all([
+      user.getAuthJson(),
+      user.listTeams(),
+      searchParams,
+    ]);
+
+    if (!accessToken) {
+      throw new Error("Missing Stack access token");
+    }
+
+    const searchTeam = (() => {
+      if (!resolvedSearch) {
+        return null;
+      }
+      const value = resolvedSearch.team;
+      if (Array.isArray(value)) {
+        return value[0] ?? null;
+      }
+      return value ?? null;
+    })();
+
+    const selectedTeam =
+      teams.find((team) => getTeamSlugOrId(team) === searchTeam) ?? teams[0];
+    const selectedTeamSlugOrId = selectedTeam ? getTeamSlugOrId(selectedTeam) : "";
+
+    const convex = getConvex({ accessToken });
+    const [providerConnections] = await Promise.all([
+      selectedTeamSlugOrId 
+        ? convex.query(api.github.listProviderConnections, {
+            teamSlugOrId: selectedTeamSlugOrId,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const hasGithubAppInstallation = providerConnections.some(
+      (connection) => connection.isActive,
+    );
+
+    return (
+      <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
+        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
+        
+        <PreviewDashboard 
+          selectedTeamSlugOrId={selectedTeamSlugOrId}
+          hasGithubAppInstallation={hasGithubAppInstallation}
+          providerConnections={serializeProviderConnections(providerConnections)}
+          isAuthenticated={true}
+        />
+      </div>
+    );
+  }
+
+  // Marketing Page (Logged out)
+  const teams: StackTeam[] = []; 
 
   return (
     <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
       <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
-
+      
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-4 py-16">
         <header className="space-y-6 text-center">
-          <div className="inline-block rounded-full border border-sky-400/20 bg-sky-400/10 px-4 py-1.5 text-xs uppercase tracking-[0.3em] text-sky-400">
-            cmux Preview
-          </div>
+          <Link 
+            href="https://cmux.dev" 
+            className="inline-block text-sm text-neutral-400 hover:text-white transition-colors"
+          >
+            back to cmux →
+          </Link>
           <h1 className="text-5xl font-bold tracking-tight">
-            Automated screenshot previews for every pull request
+            Screenshot previews for your code reviews
           </h1>
           <p className="mx-auto max-w-2xl text-lg text-neutral-300">
             Link your repository, configure your dev server, and cmux Preview automatically
@@ -125,7 +237,7 @@ export default async function PreviewLandingPage() {
               : "Configure your preview environment and start automating visual testing."}
           </p>
           <Link
-            href="/preview/get-started"
+            href="/handler/sign-in?after_auth_return_to=/preview"
             className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-6 py-3 text-base font-semibold text-black shadow-xl transition hover:bg-neutral-100"
           >
             Get started

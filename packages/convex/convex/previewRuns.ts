@@ -118,6 +118,7 @@ export const updateStatus = internalMutation({
     stateReason: v.optional(v.string()),
     screenshotSetId: v.optional(v.id("previewScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
+    githubCommentId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.previewRunId);
@@ -130,6 +131,7 @@ export const updateStatus = internalMutation({
       stateReason: args.stateReason,
       screenshotSetId: args.screenshotSetId,
       githubCommentUrl: args.githubCommentUrl ?? run.githubCommentUrl,
+      githubCommentId: args.githubCommentId ?? run.githubCommentId,
       updatedAt: now,
     };
     if (args.status === "completed" || args.status === "failed" || args.status === "skipped") {
@@ -213,6 +215,25 @@ export const listRecentByConfig = internalQuery({
       .query("previewRuns")
       .withIndex("by_config_status", (q) =>
         q.eq("previewConfigId", args.previewConfigId),
+      )
+      .order("desc")
+      .take(take);
+    return runs;
+  },
+});
+
+export const listByConfigAndPr = internalQuery({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const take = Math.max(1, Math.min(args.limit ?? 20, 100));
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
       )
       .order("desc")
       .take(take);
