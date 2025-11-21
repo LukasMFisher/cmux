@@ -1,4 +1,4 @@
-import fs from "node:fs";
+
 import http, {
   type IncomingHttpHeaders,
   type IncomingMessage,
@@ -414,7 +414,7 @@ function listen(server: ProxyServer, port: number): Promise<void> {
 }
 
 function attachServerHandlers(server: ProxyServer) {
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", "attachServerHandlers called\n");
+
   server.on("request", handleHttpRequest);
   server.on("request", (req) => {
     proxyLog("raw-http-request", {
@@ -458,7 +458,7 @@ async function getHttp2SessionFor(
 
 function createHttp2Session(url: URL): Promise<ClientHttp2Session> {
   return new Promise((resolve, reject) => {
-    const options: any = {};
+    const options: http2.SecureClientSessionOptions = {};
     if (process.env.TEST_ALLOW_INSECURE_UPSTREAM === "true") {
         options.rejectUnauthorized = false;
     }
@@ -518,7 +518,7 @@ function monitorHttp2Session(originKey: string, session: ClientHttp2Session) {
 }
 
 function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `handleHttpRequest called for ${req.url}\n`);
+
   const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequired(res);
@@ -562,18 +562,17 @@ function handleConnect(
   socket: Socket,
   head: Buffer
 ) {
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `handleConnect called for url: ${req.url}\n`);
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `handleConnect headers: ${JSON.stringify(req.headers)}\n`);
+
   const context = authenticateRequest(req.headers, socket);
   if (!context) {
-    fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", "handleConnect: Authentication failed\n");
+
     socket.write(
       'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Cmux Preview Proxy"\r\n\r\n'
     );
     socket.end();
     return;
   }
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `handleConnect: Authentication successful for user: ${context.username}\n`);
+
 
   const target = parseConnectTarget(req.url ?? "");
   if (!target) {
@@ -807,7 +806,7 @@ function containsHttp3Protocol(protocols: string[] | undefined): boolean {
 }
 
 function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer) {
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `handleUpgrade called for ${req.url}\n`);
+
   const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequiredSocket(socket);
@@ -859,14 +858,14 @@ function authenticateRequest(
     if (socketContext) {
       return socketContext;
     }
-    fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", "authenticateRequest: No token and no socket context\n");
+
     return null;
   }
   const cached = contextsByAuthToken.get(token);
   if (cached) {
     return cached;
   }
-  fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `authenticateRequest: Token not found in cache. Token: ${token}\n`);
+
   // Fallback: decode to locate username map entry in case the cache missed an update.
   try {
     const decoded = Buffer.from(token, "base64").toString("utf8");
@@ -876,12 +875,12 @@ function authenticateRequest(
     const password = decoded.slice(separatorIndex + 1);
     const context = contextsByUsername.get(username);
     if (!context || context.password !== password) {
-      fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `authenticateRequest: Fallback failed. Username: ${username} Context found: ${!!context}\n`);
+
       return null;
     }
     return context;
-  } catch (err) {
-    fs.appendFileSync("/Users/lawrencechen/fun/cmux/proxy-debug.log", `authenticateRequest: Error decoding token ${err}\n`);
+  } catch (_err) {
+
     return null;
   }
 }
@@ -1819,13 +1818,13 @@ async function handleHttp2Stream(
     targetHost: target.url.hostname,
   });
 
-  console.log("handleHttp2Stream: checking shouldAttemptHttp2");
+
   try {
     if (shouldAttemptHttp2(target)) {
-      console.log("handleHttp2Stream: attempting HTTP/2 forward");
+
       await forwardHttp2StreamToHttp2(stream, headers, target, context);
     } else {
-      console.log("handleHttp2Stream: attempting HTTP/1.1 forward");
+
       await forwardHttp2StreamToHttp1(stream, headers, target, context);
     }
   } catch (error) {
@@ -1848,9 +1847,9 @@ async function forwardHttp2StreamToHttp2(
   target: ProxyTarget,
   _context: ProxyContext
 ) {
-  console.log("forwardHttp2StreamToHttp2 called for target:", target.url.href);
+
   const session = await getHttp2SessionFor(target);
-  console.log("Got HTTP/2 session for target");
+
   
   const upstreamHeaders = { ...clientHeaders };
   // Filter pseudo-headers and connection-specific headers
@@ -1871,12 +1870,12 @@ async function forwardHttp2StreamToHttp2(
      upstreamHeaders[":authority"] = target.url.host; 
   }
 
-  console.log("Sending upstream request with headers:", upstreamHeaders);
+
   const upstreamStream = session.request(upstreamHeaders);
-  console.log("Upstream stream created");
+
 
   upstreamStream.on("response", (responseHeaders) => {
-    console.log("Received upstream response headers:", responseHeaders);
+
     clientStream.respond(responseHeaders);
   });
 
@@ -1952,7 +1951,7 @@ async function forwardHttp2StreamToHttp1(
     clientStream.pipe(proxyReq);
 }
 
-console.log("task-run-preview-proxy loaded. TEST_CMUX_PROXY_ORIGIN =", process.env.TEST_CMUX_PROXY_ORIGIN);
+
 
 function deriveRoute(url: string): ProxyRoute | null {
   if (process.env.TEST_CMUX_PROXY_ORIGIN) {
@@ -1966,7 +1965,7 @@ function deriveRoute(url: string): ProxyRoute | null {
                 cmuxProxyOrigin: process.env.TEST_CMUX_PROXY_ORIGIN
             };
         }
-      } catch (e) { /* ignore */ }
+      } catch (_e) { /* ignore */ }
   }
 
   try {
@@ -1977,7 +1976,7 @@ function deriveRoute(url: string): ProxyRoute | null {
     if (morphMatch) {
       const morphId = morphMatch[2];
       if (morphId) {
-        const morphSuffix = morphMatch[3];
+        // const morphSuffix = morphMatch[3];
         const cmuxProxyOrigin = process.env.TEST_CMUX_PROXY_ORIGIN || `http://port-${CMUX_PROXY_PORT}-morphvm-${morphId}.http.cloud.morph.so`;
         return {
           morphId,

@@ -16,9 +16,9 @@ process.env.TEST_ALLOW_INSECURE_UPSTREAM = "true";
 
 // Mock logger
 const logger = {
-  log: (msg: string, data?: any) => console.log(`[LOG] ${msg}`, data),
-  warn: (msg: string, data?: any) => console.warn(`[WARN] ${msg}`, data),
-  error: (msg: string, data?: any) => console.error(`[ERROR] ${msg}`, data),
+  log: (...args: any[]) => console.log("[LOG]", ...args),
+  warn: (...args: any[]) => console.warn("[WARN]", ...args),
+  error: (...args: any[]) => console.error("[ERROR]", ...args),
 };
 
 const MOCK_WEB_CONTENTS_ID = 123;

@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 
 export class CertificateManager {
-  private caKey!: forge.pki.PrivateKey;
+  private caKey!: forge.pki.rsa.PrivateKey;
   private caCert!: forge.pki.Certificate;
   private certCache = new Map<string, tls.SecureContext>();
   private certDataCache = new Map<string, { key: string; cert: string }>();
@@ -78,7 +78,7 @@ export class CertificateManager {
         dataEncipherment: true,
       },
     ]);
-    this.caCert.sign(this.caKey as any, forge.md.sha256.create());
+    this.caCert.sign(this.caKey, forge.md.sha256.create());
   }
 
   getSecureContextForHost(hostname: string): tls.SecureContext {
@@ -120,7 +120,7 @@ export class CertificateManager {
         ],
       },
     ]);
-    cert.sign(this.caKey as any, forge.md.sha256.create());
+    cert.sign(this.caKey as forge.pki.rsa.PrivateKey, forge.md.sha256.create());
 
     const pemKey = forge.pki.privateKeyToPem(keys.privateKey);
     const pemCert = forge.pki.certificateToPem(cert);
@@ -133,8 +133,8 @@ export class CertificateManager {
     });
 
     this.certCache.set(hostname, context);
-    console.log(`Generated certificate for ${hostname}`);
-    // console.log("PEM Cert:", pemCert);
+
+
     return context;
   }
 
@@ -144,7 +144,7 @@ export class CertificateManager {
     // Actually, we can't easily extract PEM from SecureContext.
     // So let's add a data cache.
     if (this.certDataCache.has(hostname)) {
-      console.log(`Certificate cache hit for ${hostname}`);
+
       return this.certDataCache.get(hostname)!;
     }
 
@@ -181,14 +181,12 @@ export class CertificateManager {
         ],
       },
     ]);
-    cert.sign(this.caKey as any, forge.md.sha256.create());
+    cert.sign(this.caKey as forge.pki.rsa.PrivateKey, forge.md.sha256.create());
 
     const pemKey = forge.pki.privateKeyToPem(keys.privateKey);
     const pemCert = forge.pki.certificateToPem(cert);
     
-    console.log("PEM Key length:", pemKey.length);
-    console.log("PEM Cert length:", pemCert.length);
-    console.log("PEM Cert start:", pemCert.substring(0, 50));
+
 
     const data = { key: pemKey, cert: pemCert };
     this.certDataCache.set(hostname, data);
