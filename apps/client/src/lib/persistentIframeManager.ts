@@ -1,3 +1,5 @@
+import { ensureIframeFocusGuard } from "./iframeFocusGuard";
+
 // Extend the Element interface to include moveBefore
 declare global {
   interface Element {
@@ -100,6 +102,8 @@ class PersistentIframeManager {
 
   private initializeContainer() {
     if (typeof document === "undefined") return;
+
+    ensureIframeFocusGuard();
 
     const init = () => {
       this.container = document.createElement("div");

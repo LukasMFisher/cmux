@@ -14,7 +14,6 @@ import {
   net,
   session,
   shell,
-  webFrameMain,
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
 } from "electron";
@@ -681,25 +680,6 @@ function createWindow(): void {
         isMainFrame,
         frameProcessId,
         frameRoutingId,
-      });
-    }
-  );
-
-  mainWindow.webContents.on(
-    "did-frame-finish-load",
-    (_event, isMainFrame, frameProcessId, frameRoutingId) => {
-      let frameUrl: string | null = null;
-      try {
-        frameUrl =
-          webFrameMain.fromId(frameProcessId, frameRoutingId)?.url ?? null;
-      } catch (error) {
-        frameUrl = `lookup-failed:${String(error)}`;
-      }
-      mainLog("did-frame-finish-load", {
-        isMainFrame,
-        frameProcessId,
-        frameRoutingId,
-        frameUrl,
       });
     }
   );
