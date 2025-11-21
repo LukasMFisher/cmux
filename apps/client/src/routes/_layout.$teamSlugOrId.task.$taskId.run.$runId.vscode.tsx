@@ -106,8 +106,7 @@ function VSCodeComponent() {
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
-    console.log("focusing webview");
-    webviewActions.focus();
+    void webviewActions.focus();
   }, [taskRunId, webviewActions]);
 
   const onError = useCallback(
@@ -137,7 +136,6 @@ function VSCodeComponent() {
   const focusWebviewIfReady = useCallback(() => {
     if (!workspaceUrl) return;
     if (iframeStatus !== "loaded") return;
-    console.log("focusing webview");
     void webviewActions.focus();
   }, [iframeStatus, webviewActions, workspaceUrl]);
 
