@@ -2,6 +2,7 @@ import { persistentIframeManager } from "./persistentIframeManager";
 
 export interface WebviewActions {
   focus?: () => Promise<boolean> | boolean;
+  isFocused?: () => Promise<boolean> | boolean;
 }
 
 const registry = new Map<string, WebviewActions>();
@@ -42,4 +43,22 @@ export async function focusWebview(persistKey: string): Promise<boolean> {
   }
 
   return persistentIframeManager.focusIframe(persistKey);
+}
+
+export async function isWebviewFocused(persistKey: string): Promise<boolean> {
+  const actions = registry.get(persistKey);
+
+  if (actions?.isFocused) {
+    try {
+      const result = await actions.isFocused();
+      return Boolean(result);
+    } catch (error) {
+      console.error(
+        `Failed to check focus for webview "${persistKey}"`,
+        error,
+      );
+    }
+  }
+
+  return persistentIframeManager.isIframeFocused(persistKey);
 }

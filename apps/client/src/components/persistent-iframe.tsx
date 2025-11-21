@@ -282,13 +282,17 @@ export function PersistentIframe({
     return persistentIframeManager.focusIframe(persistKey);
   }, [persistKey]);
 
+  const isIframeFocused = useCallback(() => {
+    return persistentIframeManager.isIframeFocused(persistKey);
+  }, [persistKey]);
+
   useEffect(() => {
-    const actions = { focus: focusIframe };
+    const actions = { focus: focusIframe, isFocused: isIframeFocused };
     registerWebviewActions(persistKey, actions);
     return () => {
       unregisterWebviewActions(persistKey, actions);
     };
-  }, [focusIframe, persistKey]);
+  }, [focusIframe, isIframeFocused, persistKey]);
 
   useEffect(() => {
     onStatusChange?.(effectiveStatus);

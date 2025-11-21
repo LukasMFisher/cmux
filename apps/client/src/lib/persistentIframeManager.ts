@@ -567,6 +567,17 @@ class PersistentIframeManager {
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
   }
 
+  isIframeFocused(key: string): boolean {
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const entry = this.iframes.get(key);
+    if (!entry || !entry.isVisible) return false;
+
+    return document.activeElement === entry.iframe;
+  }
+
   focusIframe(key: string): boolean {
     const entry = this.iframes.get(key);
     if (!entry) return false;

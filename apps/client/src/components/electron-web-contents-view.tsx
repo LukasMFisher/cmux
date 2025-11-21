@@ -358,6 +358,22 @@ export function ElectronWebContentsView({
 
           return false;
         },
+        isFocused: async () => {
+          if (typeof window === "undefined") return false;
+
+          const viewId = viewIdRef.current;
+          if (viewId === null) return false;
+
+          try {
+            const checkFocus = window.cmux?.webContentsView?.isFocused;
+            if (!checkFocus) return false;
+            const result = await checkFocus(viewId);
+            return result?.ok === true && result.focused === true;
+          } catch (error) {
+            console.error("Failed to check WebContentsView focus", error);
+            return false;
+          }
+        },
       };
       registeredActionsRef.current = actions;
       registerWebviewActions(key, actions);

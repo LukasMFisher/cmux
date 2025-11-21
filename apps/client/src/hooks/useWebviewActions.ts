@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 
-import { focusWebview } from "@/lib/webview-actions";
+import { focusWebview, isWebviewFocused } from "@/lib/webview-actions";
 
 interface UseWebviewActionsOptions {
   persistKey: string;
@@ -8,6 +8,7 @@ interface UseWebviewActionsOptions {
 
 interface UseWebviewActionsResult {
   focus: () => Promise<boolean>;
+  isFocused: () => Promise<boolean>;
 }
 
 export function useWebviewActions({
@@ -17,7 +18,11 @@ export function useWebviewActions({
     return focusWebview(persistKey);
   }, [persistKey]);
 
+  const isFocused = useCallback(() => {
+    return isWebviewFocused(persistKey);
+  }, [persistKey]);
+
   return useMemo(() => {
-    return { focus };
-  }, [focus]);
+    return { focus, isFocused };
+  }, [focus, isFocused]);
 }

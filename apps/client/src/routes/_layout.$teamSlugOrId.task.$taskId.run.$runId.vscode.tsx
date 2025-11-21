@@ -143,9 +143,17 @@ function VSCodeComponent() {
     focusWebviewIfReady();
   }, [focusWebviewIfReady]);
 
-  useElectronWindowFocus(() => {
-    focusWebviewIfReady();
-  });
+  const handleElectronWindowFocus = useCallback(() => {
+    void (async () => {
+      const alreadyFocused = await webviewActions.isFocused();
+      if (alreadyFocused) {
+        return;
+      }
+      focusWebviewIfReady();
+    })();
+  }, [focusWebviewIfReady, webviewActions]);
+
+  useElectronWindowFocus(handleElectronWindowFocus);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
