@@ -22,9 +22,11 @@ export function initPosthog() {
     return null;
   }
 
+  const apiHost = env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_API_HOST;
+
   posthog.init(env.NEXT_PUBLIC_POSTHOG_KEY, {
-    api_host: env.NEXT_PUBLIC_POSTHOG_HOST ?? DEFAULT_API_HOST,
-    ui_host: DEFAULT_UI_HOST,
+    api_host: apiHost,
+    ui_host: env.NEXT_PUBLIC_POSTHOG_HOST ? undefined : DEFAULT_UI_HOST,
     capture_pageview: "history_change",
     capture_pageleave: true,
     autocapture: true,
@@ -32,9 +34,8 @@ export function initPosthog() {
     defaults: "2025-05-24",
     disable_surveys: true,
   });
-  posthog.register({
-    platform: isElectron ? "cmux-client-electron" : "cmux-client-web",
-  });
+
+  registerPlatform();
 
   initialized = true;
   return posthog;
@@ -66,4 +67,12 @@ export function resetPosthog() {
   }
 
   posthog.reset();
+
+  registerPlatform();
+}
+
+function registerPlatform() {
+  posthog.register({
+    platform: isElectron ? "cmux-client-electron" : "cmux-client-web",
+  });
 }
