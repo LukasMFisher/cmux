@@ -30,6 +30,7 @@ export function initPosthog() {
     autocapture: true,
     debug: import.meta.env.DEV,
     defaults: "2025-05-24",
+    disable_surveys: true,
   });
   posthog.register({
     platform: isElectron ? "cmux-client-electron" : "cmux-client-web",
