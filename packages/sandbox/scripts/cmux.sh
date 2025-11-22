@@ -35,5 +35,9 @@ for i in {1..30}; do
   sleep 0.5
 done
 
-echo "Attaching shell; type 'exit' to leave and 'docker stop ${CONTAINER_NAME}' to stop container"
-docker exec --detach-keys="ctrl-^" -it -e TERM=xterm-256color "${CONTAINER_NAME}" bash -l
+if [ -z "${CMUX_NO_ATTACH:-}" ]; then
+  echo "Attaching shell; type 'exit' to leave and 'docker stop ${CONTAINER_NAME}' to stop container"
+  docker exec --detach-keys="ctrl-^" -it -e TERM=xterm-256color "${CONTAINER_NAME}" bash -l
+else
+  echo "Container started in background. Run 'docker exec -it ${CONTAINER_NAME} bash -l' to attach."
+fi

@@ -52,7 +52,7 @@ echo "Starting systemd container ${CONTAINER_NAME} on port ${PORT}"
 docker run --privileged -d \
   --name "${CONTAINER_NAME}" \
   --cgroupns=host \
-  --tmpfs /run --tmpfs /run/lock \
+  --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
   -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   --dns 1.1.1.1 --dns 8.8.8.8 \
   -e CMUX_SANDBOX_PORT="${PORT}" \
