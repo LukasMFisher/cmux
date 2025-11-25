@@ -200,8 +200,8 @@ pub(crate) fn ui(f: &mut ratatui::Frame, app: &mut App) {
                     .iter()
                     .filter(|c| c.matches(&search))
                     .map(|c| PaletteItem::Simple {
-                        label: c.label().to_string(),
-                        description: Some(c.description().to_string()),
+                        label: c.get_label().to_string(),
+                        description: Some(c.get_description().to_string()),
                         is_current: false,
                     })
                     .collect(),

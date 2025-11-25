@@ -5,6 +5,7 @@ pub mod errors;
 pub mod ip_pool;
 pub mod models;
 pub mod mux;
+pub mod palette;
 pub mod service;
 
 pub use acp_client::{

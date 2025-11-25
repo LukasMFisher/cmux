@@ -52,7 +52,7 @@ pub fn ui(f: &mut Frame, app: &mut MuxApp) {
     render_status_bar(f, app, workspace_chunks[2]);
 
     // Render overlays
-    if app.command_palette.visible {
+    if app.command_palette.is_visible() {
         render_command_palette(f, app);
     }
 
@@ -445,7 +445,7 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
     let search_prefix = Paragraph::new(Span::styled(">", Style::default().fg(Color::Cyan)));
     f.render_widget(search_prefix, Rect::new(search_area.x, search_area.y, 2, 1));
     f.render_widget(
-        &app.command_palette.search_input,
+        app.command_palette.search_input(),
         Rect::new(search_area.x + 2, search_area.y, search_area.width - 2, 1),
     );
 
@@ -529,7 +529,7 @@ fn render_command_palette(f: &mut Frame, app: &mut MuxApp) {
             .adjust_scroll(selected_line, visible_lines);
     }
 
-    let scroll_offset = app.command_palette.scroll_offset;
+    let scroll_offset = app.command_palette.scroll_offset();
     let paragraph = Paragraph::new(lines).scroll((scroll_offset as u16, 0));
     f.render_widget(paragraph, items_area);
 

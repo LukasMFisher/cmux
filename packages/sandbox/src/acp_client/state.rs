@@ -15,6 +15,7 @@ use crate::acp_client::events::AppEvent;
 use crate::acp_client::markdown::normalize_code_fences;
 use crate::acp_client::provider::AcpProvider;
 use crate::acp_client::workspace_sync::WorkspaceSyncStatus;
+use crate::palette::{fuzzy_match_str, PaletteCommand as PaletteCommandTrait};
 
 #[derive(Clone)]
 pub(crate) enum ChatEntry {
@@ -60,14 +61,14 @@ impl PaletteCommand {
         ]
     }
 
-    pub(crate) fn label(&self) -> &'static str {
+    pub(crate) fn get_label(&self) -> &'static str {
         match self {
             PaletteCommand::ToggleDebugMode => "Toggle Debug Mode",
             PaletteCommand::SwitchProviderModel => "Switch Provider / Model",
         }
     }
 
-    pub(crate) fn description(&self) -> &'static str {
+    pub(crate) fn get_description(&self) -> &'static str {
         match self {
             PaletteCommand::ToggleDebugMode => "Show/hide raw ACP protocol messages",
             PaletteCommand::SwitchProviderModel => "Change AI provider or model",
@@ -75,12 +76,18 @@ impl PaletteCommand {
     }
 
     pub(crate) fn matches(&self, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-        let query_lower = query.to_lowercase();
-        self.label().to_lowercase().contains(&query_lower)
-            || self.description().to_lowercase().contains(&query_lower)
+        // Use the shared fuzzy matching from the trait
+        crate::palette::fuzzy_match(self, query).is_some()
+    }
+}
+
+impl PaletteCommandTrait for PaletteCommand {
+    fn label(&self) -> &str {
+        self.get_label()
+    }
+
+    fn description(&self) -> Option<&str> {
+        Some(self.get_description())
     }
 }
 
@@ -237,23 +244,17 @@ impl<'a> App<'a> {
 
     pub(crate) fn get_switch_palette_items(&self) -> Vec<SwitchPaletteItem> {
         let search = self.palette_search();
-        let search_lower = search.to_lowercase();
         let mut items = Vec::new();
 
         for provider in AcpProvider::all() {
-            let provider_matches = search.is_empty()
-                || provider
-                    .display_name()
-                    .to_lowercase()
-                    .contains(&search_lower);
+            let provider_matches =
+                search.is_empty() || fuzzy_match_str(&search, provider.display_name());
 
             let models = self.get_models_for_provider(*provider);
 
             let matching_models: Vec<_> = models
                 .iter()
-                .filter(|(_, name)| {
-                    search.is_empty() || name.to_lowercase().contains(&search_lower)
-                })
+                .filter(|(_, name)| search.is_empty() || fuzzy_match_str(&search, name))
                 .collect();
 
             let is_loading = self.providers_loading.contains(provider);

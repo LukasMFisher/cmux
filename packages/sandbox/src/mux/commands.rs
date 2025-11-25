@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
+use crate::palette::PaletteCommand;
+
 /// A command that can be executed in the multiplexer.
 /// Each command has an associated keyboard shortcut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +511,32 @@ impl MuxCommand {
             }
         }
         None
+    }
+}
+
+/// Implement the shared palette command trait for MuxCommand.
+impl PaletteCommand for MuxCommand {
+    fn label(&self) -> &str {
+        MuxCommand::label(self)
+    }
+
+    fn description(&self) -> Option<&str> {
+        Some(MuxCommand::description(self))
+    }
+
+    fn category(&self) -> Option<&str> {
+        Some(MuxCommand::category(self))
+    }
+
+    fn keybinding(&self) -> Option<&str> {
+        // We store keybinding as a computed string, but trait expects &str
+        // Since the method returns String, we can't return a reference.
+        // Return None for now - keybinding is handled via keybinding_str()
+        None
+    }
+
+    fn is_current(&self) -> bool {
+        false
     }
 }
 
