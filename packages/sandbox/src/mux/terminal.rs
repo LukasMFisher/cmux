@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
 use crate::models::{MuxClientMessage, MuxServerMessage, PtySessionId};
@@ -16,6 +17,8 @@ use crate::mux::layout::PaneId;
 pub struct Cell {
     pub c: char,
     pub style: Style,
+    /// True if this cell is a spacer for a wide character (the cell to the right of a double-width char)
+    pub wide_spacer: bool,
 }
 
 impl Default for Cell {
@@ -23,6 +26,7 @@ impl Default for Cell {
         Self {
             c: ' ',
             style: Style::default(),
+            wide_spacer: false,
         }
     }
 }
@@ -280,6 +284,10 @@ impl VirtualTerminal {
         self.scroll_region = (0, new_rows.saturating_sub(1));
         // Update tab stops for new width
         self.tab_stops.retain(|&c| c < new_cols);
+        // Fix wide characters that may have been split by the new edge
+        self.fix_wide_chars_at_edge();
+        // Ensure cursor isn't on a wide spacer
+        self.fix_wide_char_at_cursor();
     }
 
     /// Resize a grid to current terminal dimensions, used when restoring alternate screen
@@ -371,6 +379,35 @@ impl VirtualTerminal {
         self.cursor_col = 0;
     }
 
+    /// Fix orphaned wide character cells after cursor movement or editing.
+    /// If cursor lands on a wide spacer, move it to the main character.
+    fn fix_wide_char_at_cursor(&mut self) {
+        if self.cursor_row >= self.rows || self.cursor_col >= self.cols {
+            return;
+        }
+
+        // If cursor is on a wide spacer, move to the main character
+        if self.grid[self.cursor_row][self.cursor_col].wide_spacer && self.cursor_col > 0 {
+            self.cursor_col -= 1;
+        }
+    }
+
+    /// Fix wide characters that are split by the right edge of the terminal.
+    /// Call this after resize operations.
+    fn fix_wide_chars_at_edge(&mut self) {
+        for row in &mut self.grid {
+            if let Some(last_cell) = row.last() {
+                // If the last cell is NOT a spacer but IS a wide character,
+                // it means the spacer would be off-screen - clear it
+                if !last_cell.wide_spacer && last_cell.c.width().unwrap_or(1) > 1 {
+                    if let Some(last) = row.last_mut() {
+                        *last = Cell::default();
+                    }
+                }
+            }
+        }
+    }
+
     /// Put a character at cursor position and advance
     fn put_char(&mut self, c: char) {
         // Handle pending wrap from previous character at edge
@@ -390,6 +427,30 @@ impl VirtualTerminal {
         // Save for REP (repeat character) command
         self.last_printed_char = Some(display_char);
 
+        // Determine character width (0, 1, or 2)
+        let char_width = display_char.width().unwrap_or(1);
+
+        // Handle zero-width characters (combining chars, etc.) - just skip them for now
+        if char_width == 0 {
+            return;
+        }
+
+        // For wide characters, check if we have room for both cells
+        // If we're at the last column and it's a wide char, we need to wrap first
+        if char_width == 2 && self.cursor_col + 1 >= self.cols {
+            if self.auto_wrap {
+                // Clear the current cell (it would be orphaned) and wrap
+                if self.cursor_row < self.rows && self.cursor_col < self.cols {
+                    self.grid[self.cursor_row][self.cursor_col] = Cell::default();
+                }
+                self.cursor_col = 0;
+                self.newline();
+            } else {
+                // Can't fit, don't print
+                return;
+            }
+        }
+
         // Defensive bounds check - ensure grid is properly sized
         if self.cursor_row < self.rows
             && self.cursor_col < self.cols
@@ -403,27 +464,60 @@ impl VirtualTerminal {
             // In insert mode, shift characters right
             if self.insert_mode {
                 let row = &mut self.grid[self.cursor_row];
-                // Shift characters from cursor to end of line right by 1
-                for i in (self.cursor_col + 1..self.cols.min(row.len())).rev() {
-                    if i > 0 && i < row.len() && i - 1 < row.len() {
-                        row[i] = row[i - 1].clone();
+                // Shift characters from cursor to end of line right by char_width
+                for i in (self.cursor_col + char_width..self.cols.min(row.len())).rev() {
+                    if i >= char_width && i < row.len() && i - char_width < row.len() {
+                        row[i] = row[i - char_width].clone();
                     }
                 }
             }
 
+            // If we're overwriting a wide character spacer, clear the main char too
+            if self.grid[self.cursor_row][self.cursor_col].wide_spacer && self.cursor_col > 0 {
+                self.grid[self.cursor_row][self.cursor_col - 1] = Cell::default();
+            }
+
+            // If we're overwriting a wide character's first cell, clear the spacer
+            if char_width == 1
+                && self.cursor_col + 1 < self.cols
+                && self.grid[self.cursor_row][self.cursor_col + 1].wide_spacer
+            {
+                self.grid[self.cursor_row][self.cursor_col + 1] = Cell::default();
+            }
+
+            // Place the character
             self.grid[self.cursor_row][self.cursor_col] = Cell {
                 c: display_char,
                 style: self.current_style,
+                wide_spacer: false,
             };
 
-            if self.cursor_col + 1 >= self.cols {
+            // For wide characters, place a spacer in the next cell
+            if char_width == 2 && self.cursor_col + 1 < self.cols {
+                // If the next cell is a wide char's first cell, clear its spacer too
+                if self.cursor_col + 2 < self.cols
+                    && self.grid[self.cursor_row][self.cursor_col + 2].wide_spacer
+                {
+                    self.grid[self.cursor_row][self.cursor_col + 2] = Cell::default();
+                }
+
+                self.grid[self.cursor_row][self.cursor_col + 1] = Cell {
+                    c: ' ',
+                    style: self.current_style,
+                    wide_spacer: true,
+                };
+            }
+
+            // Advance cursor
+            let advance = char_width;
+            if self.cursor_col + advance >= self.cols {
                 // At the edge - set pending wrap if auto-wrap is enabled
                 if self.auto_wrap {
                     self.pending_wrap = true;
                 }
-                // Don't advance cursor past edge
+                self.cursor_col = self.cols - 1;
             } else {
-                self.cursor_col += 1;
+                self.cursor_col += advance;
             }
         }
     }
@@ -440,6 +534,11 @@ impl VirtualTerminal {
     /// Repeat the last printed character n times
     fn repeat_char(&mut self, n: usize) {
         if let Some(c) = self.last_printed_char {
+            let char_width = c.width().unwrap_or(1);
+            if char_width == 0 {
+                return;
+            }
+
             for _ in 0..n {
                 // Directly put the character without line drawing translation (already translated)
                 if self.pending_wrap {
@@ -448,25 +547,52 @@ impl VirtualTerminal {
                     self.newline();
                 }
 
+                // For wide characters, check if we have room
+                if char_width == 2 && self.cursor_col + 1 >= self.cols {
+                    if self.auto_wrap {
+                        if self.cursor_row < self.rows && self.cursor_col < self.cols {
+                            self.grid[self.cursor_row][self.cursor_col] = Cell::default();
+                        }
+                        self.cursor_col = 0;
+                        self.newline();
+                    } else {
+                        continue;
+                    }
+                }
+
                 if self.cursor_row < self.rows && self.cursor_col < self.cols {
                     if self.insert_mode {
                         let row = &mut self.grid[self.cursor_row];
-                        for i in (self.cursor_col + 1..self.cols).rev() {
-                            row[i] = row[i - 1].clone();
+                        for i in (self.cursor_col + char_width..self.cols).rev() {
+                            if i >= char_width {
+                                row[i] = row[i - char_width].clone();
+                            }
                         }
                     }
 
                     self.grid[self.cursor_row][self.cursor_col] = Cell {
                         c,
                         style: self.current_style,
+                        wide_spacer: false,
                     };
 
-                    if self.cursor_col + 1 >= self.cols {
+                    // For wide characters, place a spacer
+                    if char_width == 2 && self.cursor_col + 1 < self.cols {
+                        self.grid[self.cursor_row][self.cursor_col + 1] = Cell {
+                            c: ' ',
+                            style: self.current_style,
+                            wide_spacer: true,
+                        };
+                    }
+
+                    let advance = char_width;
+                    if self.cursor_col + advance >= self.cols {
                         if self.auto_wrap {
                             self.pending_wrap = true;
                         }
+                        self.cursor_col = self.cols - 1;
                     } else {
-                        self.cursor_col += 1;
+                        self.cursor_col += advance;
                     }
                 }
             }
@@ -896,7 +1022,7 @@ impl Perform for VirtualTerminal {
                 self.cursor_row = (row - 1).min(self.rows - 1);
             }
             // SGR - Select Graphic Rendition
-            'm' => {
+            'm' if intermediates.is_empty() => {
                 self.apply_sgr(params);
             }
             // Device Status Report (DSR)
@@ -1284,6 +1410,12 @@ impl TerminalBuffer {
                 let mut current_text = String::new();
 
                 for cell in cells {
+                    // Skip wide character spacers - they don't contribute to output
+                    // The wide character in the previous cell already takes up 2 columns visually
+                    if cell.wide_spacer {
+                        continue;
+                    }
+
                     if cell.style == current_style {
                         current_text.push(cell.c);
                     } else {
@@ -1833,6 +1965,14 @@ mod tests {
         assert_eq!(term.grid[0][0].c, 'R');
         assert_eq!(term.grid[0][0].style.fg, Some(Color::Red));
         assert_eq!(term.grid[0][2].style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn ignores_private_intermediate_sgr() {
+        let mut term = VirtualTerminal::new(2, 10);
+        term.process(b"\x1b[>4;1mHi");
+        assert_eq!(term.grid[0][0].style, Style::default());
+        assert_eq!(term.grid[0][1].style, Style::default());
     }
 
     #[test]
