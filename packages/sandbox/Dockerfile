@@ -3,6 +3,7 @@
 ARG RUST_VERSION=1.91.0
 ARG DOCKER_VERSION=27.4.0
 ARG DOCKER_COMPOSE_VERSION=2.29.7
+ARG BUILDX_VERSION=0.30.1
 ARG BUILDKIT_VERSION=0.15.2
 ARG NODE_VERSION=22.11.0
 
@@ -63,6 +64,7 @@ FROM ubuntu:24.04 AS dind-installer
 
 ARG DOCKER_VERSION
 ARG DOCKER_COMPOSE_VERSION
+ARG BUILDX_VERSION
 ARG BUILDKIT_VERSION
 
 SHELL ["/bin/bash", "-c"]
@@ -94,6 +96,10 @@ mkdir -p /usr/local/lib/docker/cli-plugins
 wget -O /usr/local/lib/docker/cli-plugins/docker-compose \
   "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${docker_arch}"
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+wget -O /usr/local/lib/docker/cli-plugins/docker-buildx \
+  "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.${buildkit_arch}"
+chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
 
 wget -O /tmp/buildkit.tgz "https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.${buildkit_arch}.tar.gz"
 tar -xzf /tmp/buildkit.tgz -C /tmp
