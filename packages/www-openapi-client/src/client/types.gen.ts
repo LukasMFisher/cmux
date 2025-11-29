@@ -1085,14 +1085,6 @@ export type GetApiIntegrationsGithubReposData = {
          * 1-based page index (default 1)
          */
         page?: number;
-        /**
-         * Items per page (default 5)
-         */
-        limit?: number;
-        /**
-         * Max pages to fetch (default 1)
-         */
-        pages?: number;
     };
     url: '/api/integrations/github/repos';
 };

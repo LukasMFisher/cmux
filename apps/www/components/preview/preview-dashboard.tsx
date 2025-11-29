@@ -110,8 +110,7 @@ export function PreviewDashboard({
   const canSearchRepos =
     isAuthenticated &&
     Boolean(selectedTeamSlugOrIdState) &&
-    hasGithubAppInstallation &&
-    activeConnections.length > 0;
+    hasGithubAppInstallation;
 
   useEffect(() => {
     setConfigs(previewConfigs);

@@ -525,6 +525,21 @@ class SimplePersistentIframeManager {
 
 const iframeManager = typeof window !== "undefined" ? new SimplePersistentIframeManager() : null;
 
+function StepBadge({ step, done }: { step: number; done: boolean }) {
+  return (
+    <span
+      className={clsx(
+        "flex h-5 w-5 items-center justify-center rounded-full border text-[11px]",
+        done
+          ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:border-emerald-400/70 dark:bg-emerald-900/40 dark:text-emerald-100"
+          : "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400"
+      )}
+    >
+      {done ? <Check className="h-3 w-3" /> : step}
+    </span>
+  );
+}
+
 export function PreviewConfigureClient({
   initialTeamSlugOrId,
   teams,
@@ -630,7 +645,7 @@ export function PreviewConfigureClient({
     };
   }, []);
 
-  const persistentIframeManager = useMemo(() => iframeManager, []);
+  const persistentIframeManager = iframeManager;
 
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastSubmittedEnvContent = useRef<string | null>(null);
@@ -697,10 +712,6 @@ export function PreviewConfigureClient({
   const envDone = envNone || hasEnvValues;
   const maintenanceDone = maintenanceNone || maintenanceScriptValue.length > 0;
   const devDone = devNone || devScriptValue.length > 0;
-  const maintenanceAck = maintenanceDone;
-  const devAck = devDone;
-  const runAck = runConfirmed;
-  const browserAck = browserConfirmed;
 
   // Auto-enter configuration once VS Code is available when resuming an existing environment
   useEffect(() => {
@@ -1480,25 +1491,6 @@ export function PreviewConfigureClient({
     );
   }
 
-  const StepBadge = ({ step, done }: { step: number; done: boolean }) => (
-    <span
-      className={clsx(
-        "flex h-5 w-5 items-center justify-center rounded-full border text-[11px]",
-        done
-          ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:border-emerald-400/70 dark:bg-emerald-900/40 dark:text-emerald-100"
-          : "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400"
-      )}
-    >
-      {done ? <Check className="h-3 w-3" /> : step}
-    </span>
-  );
-
-  const fieldInputClass =
-    "w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed";
-
-  const checkboxClass =
-    "h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40";
-
   const renderStep1Content = () => (
     <div className="space-y-5">
       {/* Workspace Info */}
@@ -1510,7 +1502,7 @@ export function PreviewConfigureClient({
       <details className="group" open={isMaintenanceSectionOpen} onToggle={(e) => setIsMaintenanceSectionOpen(e.currentTarget.open)}>
         <summary className="flex items-center gap-2 cursor-pointer list-none">
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={1} done={maintenanceAck} />
+          <StepBadge step={1} done={maintenanceDone} />
           <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">Maintenance script</span>
         </summary>
         <div className="mt-3 ml-6 space-y-2">
@@ -1523,11 +1515,11 @@ export function PreviewConfigureClient({
             placeholder={"npm install, bun install, pip install -r requirements.txt"}
             disabled={maintenanceNone}
             rows={2}
-            className={fieldInputClass + " resize-none"}
+            className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
           />
           <div className="flex items-center justify-end">
             <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input type="checkbox" checked={maintenanceNone} onChange={(e) => handleToggleMaintenanceNone(e.target.checked)} className={checkboxClass} />
+              <input type="checkbox" checked={maintenanceNone} onChange={(e) => handleToggleMaintenanceNone(e.target.checked)} className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40" />
               None
             </label>
           </div>
@@ -1538,7 +1530,7 @@ export function PreviewConfigureClient({
       <details className="group" open={isDevSectionOpen} onToggle={(e) => setIsDevSectionOpen(e.currentTarget.open)}>
         <summary className="flex items-center gap-2 cursor-pointer list-none">
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={2} done={devAck} />
+          <StepBadge step={2} done={devDone} />
           <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">Dev script</span>
         </summary>
         <div className="mt-3 ml-6 space-y-2">
@@ -1551,11 +1543,11 @@ export function PreviewConfigureClient({
             placeholder={"npm run dev, bun dev, python manage.py runserver"}
             disabled={devNone}
             rows={2}
-            className={fieldInputClass + " resize-none"}
+            className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
           />
           <div className="flex items-center justify-end">
             <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input type="checkbox" checked={devNone} onChange={(e) => handleToggleDevNone(e.target.checked)} className={checkboxClass} />
+              <input type="checkbox" checked={devNone} onChange={(e) => handleToggleDevNone(e.target.checked)} className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40" />
               None
             </label>
           </div>
@@ -1620,7 +1612,7 @@ export function PreviewConfigureClient({
                   ref={(el) => { keyInputRefs.current[idx] = el; }}
                   onChange={(e) => { setEnvNone(false); updateEnvVars((prev) => { const next = [...prev]; if (next[idx]) next[idx] = { ...next[idx], name: e.target.value }; return next; }); }}
                   placeholder="EXAMPLE_NAME"
-                  className={fieldInputClass}
+                  className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
                 />
                 <input
                   type="text"
@@ -1631,7 +1623,7 @@ export function PreviewConfigureClient({
                   onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
                   readOnly={shouldMaskValue}
                   placeholder="I9JU23NF394R6HH"
-                  className={fieldInputClass}
+                  className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
                 />
                 <button
                   type="button"
@@ -1655,7 +1647,7 @@ export function PreviewConfigureClient({
               <Plus className="w-3 h-3" /> Add
             </button>
             <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input type="checkbox" checked={envNone} onChange={(e) => handleToggleEnvNone(e.target.checked)} className={checkboxClass} />
+              <input type="checkbox" checked={envNone} onChange={(e) => handleToggleEnvNone(e.target.checked)} className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40" />
               None
             </label>
           </div>
@@ -1667,7 +1659,7 @@ export function PreviewConfigureClient({
       <details className="group" open={isRunSectionOpen} onToggle={(e) => setIsRunSectionOpen(e.currentTarget.open)}>
         <summary className="flex items-center gap-2 cursor-pointer list-none">
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={4} done={runAck} />
+          <StepBadge step={4} done={runConfirmed} />
           <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">Run scripts in VS Code terminal</span>
         </summary>
         <div className="mt-3 ml-6 space-y-3">
@@ -1690,7 +1682,7 @@ export function PreviewConfigureClient({
               </pre>
             </div>
           <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-700 dark:hover:text-neutral-300">
-            <input type="checkbox" checked={runConfirmed} onChange={(e) => setRunConfirmed(e.target.checked)} className={checkboxClass} />
+            <input type="checkbox" checked={runConfirmed} onChange={(e) => setRunConfirmed(e.target.checked)} className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40" />
             Proceed once dev script is running
           </label>
         </div>
@@ -1704,7 +1696,7 @@ export function PreviewConfigureClient({
       <details className="group" open={isBrowserSetupSectionOpen} onToggle={(e) => setIsBrowserSetupSectionOpen(e.currentTarget.open)}>
         <summary className="flex items-center gap-2 cursor-pointer list-none">
           <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform group-open:rotate-180" />
-          <StepBadge step={5} done={browserAck} />
+          <StepBadge step={5} done={browserConfirmed} />
           <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">Configure browser</span>
         </summary>
         <div className="mt-3 ml-6 space-y-3">
@@ -1726,7 +1718,7 @@ export function PreviewConfigureClient({
             </li>
           </ul>
           <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-700 dark:hover:text-neutral-300 pt-1">
-            <input type="checkbox" checked={browserConfirmed} onChange={(e) => setBrowserConfirmed(e.target.checked)} className={checkboxClass} />
+            <input type="checkbox" checked={browserConfirmed} onChange={(e) => setBrowserConfirmed(e.target.checked)} className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40" />
             Browser is set up properly
           </label>
         </div>

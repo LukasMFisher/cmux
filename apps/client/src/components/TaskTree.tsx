@@ -82,6 +82,21 @@ import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
 type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
+function getStatusIcon(status: TaskRunStatus): ReactElement {
+  switch (status) {
+    case "pending":
+      return <Circle className="w-3 h-3 text-neutral-400" />;
+    case "running":
+      return <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />;
+    case "completed":
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
+    case "failed":
+      return <XCircle className="w-3 h-3 text-red-500" />;
+    case "skipped":
+      return <AlertTriangle className="w-3 h-3 text-amber-500" />;
+  }
+}
+
 type TaskWithGeneratedBranch = Doc<"tasks"> & {
   generatedBranchName?: string | null;
 };
@@ -1220,14 +1235,7 @@ function TaskRunTreeInner({
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
-  const statusIcons: Record<TaskRunStatus, ReactElement> = {
-    pending: <Circle className="w-3 h-3 text-neutral-400" />,
-    running: <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />,
-    completed: <CheckCircle className="w-3 h-3 text-green-500" />,
-    failed: <XCircle className="w-3 h-3 text-red-500" />,
-    skipped: <AlertTriangle className="w-3 h-3 text-amber-500" />,
-  };
-  const statusIcon = statusIcons[run.status];
+  const statusIcon = getStatusIcon(run.status);
 
   const shouldHideStatusIcon =
     (isLocalWorkspaceRunEntry || isCloudWorkspaceRunEntry) &&
