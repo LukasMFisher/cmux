@@ -678,7 +678,6 @@ export type PreviewRun = {
     headSha: string;
     baseSha?: string | null;
     status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-    stateReason?: string | null;
     createdAt: number;
     updatedAt: number;
     dispatchedAt?: number | null;

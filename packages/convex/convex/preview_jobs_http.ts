@@ -126,10 +126,9 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     return jsonResponse({ error: "Missing required fields" }, 400);
   }
 
-  const { previewRunId, status, stateReason, screenshotSetId } = body as {
+  const { previewRunId, status, screenshotSetId } = body as {
     previewRunId: string;
     status: string;
-    stateReason?: string;
     screenshotSetId?: string;
   };
 
@@ -147,7 +146,6 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId: previewRunId as Id<"previewRuns">,
       status: status as "running" | "completed" | "failed" | "skipped",
-      stateReason,
       screenshotSetId: screenshotSetId as Id<"taskRunScreenshotSets"> | undefined,
     });
 
@@ -324,7 +322,6 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "skipped",
-        stateReason: "No screenshots available",
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);

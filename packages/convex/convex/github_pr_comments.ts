@@ -714,7 +714,6 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId,
         status: screenshotSet.status as "completed" | "failed" | "skipped",
-        stateReason: screenshotSet.error,
         screenshotSetId: taskRun.latestScreenshotSetId,
         githubCommentUrl: data.html_url ?? previewRun.githubCommentUrl,
         githubCommentId: data.id ?? previewRun.githubCommentId,
