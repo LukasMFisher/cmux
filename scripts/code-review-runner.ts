@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { MorphCloudClient } from "morphcloud";
+import { VM_CLEANUP_COMMANDS } from "../apps/www/lib/routes/sandboxes/cleanup";
 
 const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_vb7uqz8o";
 const WORKSPACE_ROOT = "/root/workspace";
@@ -172,6 +173,13 @@ async function main() {
       sandboxInstanceId,
     });
 
+    // Kill all dev servers before pausing to avoid port conflicts on resume
+    await instance.exec(VM_CLEANUP_COMMANDS).catch((error) => {
+      console.warn(
+        `[code-review-runner] Failed to cleanup before pause ${sandboxInstanceId}`,
+        error,
+      );
+    });
     await instance.pause().catch((error) => {
       console.warn(
         `[code-review-runner] Failed to pause Morph instance ${sandboxInstanceId}`,
@@ -213,6 +221,13 @@ async function main() {
     }
 
     if (instance) {
+      // Kill all dev servers before pausing to avoid port conflicts on resume
+      await instance.exec(VM_CLEANUP_COMMANDS).catch((cleanupError) => {
+        console.warn(
+          `[code-review-runner] Failed to cleanup before pause ${instance?.id}`,
+          cleanupError,
+        );
+      });
       await instance.pause().catch((pauseError) => {
         console.warn(
           `[code-review-runner] Failed to pause Morph instance ${instance?.id}`,
