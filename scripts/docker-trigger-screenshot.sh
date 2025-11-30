@@ -12,6 +12,9 @@ NON_INTERACTIVE=false
 HOST_OUTPUT_ROOT="$(pwd)/tmp"
 HOST_OUTPUT_TGZ="$HOST_OUTPUT_ROOT/cmux-screenshots-latest.tgz"
 HOST_OUTPUT_DIR="$HOST_OUTPUT_ROOT/cmux-screenshots-latest"
+INITIAL_SCREENSHOT_DIR=""
+INITIAL_SCREENSHOT_MTIME=""
+RUN_START_TS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -249,6 +252,14 @@ if (Object.keys(config).length > 0) {
 process.stdout.write(JSON.stringify(payload));
 ' "$ANTHROPIC_API_KEY")
 
+RUN_START_TS=$(date +%s)
+INITIAL_SCREENSHOT_DIR=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -1t /root/screenshots 2>/dev/null | head -1 || true')
+if [ -n "$INITIAL_SCREENSHOT_DIR" ]; then
+  INITIAL_SCREENSHOT_MTIME=$(docker exec "$CONTAINER_NAME" bash -lc 'stat -c %Y "/root/screenshots/'"$INITIAL_SCREENSHOT_DIR"'" 2>/dev/null || true')
+else
+  INITIAL_SCREENSHOT_MTIME=""
+fi
+
 echo "Triggering worker:start-screenshot-collection..."
 curl -s \
   -X POST \
@@ -290,24 +301,46 @@ fetch_screenshots() {
 
   echo "Waiting for screenshots to appear in the container..."
   local latest=""
+  local latest_mtime=""
+  local has_files=""
+  local target_dir=""
+  local starting_latest="$INITIAL_SCREENSHOT_DIR"
+  local starting_mtime="$INITIAL_SCREENSHOT_MTIME"
+  local run_started_at="$RUN_START_TS"
+
+  if [ -z "$run_started_at" ]; then
+    run_started_at=$(date +%s)
+  fi
+
   for _ in {1..36}; do
     latest=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -1t /root/screenshots 2>/dev/null | head -1 || true')
     if [ -n "$latest" ]; then
+      latest_mtime=$(docker exec "$CONTAINER_NAME" bash -lc 'stat -c %Y "/root/screenshots/'"$latest"'" 2>/dev/null || true')
       has_files=$(docker exec "$CONTAINER_NAME" bash -lc 'ls -A "/root/screenshots/'"$latest"'" 2>/dev/null | head -1 || true')
-      if [ -n "$has_files" ]; then
+      is_new_dir=false
+      if [ "$latest" != "$starting_latest" ]; then
+        is_new_dir=true
+      elif [ -n "$latest_mtime" ] && [ "$latest_mtime" -ge "$run_started_at" ]; then
+        is_new_dir=true
+      elif [ -n "$starting_mtime" ] && [ -n "$latest_mtime" ] && [ "$latest_mtime" -gt "$starting_mtime" ]; then
+        is_new_dir=true
+      fi
+
+      if [ "$is_new_dir" = true ] && [ -n "$has_files" ]; then
+        target_dir="$latest"
         break
       fi
     fi
     sleep 10
   done
 
-  if [ -z "$latest" ]; then
-    echo "No screenshots were found in the container after waiting."
+  if [ -z "$target_dir" ]; then
+    echo "No new screenshots were found in the container after waiting."
     return
   fi
 
-  echo "Found screenshots in /root/screenshots/$latest. Copying to host..."
-  docker exec "$CONTAINER_NAME" bash -lc 'tar -czf /tmp/cmux-screenshots.tgz -C /root/screenshots '"$latest"'' || {
+  echo "Found screenshots in /root/screenshots/$target_dir. Copying to host..."
+  docker exec "$CONTAINER_NAME" bash -lc 'tar -czf /tmp/cmux-screenshots.tgz -C /root/screenshots '"$target_dir"'' || {
     echo "Failed to create screenshots archive inside container."
     return
   }
@@ -321,13 +354,13 @@ fetch_screenshots() {
 
   mkdir -p "$HOST_OUTPUT_DIR"
   tar -xzf "$HOST_OUTPUT_TGZ" -C "$HOST_OUTPUT_DIR"
-  local extracted_dir="$HOST_OUTPUT_DIR/$latest"
+  local extracted_dir="$HOST_OUTPUT_DIR/$target_dir"
 
   # Write a simple structured output JSON alongside the images using host paths
   if command -v python3 >/dev/null 2>&1; then
     python3 - <<PY
 import json, os, glob
-latest = "${latest}"
+latest = "${target_dir}"
 base_dir = os.path.join("${HOST_OUTPUT_DIR}", latest)
 images = sorted(glob.glob(os.path.join(base_dir, "*.*")))
 payload = {
