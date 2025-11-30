@@ -304,55 +304,24 @@ fn render_pane(
         crate::mux::layout::PaneContent::Terminal { sandbox_id, .. } => {
             // Check if we have terminal output to display
             let height = inner_area.height as usize;
-            let (view, force_current) = match app.get_terminal_view(pane.id, height) {
-                Some((v, fc)) => (Some(v), fc),
-                None => (None, false),
-            };
+            let view = app.get_terminal_view(pane.id, height);
             let previous = app.last_terminal_views.get(&pane.id).cloned();
-
-            // Track if we have a fresh view (vs using stale cache)
-            let have_fresh_view = view.is_some();
-
-            let render_view = match (&view, &previous) {
-                // If we have a current view, always render it (avoids stale cached frames)
-                (Some(v), _) => Some(v.clone()),
-                // Fall back to previous ONLY if it's not an alt screen view
-                // (stale alt screen views cause visual artifacts after TUI exit)
-                (None, Some(prev)) if !prev.is_alt_screen => Some(prev.clone()),
-                // Stale alt screen view detected - clear area to prevent artifacts
-                // This happens when try_lock fails after a TUI exits alternate screen
-                (None, Some(_stale_alt_screen_view)) => {
-                    let buf = f.buffer_mut();
-                    for y in inner_area.y..inner_area.y + inner_area.height {
-                        for x in inner_area.x..inner_area.x + inner_area.width {
-                            if let Some(cell) = buf.cell_mut((x, y)) {
-                                cell.set_symbol(" ");
-                                cell.set_style(Style::default());
-                            }
-                        }
+            let render_view = match (view, previous.clone()) {
+                (Some(v), _) if v.has_content => Some(v),
+                (Some(v), Some(prev)) => {
+                    // Prefer previous non-empty view to avoid placeholder flicker
+                    if prev.has_content {
+                        Some(prev)
+                    } else {
+                        Some(v)
                     }
-                    // Don't update last_terminal_views - we'll get fresh data next frame
-                    return;
                 }
+                (None, Some(prev)) => Some(prev),
                 _ => None,
             };
 
             if let Some(view) = render_view {
-                // Render if has_content OR if we're forcing a clear (alt screen switch)
-                if view.has_content || force_current || view.is_alt_screen {
-                    if force_current {
-                        // Manual full clear to ensure no artifacts remain
-                        let buf = f.buffer_mut();
-                        for y in inner_area.y..inner_area.y + inner_area.height {
-                            for x in inner_area.x..inner_area.x + inner_area.width {
-                                if let Some(cell) = buf.cell_mut((x, y)) {
-                                    cell.set_symbol(" ");
-                                    cell.set_style(Style::default());
-                                }
-                            }
-                        }
-                    }
-
+                if view.has_content {
                     // Render terminal output
                     let buf = f.buffer_mut();
                     let previous = app.last_terminal_views.get(&pane.id);
@@ -361,17 +330,7 @@ fn render_pane(
                     let changed = view.changed_lines.as_ref();
 
                     for row in 0..visible_rows {
-                        // Always render all rows when force_current (alt screen switch)
-                        let row_changed = force_current
-                            || previous.is_none()
-                            || changed.binary_search(&row).is_ok()
-                            || previous
-                                .and_then(|prev| {
-                                    let prev_line = prev.lines.get(row)?;
-                                    let new_line = view.lines.get(row)?;
-                                    Some(prev_line != new_line)
-                                })
-                                .unwrap_or(false);
+                        let row_changed = previous.is_none() || changed.binary_search(&row).is_ok();
                         if !row_changed {
                             continue;
                         }
@@ -405,30 +364,23 @@ fn render_pane(
                         }
                     }
 
-                    // Clear leftover rows if the area shrank or if force_current
-                    let prev_rows = previous.map(|p| p.lines.len()).unwrap_or(0);
-                    let clear_from = if force_current { 0 } else { visible_rows };
-                    let clear_to = if force_current {
-                        inner_area.height as usize
-                    } else {
-                        prev_rows.min(inner_area.height as usize)
-                    };
-                    if clear_to > clear_from || force_current {
-                        for row in clear_from.max(visible_rows)..clear_to {
-                            let y = inner_area.y + row as u16;
-                            for col in inner_area.x..inner_area.x + inner_area.width {
-                                if let Some(cell) = buf.cell_mut((col, y)) {
-                                    cell.set_symbol(" ");
-                                    cell.set_style(Style::default());
+                    // Clear leftover rows if the area shrank
+                    if let Some(prev) = previous {
+                        let prev_rows = prev.lines.len();
+                        if prev_rows > visible_rows {
+                            for row in visible_rows..prev_rows.min(inner_area.height as usize) {
+                                let y = inner_area.y + row as u16;
+                                for col in inner_area.x..inner_area.x + inner_area.width {
+                                    if let Some(cell) = buf.cell_mut((col, y)) {
+                                        cell.set_symbol(" ");
+                                        cell.set_style(Style::default());
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Only update cache with fresh views, not stale fallbacks
-                    if have_fresh_view {
-                        app.last_terminal_views.insert(pane.id, view.clone());
-                    }
+                    app.last_terminal_views.insert(pane.id, view.clone());
 
                     // Set cursor position only if:
                     // 1. Pane is active
@@ -442,8 +394,6 @@ fn render_pane(
                                 && cursor_y < inner_area.y + inner_area.height
                             {
                                 f.set_cursor_position((cursor_x, cursor_y));
-                                // Store cursor blink state for post-render cursor style update
-                                app.cursor_blink = view.cursor_blink;
                             }
                         }
                     }
