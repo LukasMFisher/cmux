@@ -543,6 +543,28 @@ export async function startScreenshotCollection(
         );
       }
 
+      // Write manifest.json with hasUiChanges and image info for local docker workflows
+      const manifestPath = path.join(outputDir, "manifest.json");
+      const manifest = {
+        hasUiChanges: claudeResult.hasUiChanges ?? true,
+        images: screenshotEntries.map((entry) => ({
+          path: entry.path,
+          description: entry.description,
+        })),
+      };
+      try {
+        await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+        await logToScreenshotCollector(`Wrote manifest to ${manifestPath}`);
+      } catch (manifestError) {
+        const message =
+          manifestError instanceof Error
+            ? manifestError.message
+            : String(manifestError ?? "unknown manifest write error");
+        await logToScreenshotCollector(
+          `Failed to write manifest.json: ${message}`
+        );
+      }
+
       log("INFO", "Claude screenshot collector completed", {
         headBranch,
         baseBranch,

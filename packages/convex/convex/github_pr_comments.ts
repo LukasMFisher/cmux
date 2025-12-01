@@ -107,6 +107,13 @@ async function renderScreenshotSetMarkdown(
   const lines: string[] = [heading, ""];
 
   if (set.status === "completed" && set.images.length > 0) {
+    // Check if the model detected no UI changes
+    if (set.hasUiChanges === false) {
+      lines.push(
+        `> **No UI changes detected** - The model analyzed this PR and determined there are no visual changes to the UI.`,
+        "",
+      );
+    }
     const count = set.images.length;
     const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
     lines.push(intro, "");

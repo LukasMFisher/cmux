@@ -18,6 +18,7 @@ export const createScreenshotSet = internalMutation({
     ),
     commitSha: v.string(),
     error: v.optional(v.string()),
+    hasUiChanges: v.optional(v.boolean()),
     images: v.array(
       v.object({
         storageId: v.id("_storage"),
@@ -65,6 +66,7 @@ export const createScreenshotSet = internalMutation({
         taskId: taskRun.taskId,
         runId: taskRun._id,
         status: args.status,
+        hasUiChanges: args.hasUiChanges,
         screenshots,
         error: args.error,
       }
@@ -189,6 +191,7 @@ export const uploadAndComment = action({
     ),
     commitSha: v.string(),
     error: v.optional(v.string()),
+    hasUiChanges: v.optional(v.boolean()),
     images: v.optional(
       v.array(
         v.object({
@@ -265,16 +268,18 @@ export const uploadAndComment = action({
         status: args.status,
         commitSha: args.commitSha,
         error: args.error,
+        hasUiChanges: args.hasUiChanges,
         images: typedImages,
       }
     );
 
     let githubCommentUrl: string | undefined;
 
+    // Post GitHub comment for completed or skipped status
     if (
       previewRun.repoInstallationId &&
       screenshotSetId &&
-      args.status === "completed"
+      (args.status === "completed" || args.status === "skipped")
     ) {
       console.log(
         "[previewScreenshots] Posting GitHub comment for manual upload",

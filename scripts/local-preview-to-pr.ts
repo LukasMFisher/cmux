@@ -335,25 +335,31 @@ async function main(): Promise<void> {
     );
   }
 
-  // Step 2: Load screenshot manifest
+  // Step 2: Load screenshot manifest (may be null if no screenshots were captured)
   const manifest = loadScreenshotManifest();
-  if (!manifest) {
-    console.error(
-      "No screenshot manifest found. Run without --skip-capture first."
-    );
-    process.exit(1);
+  const noScreenshotsCaptured = !manifest || manifest.images.length === 0;
+
+  if (noScreenshotsCaptured) {
+    console.log("📋 No screenshots captured - model likely detected no UI changes\n");
+  } else {
+    console.log(`📋 Found ${manifest.images.length} screenshot(s)\n`);
   }
 
-  console.log(`📋 Found ${manifest.images.length} screenshot(s)\n`);
-
   if (options.dryRun) {
-    console.log("🔍 [DRY RUN] Would upload the following screenshots:");
-    for (const img of manifest.images) {
-      console.log(`   - ${img.path}`);
+    if (noScreenshotsCaptured) {
+      console.log("🔍 [DRY RUN] No screenshots to upload");
+      console.log(
+        "\n🔍 [DRY RUN] Would create preview run and post 'no UI changes' comment"
+      );
+    } else {
+      console.log("🔍 [DRY RUN] Would upload the following screenshots:");
+      for (const img of manifest.images) {
+        console.log(`   - ${img.path}`);
+      }
+      console.log(
+        "\n🔍 [DRY RUN] Would create preview run and post GitHub comment"
+      );
     }
-    console.log(
-      "\n🔍 [DRY RUN] Would create preview run and post GitHub comment"
-    );
     console.log("\n✅ Dry run complete\n");
     return;
   }
@@ -403,6 +409,36 @@ async function main(): Promise<void> {
     console.log(`   ✅ Created preview run: ${previewRunId}\n`);
   }
 
+  // Handle the case where no screenshots were captured (no UI changes detected)
+  if (noScreenshotsCaptured) {
+    console.log("📤 Posting 'no UI changes' comment to GitHub...\n");
+
+    const result = await client.action(api.previewScreenshots.uploadAndComment, {
+      previewRunId,
+      status: "skipped",
+      commitSha,
+      hasUiChanges: false,
+      error: "No UI-impacting changes were detected in this PR",
+      images: [],
+    });
+
+    if (result.ok) {
+      console.log(`   ✅ Screenshot set created: ${result.screenshotSetId}`);
+      if (result.githubCommentUrl) {
+        console.log(`   🔗 GitHub comment: ${result.githubCommentUrl}`);
+      } else {
+        console.log(
+          `   ⚠️  GitHub comment was not posted (check if repo has GitHub App installed)`
+        );
+      }
+    } else {
+      console.error("   ❌ Failed to create screenshot set");
+    }
+
+    console.log("\n🎉 Done!\n");
+    return;
+  }
+
   // Step 6: Upload screenshots to Convex storage
   console.log("📤 Uploading screenshots to Convex...\n");
   const uploadedImages: Array<{
@@ -440,10 +476,15 @@ async function main(): Promise<void> {
   // Step 7: Create screenshot set and trigger GitHub comment
   console.log("\n📤 Creating screenshot set and posting GitHub comment...\n");
 
+  if (manifest.hasUiChanges === false) {
+    console.log("   ℹ️  Model detected no UI changes in this PR\n");
+  }
+
   const result = await client.action(api.previewScreenshots.uploadAndComment, {
     previewRunId,
     status: "completed",
     commitSha,
+    hasUiChanges: manifest.hasUiChanges,
     images: uploadedImages,
   });
 

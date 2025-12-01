@@ -357,20 +357,50 @@ fetch_screenshots() {
   local extracted_dir="$HOST_OUTPUT_DIR/$target_dir"
 
   # Write a simple structured output JSON alongside the images using host paths
+  # If the container wrote a manifest.json, use its hasUiChanges value and image descriptions
   if command -v python3 >/dev/null 2>&1; then
     python3 - <<PY
 import json, os, glob
 latest = "${target_dir}"
 base_dir = os.path.join("${HOST_OUTPUT_DIR}", latest)
 images = sorted(glob.glob(os.path.join(base_dir, "*.*")))
+# Filter out manifest.json from images list
+images = [img for img in images if not img.endswith("manifest.json")]
+
+# Try to read the container's manifest.json for hasUiChanges and descriptions
+container_manifest_path = os.path.join(base_dir, "manifest.json")
+has_ui_changes = bool(images)  # default: true if there are images
+description_map = {}
+
+if os.path.exists(container_manifest_path):
+    try:
+        with open(container_manifest_path, "r") as f:
+            container_manifest = json.load(f)
+        if "hasUiChanges" in container_manifest:
+            has_ui_changes = container_manifest["hasUiChanges"]
+            print(f"Read hasUiChanges={has_ui_changes} from container manifest")
+        # Build a map of filename -> description for matching
+        for img_info in container_manifest.get("images", []):
+            img_path = img_info.get("path", "")
+            img_desc = img_info.get("description")
+            if img_path and img_desc:
+                filename = os.path.basename(img_path)
+                description_map[filename] = img_desc
+    except Exception as e:
+        print(f"Warning: Could not read container manifest: {e}")
+
+# Build payload with descriptions from container manifest
+image_entries = []
+for path in images:
+    entry = {"path": os.path.abspath(path)}
+    filename = os.path.basename(path)
+    if filename in description_map:
+        entry["description"] = description_map[filename]
+    image_entries.append(entry)
+
 payload = {
-    "hasUiChanges": bool(images),
-    "images": [
-        {
-            "path": os.path.abspath(path),
-        }
-        for path in images
-    ],
+    "hasUiChanges": has_ui_changes,
+    "images": image_entries,
 }
 out_path = os.path.join("${HOST_OUTPUT_ROOT}", "cmux-screenshots-latest.json")
 with open(out_path, "w") as f:
