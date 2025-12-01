@@ -1500,10 +1500,12 @@ impl VirtualTerminal {
     }
 
     /// Parse SGR (Select Graphic Rendition) parameters
+    /// Handles both semicolon-separated (38;2;r;g;b) and colon-separated (38:2:r:g:b) formats
     fn apply_sgr(&mut self, params: &Params) {
-        let params: Vec<u16> = params.iter().map(|p| p[0]).collect();
+        // Collect params, preserving subparameters for extended color handling
+        let raw_params: Vec<&[u16]> = params.iter().collect();
 
-        if params.is_empty() {
+        if raw_params.is_empty() {
             self.internal_grid
                 .set_current_styles(CharacterStyles::default());
             return;
@@ -1511,8 +1513,11 @@ impl VirtualTerminal {
 
         let mut styles = self.internal_grid.current_styles;
         let mut i = 0;
-        while i < params.len() {
-            match params[i] {
+        while i < raw_params.len() {
+            let param = raw_params[i];
+            let code = param[0];
+
+            match code {
                 0 => styles = CharacterStyles::default(),
                 1 => styles = styles.add_modifier(Modifier::BOLD),
                 2 => styles = styles.add_modifier(Modifier::DIM),
@@ -1540,16 +1545,31 @@ impl VirtualTerminal {
                 37 => styles = styles.fg(Color::Gray),
                 38 => {
                     // Extended foreground color
-                    if i + 2 < params.len() && params[i + 1] == 5 {
-                        // 256 color mode
-                        styles = styles.fg(Color::Indexed(params[i + 2] as u8));
+                    // Check for colon-separated subparameters first (38:2:r:g:b or 38:5:n)
+                    if param.len() >= 3 && param[1] == 5 {
+                        // 256 color mode with subparameters: 38:5:n
+                        styles = styles.fg(Color::Indexed(param[2] as u8));
+                    } else if param.len() >= 5 && param[1] == 2 {
+                        // RGB color mode with subparameters: 38:2:r:g:b
+                        // Note: Some terminals use 38:2:colorspace:r:g:b (6 params)
+                        let (r, g, b) = if param.len() >= 6 {
+                            // 38:2:colorspace:r:g:b format
+                            (param[3] as u8, param[4] as u8, param[5] as u8)
+                        } else {
+                            // 38:2:r:g:b format
+                            (param[2] as u8, param[3] as u8, param[4] as u8)
+                        };
+                        styles = styles.fg(Color::Rgb(r, g, b));
+                    } else if i + 2 < raw_params.len() && raw_params[i + 1][0] == 5 {
+                        // Semicolon-separated 256 color: 38;5;n
+                        styles = styles.fg(Color::Indexed(raw_params[i + 2][0] as u8));
                         i += 2;
-                    } else if i + 4 < params.len() && params[i + 1] == 2 {
-                        // RGB color mode
+                    } else if i + 4 < raw_params.len() && raw_params[i + 1][0] == 2 {
+                        // Semicolon-separated RGB: 38;2;r;g;b
                         styles = styles.fg(Color::Rgb(
-                            params[i + 2] as u8,
-                            params[i + 3] as u8,
-                            params[i + 4] as u8,
+                            raw_params[i + 2][0] as u8,
+                            raw_params[i + 3][0] as u8,
+                            raw_params[i + 4][0] as u8,
                         ));
                         i += 4;
                     }
@@ -1566,16 +1586,31 @@ impl VirtualTerminal {
                 47 => styles = styles.bg(Color::Gray),
                 48 => {
                     // Extended background color
-                    if i + 2 < params.len() && params[i + 1] == 5 {
-                        // 256 color mode
-                        styles = styles.bg(Color::Indexed(params[i + 2] as u8));
+                    // Check for colon-separated subparameters first (48:2:r:g:b or 48:5:n)
+                    if param.len() >= 3 && param[1] == 5 {
+                        // 256 color mode with subparameters: 48:5:n
+                        styles = styles.bg(Color::Indexed(param[2] as u8));
+                    } else if param.len() >= 5 && param[1] == 2 {
+                        // RGB color mode with subparameters: 48:2:r:g:b
+                        // Note: Some terminals use 48:2:colorspace:r:g:b (6 params)
+                        let (r, g, b) = if param.len() >= 6 {
+                            // 48:2:colorspace:r:g:b format
+                            (param[3] as u8, param[4] as u8, param[5] as u8)
+                        } else {
+                            // 48:2:r:g:b format
+                            (param[2] as u8, param[3] as u8, param[4] as u8)
+                        };
+                        styles = styles.bg(Color::Rgb(r, g, b));
+                    } else if i + 2 < raw_params.len() && raw_params[i + 1][0] == 5 {
+                        // Semicolon-separated 256 color: 48;5;n
+                        styles = styles.bg(Color::Indexed(raw_params[i + 2][0] as u8));
                         i += 2;
-                    } else if i + 4 < params.len() && params[i + 1] == 2 {
-                        // RGB color mode
+                    } else if i + 4 < raw_params.len() && raw_params[i + 1][0] == 2 {
+                        // Semicolon-separated RGB: 48;2;r;g;b
                         styles = styles.bg(Color::Rgb(
-                            params[i + 2] as u8,
-                            params[i + 3] as u8,
-                            params[i + 4] as u8,
+                            raw_params[i + 2][0] as u8,
+                            raw_params[i + 3][0] as u8,
+                            raw_params[i + 4][0] as u8,
                         ));
                         i += 4;
                     }
@@ -1589,7 +1624,7 @@ impl VirtualTerminal {
                 94 => styles = styles.fg(Color::LightBlue),
                 95 => styles = styles.fg(Color::LightMagenta),
                 96 => styles = styles.fg(Color::LightCyan),
-                97 => styles = styles.fg(Color::White),
+                97 => styles = styles.fg(Color::Indexed(15)), // Bright white
                 // Bright background colors
                 100 => styles = styles.bg(Color::DarkGray),
                 101 => styles = styles.bg(Color::LightRed),
@@ -1598,7 +1633,7 @@ impl VirtualTerminal {
                 104 => styles = styles.bg(Color::LightBlue),
                 105 => styles = styles.bg(Color::LightMagenta),
                 106 => styles = styles.bg(Color::LightCyan),
-                107 => styles = styles.bg(Color::White),
+                107 => styles = styles.bg(Color::Indexed(15)), // Bright white
                 _ => {}
             }
             i += 1;
@@ -2635,6 +2670,125 @@ impl Perform for VirtualTerminal {
                     format!("\x1b[{};{}$y", mode, status)
                 };
                 self.pending_responses.push(response.into_bytes());
+            }
+            // DECFRA - Fill Rectangular Area: CSI Pc ; Pt ; Pl ; Pb ; Pr $ x
+            'x' if intermediates == [b'$'] => {
+                let char_code = params_vec.first().copied().unwrap_or(32) as u8; // Default: space
+                let ch = if (32..127).contains(&char_code) {
+                    char_code as char
+                } else {
+                    ' '
+                };
+
+                // Get rectangle bounds (1-based, convert to 0-based)
+                let top = params_vec.get(1).copied().unwrap_or(1).max(1) as usize - 1;
+                let left = params_vec.get(2).copied().unwrap_or(1).max(1) as usize - 1;
+                let bottom = params_vec
+                    .get(3)
+                    .copied()
+                    .unwrap_or(self.internal_grid.rows as u16)
+                    .max(1) as usize
+                    - 1;
+                let right = params_vec
+                    .get(4)
+                    .copied()
+                    .unwrap_or(self.internal_grid.cols as u16)
+                    .max(1) as usize
+                    - 1;
+
+                // Apply origin mode offset if enabled (both row and column margins)
+                let (top, bottom, left, right) = if self.origin_mode {
+                    let (scroll_top, scroll_bottom) = self.internal_grid.scroll_region;
+                    let left_margin = self.internal_grid.left_margin;
+                    let right_margin = self.internal_grid.right_margin;
+                    (
+                        (top + scroll_top).min(scroll_bottom),
+                        (bottom + scroll_top).min(scroll_bottom),
+                        (left + left_margin).min(right_margin),
+                        (right + left_margin).min(right_margin),
+                    )
+                } else {
+                    (
+                        top.min(self.internal_grid.rows - 1),
+                        bottom.min(self.internal_grid.rows - 1),
+                        left.min(self.internal_grid.cols - 1),
+                        right.min(self.internal_grid.cols - 1),
+                    )
+                };
+
+                // Validate rectangle (top <= bottom, left <= right)
+                if top <= bottom && left <= right {
+                    let shared_styles = self.internal_grid.current_shared_styles();
+                    for row in top..=bottom {
+                        for col in left..=right {
+                            let character = TerminalCharacter::new(ch, shared_styles.clone());
+                            self.internal_grid.set_char(row, col, character);
+                        }
+                    }
+                }
+            }
+            // DECERA - Erase Rectangular Area: CSI Pt ; Pl ; Pb ; Pr $ z
+            'z' if intermediates == [b'$'] => {
+                // Get rectangle bounds (1-based, convert to 0-based)
+                let top = params_vec.first().copied().unwrap_or(1).max(1) as usize - 1;
+                let left = params_vec.get(1).copied().unwrap_or(1).max(1) as usize - 1;
+                let bottom = params_vec
+                    .get(2)
+                    .copied()
+                    .unwrap_or(self.internal_grid.rows as u16)
+                    .max(1) as usize
+                    - 1;
+                let right = params_vec
+                    .get(3)
+                    .copied()
+                    .unwrap_or(self.internal_grid.cols as u16)
+                    .max(1) as usize
+                    - 1;
+
+                // Apply origin mode offset if enabled (both row and column margins)
+                let (top, bottom, left, right) = if self.origin_mode {
+                    let (scroll_top, scroll_bottom) = self.internal_grid.scroll_region;
+                    let left_margin = self.internal_grid.left_margin;
+                    let right_margin = self.internal_grid.right_margin;
+                    (
+                        (top + scroll_top).min(scroll_bottom),
+                        (bottom + scroll_top).min(scroll_bottom),
+                        (left + left_margin).min(right_margin),
+                        (right + left_margin).min(right_margin),
+                    )
+                } else {
+                    (
+                        top.min(self.internal_grid.rows - 1),
+                        bottom.min(self.internal_grid.rows - 1),
+                        left.min(self.internal_grid.cols - 1),
+                        right.min(self.internal_grid.cols - 1),
+                    )
+                };
+
+                // Validate rectangle (top <= bottom, left <= right)
+                // DECERA erases using current SGR attributes (per xterm behavior)
+                if top <= bottom && left <= right {
+                    let blank = TerminalCharacter::blank_with_style(
+                        self.internal_grid.current_shared_styles(),
+                    );
+                    for row in top..=bottom {
+                        for col in left..=right {
+                            self.internal_grid.set_char(row, col, blank.clone());
+                        }
+                    }
+                }
+            }
+            // DECSCUSR - Set Cursor Style: CSI Ps SP q
+            // Ps=0 or default: blinking block
+            // Ps=1: blinking block, Ps=2: steady block
+            // Ps=3: blinking underline, Ps=4: steady underline
+            // Ps=5: blinking bar, Ps=6: steady bar
+            'q' if intermediates == [b' '] => {
+                let style = params_vec.first().copied().unwrap_or(0);
+                self.cursor_style = style as u8;
+                // Odd values are blinking, even values (including 0) are steady
+                // Exception: 0 means "default" which is typically blinking
+                self.cursor_blink = style == 0 || style % 2 == 1;
             }
             _ => {}
         }
@@ -5129,5 +5283,621 @@ mod tests {
             "first line should show original content: '{}'",
             line0_str
         );
+    }
+
+    // =========================================================================
+    // Comprehensive SGR (Select Graphic Rendition) Tests
+    // =========================================================================
+
+    /// Helper to get DECRQSS SGR response
+    fn get_decrqss_sgr_response(term: &mut VirtualTerminal) -> String {
+        term.pending_responses.clear();
+        term.process(b"\x1bP$qm\x1b\\"); // DECRQSS for SGR
+        assert_eq!(term.pending_responses.len(), 1);
+        String::from_utf8_lossy(&term.pending_responses[0]).to_string()
+    }
+
+    #[test]
+    fn sgr_reset() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[1;4;7m"); // bold, underline, reverse
+        term.process(b"\x1b[0m"); // reset
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_bold() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[1m"); // reset then bold
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;1m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_dim() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[2m"); // reset then dim
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;2m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_italic() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[3m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;3m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_underline() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[4m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;4m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_blink() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[5m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;5m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_reverse() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[7m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;7m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_hidden() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[8m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;8m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_strikethrough() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[9m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;9m\x1b\\");
+    }
+
+    // SGR disable attributes
+    #[test]
+    fn sgr_bold_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[1m"); // bold on
+        term.process(b"\x1b[22m"); // bold off
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_italic_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[3m\x1b[23m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_underline_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[4m\x1b[24m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_blink_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[5m\x1b[25m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_reverse_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[7m\x1b[27m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_hidden_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[8m\x1b[28m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_strikethrough_off() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[9m\x1b[29m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    // Standard foreground colors (30-37)
+    #[test]
+    fn sgr_foreground_black() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[30m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;30m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_red() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[31m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;31m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_green() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[32m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;32m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_yellow() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[33m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;33m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_blue() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[34m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;34m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_magenta() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[35m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;35m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_cyan() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[36m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;36m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_white() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[37m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;37m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_default() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[31m"); // red
+        term.process(b"\x1b[39m"); // default
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    // Standard background colors (40-47)
+    #[test]
+    fn sgr_background_black() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[40m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;40m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_background_red() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[41m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;41m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_background_green() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[42m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;42m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_background_default() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[41m\x1b[49m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    // Bright foreground colors (90-97)
+    #[test]
+    fn sgr_bright_foreground_black() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[90m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;90m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_bright_foreground_red() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[91m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;91m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_bright_foreground_white() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[97m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;97m\x1b\\");
+    }
+
+    // Bright background colors (100-107)
+    #[test]
+    fn sgr_bright_background_black() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[100m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;100m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_bright_background_white() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[107m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;107m\x1b\\");
+    }
+
+    // 256-color mode (38;5;n and 48;5;n)
+    #[test]
+    fn sgr_foreground_256_red() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38;5;196m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;38;5;196m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_256_gray() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38;5;240m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;38;5;240m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_background_256_blue() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[48;5;21m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;48;5;21m\x1b\\");
+    }
+
+    // True color / RGB mode (38;2;r;g;b and 48;2;r;g;b)
+    #[test]
+    fn sgr_foreground_rgb() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38;2;255;128;64m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;38;2;255;128;64m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_background_rgb() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[48;2;64;128;255m");
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;48;2;64;128;255m\x1b\\");
+    }
+
+    // Combined attributes
+    #[test]
+    fn sgr_multiple_attributes() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[1;4;31m"); // bold, underline, red fg
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;1;4;31m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_foreground_and_background() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[32;44m"); // green fg, blue bg
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;32;44m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_all_text_attributes() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[1;3;4;7m"); // bold, italic, underline, reverse
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0;1;3;4;7m\x1b\\");
+    }
+
+    #[test]
+    fn sgr_empty_resets_to_default() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[1;4m"); // set some attributes
+        term.process(b"\x1b[m"); // empty SGR (same as SGR 0)
+        let response = get_decrqss_sgr_response(&mut term);
+        assert_eq!(response, "\x1bP1$r0m\x1b\\");
+    }
+
+    // Test SGR actually applies to characters
+    #[test]
+    fn sgr_applies_to_text() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m"); // reset
+        term.process(b"Normal ");
+        term.process(b"\x1b[31mRed ");
+        term.process(b"\x1b[1mBoldRed ");
+        term.process(b"\x1b[0mNormal");
+
+        let grid = term.legacy_grid();
+        // "Normal " - no color
+        assert_eq!(grid[0][0].style.fg, None);
+        // "Red " - red
+        assert_eq!(grid[0][7].style.fg, Some(Color::Red));
+        // "BoldRed " - red + bold
+        assert_eq!(grid[0][11].style.fg, Some(Color::Red));
+        assert!(grid[0][11].style.add_modifier.contains(Modifier::BOLD));
+        // "Normal" - no color, no bold
+        assert_eq!(grid[0][19].style.fg, None);
+        assert!(!grid[0][19].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn sgr_256_color_applies_to_text() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38;5;196m"); // 256-color red (index 196)
+        term.process(b"X");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Indexed(196)));
+    }
+
+    #[test]
+    fn sgr_rgb_applies_to_text() {
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38;2;255;128;64m"); // RGB foreground (semicolon-separated)
+        term.process(b"X");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Rgb(255, 128, 64)));
+    }
+
+    #[test]
+    fn sgr_rgb_colon_separated_foreground() {
+        // Test colon-separated RGB foreground (38:2:r:g:b)
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38:2:100:150:200mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Rgb(100, 150, 200)));
+    }
+
+    #[test]
+    fn sgr_rgb_colon_separated_background() {
+        // Test colon-separated RGB background (48:2:r:g:b)
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[48:2:50:100:150mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(50, 100, 150)));
+    }
+
+    #[test]
+    fn sgr_256_colon_separated_foreground() {
+        // Test colon-separated 256-color foreground (38:5:n)
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38:5:208mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Indexed(208)));
+    }
+
+    #[test]
+    fn sgr_256_colon_separated_background() {
+        // Test colon-separated 256-color background (48:5:n)
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[48:5:123mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.bg, Some(Color::Indexed(123)));
+    }
+
+    #[test]
+    fn sgr_rgb_colon_with_colorspace() {
+        // Test colon-separated RGB with colorspace parameter (38:2:colorspace:r:g:b)
+        // Some terminals include the colorspace parameter (usually 0 or empty)
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[38:2:0:75:125:175mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Rgb(75, 125, 175)));
+    }
+
+    #[test]
+    fn sgr_rgb_semicolon_separated_background() {
+        // Test semicolon-separated RGB background (48;2;r;g;b) - used by crossterm
+        let mut term = VirtualTerminal::new(24, 80);
+        term.process(b"\x1b[0m\x1b[48;2;30;40;50mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(30, 40, 50)));
+    }
+
+    #[test]
+    fn sgr_rgb_background_preserved_in_ratatui_rendering() {
+        // Test that background colors are preserved through the full rendering pipeline
+        let mut term = VirtualTerminal::new(24, 80);
+        // Set RGB background and print a character
+        term.process(b"\x1b[0m\x1b[48;2;64;128;192mABC");
+
+        // Get the row
+        let row = term.internal_grid.get_row(0).expect("Row should exist");
+
+        // Convert to ratatui line (this is what the rendering pipeline uses)
+        let line = row.to_ratatui_line();
+
+        // Verify the background is preserved in the spans
+        assert!(!line.spans.is_empty(), "Should have at least one span");
+        let span = &line.spans[0];
+        assert_eq!(
+            span.style.bg,
+            Some(Color::Rgb(64, 128, 192)),
+            "Background color should be preserved in ratatui span"
+        );
+    }
+
+    #[test]
+    fn sgr_combined_fg_bg_rgb() {
+        // Test combining foreground and background RGB colors
+        let mut term = VirtualTerminal::new(24, 80);
+        // Set both fg (38;2) and bg (48;2) in same sequence
+        term.process(b"\x1b[0m\x1b[38;2;255;0;0;48;2;0;0;255mX");
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style.fg, Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(0, 0, 255)));
+    }
+
+    // Tests for erase operations using current SGR attributes
+    #[test]
+    fn ech_uses_current_background() {
+        // ECH (Erase Characters) should use current SGR background
+        let mut term = VirtualTerminal::new(24, 80);
+        // Set RGB background, then erase 3 characters
+        term.process(b"\x1b[0m\x1b[48;2;100;150;200m\x1b[3X");
+        let grid = term.legacy_grid();
+        // Erased cells should have the background color
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(100, 150, 200)));
+        assert_eq!(grid[0][1].style.bg, Some(Color::Rgb(100, 150, 200)));
+        assert_eq!(grid[0][2].style.bg, Some(Color::Rgb(100, 150, 200)));
+    }
+
+    #[test]
+    fn el_uses_current_background() {
+        // EL (Erase Line) should use current SGR background
+        let mut term = VirtualTerminal::new(24, 80);
+        // Set background, then EL 0 (clear to end of line)
+        term.process(b"\x1b[0m\x1b[48;2;50;100;150m\x1b[K");
+        let grid = term.legacy_grid();
+        // All cells from cursor to end should have background
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(50, 100, 150)));
+        assert_eq!(grid[0][10].style.bg, Some(Color::Rgb(50, 100, 150)));
+    }
+
+    #[test]
+    fn ed_uses_current_background() {
+        // ED (Erase Display) should use current SGR background
+        let mut term = VirtualTerminal::new(24, 80);
+        // Set background, then ED 2 (clear entire screen)
+        term.process(b"\x1b[0m\x1b[48;2;30;60;90m\x1b[2J");
+        let grid = term.legacy_grid();
+        // All cells should have background
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(30, 60, 90)));
+        assert_eq!(grid[10][10].style.bg, Some(Color::Rgb(30, 60, 90)));
+    }
+
+    #[test]
+    fn ich_uses_current_background() {
+        // ICH (Insert Characters) should use current SGR background
+        let mut term = VirtualTerminal::new(24, 80);
+        // Write something first
+        term.process(b"ABC");
+        // Set background and insert 2 characters at start
+        term.process(b"\x1b[1G\x1b[48;2;80;120;160m\x1b[2@");
+        let grid = term.legacy_grid();
+        // Inserted cells should have background
+        assert_eq!(grid[0][0].style.bg, Some(Color::Rgb(80, 120, 160)));
+        assert_eq!(grid[0][1].style.bg, Some(Color::Rgb(80, 120, 160)));
+        // Original 'A' should have moved
+        assert_eq!(grid[0][2].c, 'A');
+    }
+
+    // DECSCUSR - Set Cursor Style tests
+    #[test]
+    fn decscusr_default_blinking_block() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 0 SP q - default (blinking block)
+        term.process(b"\x1b[0 q");
+        assert_eq!(term.cursor_style, 0);
+        assert!(term.cursor_blink); // Default is blinking
+    }
+
+    #[test]
+    fn decscusr_blinking_block() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 1 SP q - blinking block
+        term.process(b"\x1b[1 q");
+        assert_eq!(term.cursor_style, 1);
+        assert!(term.cursor_blink);
+    }
+
+    #[test]
+    fn decscusr_steady_block() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 2 SP q - steady block
+        term.process(b"\x1b[2 q");
+        assert_eq!(term.cursor_style, 2);
+        assert!(!term.cursor_blink);
+    }
+
+    #[test]
+    fn decscusr_blinking_underline() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 3 SP q - blinking underline
+        term.process(b"\x1b[3 q");
+        assert_eq!(term.cursor_style, 3);
+        assert!(term.cursor_blink);
+    }
+
+    #[test]
+    fn decscusr_steady_underline() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 4 SP q - steady underline
+        term.process(b"\x1b[4 q");
+        assert_eq!(term.cursor_style, 4);
+        assert!(!term.cursor_blink);
+    }
+
+    #[test]
+    fn decscusr_blinking_bar() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 5 SP q - blinking bar (I-beam)
+        term.process(b"\x1b[5 q");
+        assert_eq!(term.cursor_style, 5);
+        assert!(term.cursor_blink);
+    }
+
+    #[test]
+    fn decscusr_steady_bar() {
+        let mut term = VirtualTerminal::new(24, 80);
+        // CSI 6 SP q - steady bar (I-beam)
+        term.process(b"\x1b[6 q");
+        assert_eq!(term.cursor_style, 6);
+        assert!(!term.cursor_blink);
     }
 }

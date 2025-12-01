@@ -303,8 +303,9 @@ impl Grid {
     pub fn clear_to_end_of_line(&mut self) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
+            let style = self.current_shared_styles.clone();
             self.viewport[self.cursor_row].clear_from(self.cursor_col);
-            self.viewport[self.cursor_row].fill_to_width(self.cols);
+            self.viewport[self.cursor_row].fill_to_width_with_style(self.cols, style);
         }
     }
 
@@ -312,7 +313,8 @@ impl Grid {
     pub fn clear_to_start_of_line(&mut self) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
-            self.viewport[self.cursor_row].clear_to(self.cursor_col);
+            let style = self.current_shared_styles.clone();
+            self.viewport[self.cursor_row].clear_to_with_style(self.cursor_col, style);
         }
     }
 
@@ -320,17 +322,19 @@ impl Grid {
     pub fn clear_line(&mut self) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
-            self.viewport[self.cursor_row] = Row::filled(self.cols);
+            let style = self.current_shared_styles.clone();
+            self.viewport[self.cursor_row] = Row::filled_with_style(self.cols, style);
         }
     }
 
     /// Clear from cursor to end of screen.
     pub fn clear_to_end_of_screen(&mut self) {
         self.clear_to_end_of_line();
+        let style = self.current_shared_styles.clone();
         for row in (self.cursor_row + 1)..self.rows {
             if row < self.viewport.len() {
                 self.mark_line_changed(row);
-                self.viewport[row] = Row::filled(self.cols);
+                self.viewport[row] = Row::filled_with_style(self.cols, style.clone());
             }
         }
     }
@@ -338,20 +342,22 @@ impl Grid {
     /// Clear from cursor to beginning of screen.
     pub fn clear_to_start_of_screen(&mut self) {
         self.clear_to_start_of_line();
+        let style = self.current_shared_styles.clone();
         for row in 0..self.cursor_row {
             if row < self.viewport.len() {
                 self.mark_line_changed(row);
-                self.viewport[row] = Row::filled(self.cols);
+                self.viewport[row] = Row::filled_with_style(self.cols, style.clone());
             }
         }
     }
 
     /// Clear entire screen.
     pub fn clear_screen(&mut self) {
+        let style = self.current_shared_styles.clone();
         for row in 0..self.rows {
             if row < self.viewport.len() {
                 self.mark_line_changed(row);
-                self.viewport[row] = Row::filled(self.cols);
+                self.viewport[row] = Row::filled_with_style(self.cols, style.clone());
             }
         }
     }
@@ -360,7 +366,13 @@ impl Grid {
     pub fn insert_chars(&mut self, count: usize) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
-            self.viewport[self.cursor_row].insert_blank(self.cursor_col, count, self.cols);
+            let style = self.current_shared_styles.clone();
+            self.viewport[self.cursor_row].insert_blank_with_style(
+                self.cursor_col,
+                count,
+                self.cols,
+                style,
+            );
         }
     }
 
@@ -368,7 +380,13 @@ impl Grid {
     pub fn delete_chars(&mut self, count: usize) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
-            self.viewport[self.cursor_row].delete_chars(self.cursor_col, count, self.cols);
+            let style = self.current_shared_styles.clone();
+            self.viewport[self.cursor_row].delete_chars_with_style(
+                self.cursor_col,
+                count,
+                self.cols,
+                style,
+            );
         }
     }
 
@@ -376,10 +394,11 @@ impl Grid {
     pub fn erase_chars(&mut self, count: usize) {
         if self.cursor_row < self.viewport.len() {
             self.mark_line_changed(self.cursor_row);
+            let blank = TerminalCharacter::blank_with_style(self.current_shared_styles.clone());
             for i in 0..count {
                 let col = self.cursor_col + i;
                 if col < self.cols {
-                    self.viewport[self.cursor_row].set(col, TerminalCharacter::default());
+                    self.viewport[self.cursor_row].set(col, blank.clone());
                 }
             }
         }

@@ -208,6 +208,16 @@ impl TerminalCharacter {
     pub fn is_wide(&self) -> bool {
         self.width > 1
     }
+
+    /// Create a blank character with the given style (for erase operations).
+    pub fn blank_with_style(styles: SharedStyles) -> Self {
+        Self {
+            character: ' ',
+            styles,
+            width: 1,
+            wide_spacer: false,
+        }
+    }
 }
 
 /// A single row in the terminal grid.
@@ -252,9 +262,15 @@ impl Row {
 
     /// Create a new row filled with default characters.
     pub fn filled(width: usize) -> Self {
+        Self::filled_with_style(width, SharedStyles::Default)
+    }
+
+    /// Create a new row filled with blank characters using the given style.
+    pub fn filled_with_style(width: usize, style: SharedStyles) -> Self {
         let mut row = Self::with_capacity(width);
+        let blank = TerminalCharacter::blank_with_style(style);
         for _ in 0..width {
-            row.columns.push_back(TerminalCharacter::default());
+            row.columns.push_back(blank.clone());
         }
         row
     }
@@ -358,26 +374,52 @@ impl Row {
 
     /// Insert blank characters at the given position, shifting existing chars right.
     pub fn insert_blank(&mut self, x: usize, count: usize, max_width: usize) {
+        self.insert_blank_with_style(x, count, max_width, SharedStyles::Default);
+    }
+
+    /// Insert blank characters at the given position, shifting existing chars right.
+    /// Uses the given style for inserted blanks.
+    pub fn insert_blank_with_style(
+        &mut self,
+        x: usize,
+        count: usize,
+        max_width: usize,
+        style: SharedStyles,
+    ) {
+        let blank = TerminalCharacter::blank_with_style(style);
         for _ in 0..count {
             if self.columns.len() >= max_width {
                 self.columns.pop_back();
             }
             if x < self.columns.len() {
-                self.columns.insert(x, TerminalCharacter::default());
+                self.columns.insert(x, blank.clone());
             }
         }
     }
 
     /// Delete characters at the given position, shifting remaining chars left.
     pub fn delete_chars(&mut self, x: usize, count: usize, max_width: usize) {
+        self.delete_chars_with_style(x, count, max_width, SharedStyles::Default);
+    }
+
+    /// Delete characters at the given position, shifting remaining chars left.
+    /// Uses the given style for padding.
+    pub fn delete_chars_with_style(
+        &mut self,
+        x: usize,
+        count: usize,
+        max_width: usize,
+        style: SharedStyles,
+    ) {
         for _ in 0..count {
             if x < self.columns.len() {
                 self.columns.remove(x);
             }
         }
-        // Pad to max_width
+        // Pad to max_width with styled blanks
+        let blank = TerminalCharacter::blank_with_style(style);
         while self.columns.len() < max_width {
-            self.columns.push_back(TerminalCharacter::default());
+            self.columns.push_back(blank.clone());
         }
     }
 
@@ -390,8 +432,14 @@ impl Row {
 
     /// Clear characters from the start to the given position (inclusive).
     pub fn clear_to(&mut self, x: usize) {
+        self.clear_to_with_style(x, SharedStyles::Default);
+    }
+
+    /// Clear characters from the start to the given position (inclusive), using given style.
+    pub fn clear_to_with_style(&mut self, x: usize, style: SharedStyles) {
+        let blank = TerminalCharacter::blank_with_style(style);
         for i in 0..=x.min(self.columns.len().saturating_sub(1)) {
-            self.columns[i] = TerminalCharacter::default();
+            self.columns[i] = blank.clone();
         }
     }
 
@@ -402,8 +450,14 @@ impl Row {
 
     /// Fill the row to a given width with default characters.
     pub fn fill_to_width(&mut self, width: usize) {
+        self.fill_to_width_with_style(width, SharedStyles::Default);
+    }
+
+    /// Fill the row to a given width with blank characters using the given style.
+    pub fn fill_to_width_with_style(&mut self, width: usize, style: SharedStyles) {
+        let blank = TerminalCharacter::blank_with_style(style);
         while self.columns.len() < width {
-            self.columns.push_back(TerminalCharacter::default());
+            self.columns.push_back(blank.clone());
         }
     }
 
