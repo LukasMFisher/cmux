@@ -416,13 +416,15 @@ fn parse_osc_color(s: &str) -> Option<(u8, u8, u8)> {
             let g = u16::from_str_radix(parts[1], 16).ok()?;
             let b = u16::from_str_radix(parts[2], 16).ok()?;
 
-            // Scale to 8-bit based on input length
+            // Scale to 8-bit based on input length (with rounding for proper round-trip)
+            // Use u32 arithmetic to avoid overflow
             let scale = |v: u16, len: usize| -> u8 {
+                let v = v as u32;
                 match len {
-                    1 => ((v * 255) / 15) as u8,   // 4-bit to 8-bit
-                    2 => v as u8,                  // Already 8-bit
-                    3 => ((v * 255) / 4095) as u8, // 12-bit to 8-bit
-                    4 => (v / 257) as u8,          // 16-bit to 8-bit
+                    1 => ((v * 255 + 7) / 15) as u8,      // 4-bit to 8-bit with rounding
+                    2 => v as u8,                         // Already 8-bit
+                    3 => ((v * 255 + 2047) / 4095) as u8, // 12-bit to 8-bit with rounding
+                    4 => ((v + 128) / 257) as u8,         // 16-bit to 8-bit with rounding
                     _ => v as u8,
                 }
             };
@@ -1920,6 +1922,48 @@ impl Perform for VirtualTerminal {
                 // OSC 112 - Reset cursor color to terminal default
                 "112" => {
                     self.cursor_color = None;
+                }
+                // OSC 104 - Reset palette color(s) to default
+                // Format: OSC 104 ; index ST (reset specific) or OSC 104 ST (reset all)
+                "104" => {
+                    if params.len() == 1 {
+                        // No index specified - reset all palette colors
+                        self.color_palette = [None; 256];
+                    } else {
+                        // Reset specific indices
+                        for param in params.iter().skip(1) {
+                            if let Ok(index_str) = std::str::from_utf8(param) {
+                                if let Ok(index) = index_str.parse::<usize>() {
+                                    if index < 256 {
+                                        self.color_palette[index] = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // OSC 105 - Reset special color(s) to default
+                // Format: OSC 105 ; index ST
+                "105" => {
+                    if params.len() == 1 {
+                        // No index - reset all special colors
+                        self.default_fg_color = None;
+                        self.default_bg_color = None;
+                        self.cursor_color = None;
+                    } else {
+                        for param in params.iter().skip(1) {
+                            if let Ok(index_str) = std::str::from_utf8(param) {
+                                if let Ok(index) = index_str.parse::<usize>() {
+                                    match index {
+                                        0 => self.default_fg_color = None,
+                                        1 => self.default_bg_color = None,
+                                        2 => self.cursor_color = None,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
