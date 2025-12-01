@@ -6,7 +6,7 @@ use cmux_sandbox::models::{
 use cmux_sandbox::{
     build_default_env_vars, extract_api_key_from_output, store_claude_token,
     sync_files::{upload_sync_files, SYNC_FILES},
-    AcpProvider, DEFAULT_HTTP_PORT, DMUX_DEFAULT_CONTAINER, DMUX_DEFAULT_HTTP_PORT,
+    AcpProvider, DEFAULT_HTTP_PORT, DEFAULT_IMAGE, DMUX_DEFAULT_CONTAINER, DMUX_DEFAULT_HTTP_PORT,
     DMUX_DEFAULT_IMAGE,
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -113,6 +113,9 @@ enum Command {
     /// Run esctest2 terminal escape sequence tests
     #[command(alias = "et")]
     Esctest(EsctestArgs),
+
+    /// Check Docker setup and download sandbox image if needed
+    Onboard,
 }
 
 #[derive(Args, Debug)]
@@ -594,6 +597,9 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::Esctest(args) => {
             handle_esctest(&client, &cli.base_url, args).await?;
+        }
+        Command::Onboard => {
+            handle_onboard().await?;
         }
         Command::Sandboxes(cmd) => {
             match cmd {
@@ -1746,6 +1752,109 @@ async fn handle_setup_claude() -> anyhow::Result<()> {
     } else {
         eprintln!("\n\x1b[33mNote: No OAuth token detected in output.\x1b[0m");
         eprintln!("You can manually add with: security add-generic-password -s cmux -a CLAUDE_CODE_OAUTH_TOKEN -w <token> -A");
+    }
+
+    Ok(())
+}
+
+async fn handle_onboard() -> anyhow::Result<()> {
+    let is_debug = is_dmux();
+    let image_name = if is_debug {
+        DMUX_DEFAULT_IMAGE
+    } else {
+        DEFAULT_IMAGE
+    };
+    let binary_name = if is_debug { "dmux" } else { "cmux" };
+
+    println!("\x1b[1m{} Onboarding\x1b[0m\n", binary_name);
+
+    // Step 1: Check Docker is installed and running
+    print!("Checking Docker... ");
+    let docker_check = tokio::process::Command::new("docker")
+        .args(["info"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    match docker_check {
+        Ok(status) if status.success() => {
+            println!("\x1b[32m✓ Docker is running\x1b[0m");
+        }
+        Ok(_) => {
+            println!("\x1b[31m✗ Docker is not running\x1b[0m");
+            eprintln!("\nPlease start Docker Desktop or the Docker daemon and try again.");
+            return Err(anyhow::anyhow!("Docker is not running"));
+        }
+        Err(_) => {
+            println!("\x1b[31m✗ Docker not found\x1b[0m");
+            eprintln!("\nPlease install Docker: https://docs.docker.com/get-docker/");
+            return Err(anyhow::anyhow!("Docker is not installed"));
+        }
+    }
+
+    // Step 2: Check if sandbox image exists locally
+    print!("Checking for sandbox image '{}'... ", image_name);
+    let image_check = tokio::process::Command::new("docker")
+        .args(["images", "-q", image_name])
+        .output()
+        .await?;
+
+    let image_exists = !image_check.stdout.is_empty();
+
+    if image_exists {
+        println!("\x1b[32m✓ Found\x1b[0m");
+        println!("\n\x1b[32m✓ Onboarding complete!\x1b[0m");
+        println!("\nYou can now start the sandbox server with:");
+        println!("\n  \x1b[36m{} start\x1b[0m\n", binary_name);
+        return Ok(());
+    }
+
+    println!("\x1b[33m✗ Not found\x1b[0m");
+
+    // Step 3: Prompt user to pull/build the image
+    if is_debug {
+        // For dmux, we build locally since it's dev mode
+        println!("\n\x1b[33mNote:\x1b[0m dmux uses a locally-built image for development.");
+        println!("To build the image, run from the cmux2 root directory:");
+        println!("\n  \x1b[36m./scripts/dev.sh --force-docker-build\x1b[0m\n");
+        println!("Or build just the sandbox image:");
+        println!("\n  \x1b[36mcd packages/sandbox && ./scripts/reload.sh\x1b[0m\n");
+    } else {
+        // For cmux, offer to pull from GHCR
+        println!("\nThe sandbox image needs to be downloaded (~2GB).");
+        print!("Would you like to download it now? [Y/n] ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        if input.is_empty() || input == "y" || input == "yes" {
+            println!("\nPulling sandbox image from ghcr.io...\n");
+
+            let pull_status = tokio::process::Command::new("docker")
+                .args(["pull", image_name])
+                .status()
+                .await?;
+
+            if pull_status.success() {
+                println!("\n\x1b[32m✓ Image downloaded successfully!\x1b[0m");
+                println!("\n\x1b[32m✓ Onboarding complete!\x1b[0m");
+                println!("\nYou can now start the sandbox server with:");
+                println!("\n  \x1b[36m{} start\x1b[0m\n", binary_name);
+            } else {
+                eprintln!("\n\x1b[31m✗ Failed to pull image\x1b[0m");
+                eprintln!("\nPlease check your network connection and try again.");
+                eprintln!("If the image is not yet published, you may need to build it locally:");
+                eprintln!("\n  \x1b[36mcd packages/sandbox && ./scripts/reload.sh\x1b[0m\n");
+                return Err(anyhow::anyhow!("Failed to pull Docker image"));
+            }
+        } else {
+            println!("\nSkipping image download. You can download it later with:");
+            println!("\n  \x1b[36mdocker pull {}\x1b[0m\n", image_name);
+        }
     }
 
     Ok(())
