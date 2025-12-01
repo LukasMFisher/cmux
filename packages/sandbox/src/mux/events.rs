@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::models::{NotificationLevel, SandboxSummary};
+use crate::mux::colors::TerminalColors;
 use crate::mux::layout::PaneId;
 
 /// Events that can occur in the multiplexer.
@@ -43,4 +44,6 @@ pub enum MuxEvent {
     ConnectActivePaneToSandbox,
     /// Terminal connection closed for a pane
     TerminalExited { pane_id: PaneId, sandbox_id: String },
+    /// Outer terminal theme changed (received SIGUSR1)
+    ThemeChanged { colors: TerminalColors },
 }

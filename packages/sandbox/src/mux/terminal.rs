@@ -9,6 +9,7 @@ use vte::{Params, Parser, Perform};
 
 use crate::models::{MuxClientMessage, MuxServerMessage, PtySessionId};
 use crate::mux::character::{CharacterStyles, Row, TerminalCharacter};
+use crate::mux::colors::{get_outer_bg, get_outer_fg};
 use crate::mux::events::MuxEvent;
 use crate::mux::grid::Grid;
 use crate::mux::layout::{PaneId, TabId};
@@ -1877,11 +1878,10 @@ impl Perform for VirtualTerminal {
                         if let Ok(color_str) = std::str::from_utf8(param) {
                             if color_str == "?" {
                                 // Query this dynamic color
-                                // Default colors match typical dark terminal theme (like ghostty)
-                                // Background: 53, 55, 49 - dark gray that apps detect for theming
+                                // Use outer terminal's colors if available, otherwise use defaults
                                 let (r, g, b) = match color_index {
-                                    10 => self.default_fg_color.unwrap_or((255, 255, 255)),
-                                    11 => self.default_bg_color.unwrap_or((53, 55, 49)),
+                                    10 => self.default_fg_color.unwrap_or_else(get_outer_fg),
+                                    11 => self.default_bg_color.unwrap_or_else(get_outer_bg),
                                     12 => self.cursor_color.unwrap_or((255, 255, 255)),
                                     _ => continue,
                                 };
@@ -1912,9 +1912,9 @@ impl Perform for VirtualTerminal {
                         if let Ok(color_str) = std::str::from_utf8(param) {
                             if color_str == "?" {
                                 // Query this dynamic color
-                                // Default background: 53, 55, 49 - matches ghostty dark theme
+                                // Use outer terminal's colors if available
                                 let (r, g, b) = match color_index {
-                                    11 => self.default_bg_color.unwrap_or((53, 55, 49)),
+                                    11 => self.default_bg_color.unwrap_or_else(get_outer_bg),
                                     12 => self.cursor_color.unwrap_or((255, 255, 255)),
                                     _ => continue,
                                 };

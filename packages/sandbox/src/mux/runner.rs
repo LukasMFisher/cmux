@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
+use crate::mux::colors::{query_outer_terminal_colors, spawn_theme_change_listener};
 use crate::mux::commands::MuxCommand;
 use crate::mux::events::MuxEvent;
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId, TabId};
@@ -29,6 +30,10 @@ use crate::sync_files::{detect_sync_files, upload_sync_files_with_list};
 /// If `workspace_path` is provided, sandboxes created during the session will upload
 /// that directory (defaulting to the current working directory).
 pub async fn run_mux_tui(base_url: String, workspace_path: Option<PathBuf>) -> Result<()> {
+    // Query outer terminal colors BEFORE entering alternate screen
+    // This allows us to inherit the host terminal's theme
+    let _outer_colors = query_outer_terminal_colors();
+
     let mut stdout = std::io::stdout();
     execute!(
         stdout,
@@ -100,6 +105,20 @@ async fn run_main_loop<B: ratatui::backend::Backend + std::io::Write>(
             workspace_path: initial_workspace,
             tab_id: Some(TabId::new().to_string()),
         });
+    });
+
+    // Spawn theme change signal listener (SIGUSR1 on Unix)
+    let (theme_tx, mut theme_rx) = mpsc::unbounded_channel();
+    spawn_theme_change_listener(theme_tx);
+
+    // Forward theme change events to the main event channel
+    let theme_event_tx = event_tx.clone();
+    tokio::spawn(async move {
+        while let Some(theme_event) = theme_rx.recv().await {
+            let _ = theme_event_tx.send(MuxEvent::ThemeChanged {
+                colors: theme_event.colors,
+            });
+        }
     });
 
     run_app(terminal, app, event_rx, terminal_manager).await
@@ -204,6 +223,14 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                             *pane_id,
                             sandbox_id,
                         );
+                    }
+                    MuxEvent::ThemeChanged { colors } => {
+                        // Theme change signal received - update stored colors
+                        // Note: The actual color values here are from the cache.
+                        // For full re-query support, we'd need to temporarily exit
+                        // the alternate screen, but for now this enables signal-based
+                        // notification. Apps will get updated colors on next OSC query.
+                        crate::mux::colors::set_outer_colors(*colors);
                     }
                     _ => {}
                 }

@@ -814,6 +814,9 @@ impl<'a> MuxApp<'a> {
             MuxEvent::TerminalExited { .. } => {
                 // Cleanup is handled in the runner where terminal state is available
             }
+            MuxEvent::ThemeChanged { .. } => {
+                // Theme change is handled in the runner
+            }
         }
     }
 
