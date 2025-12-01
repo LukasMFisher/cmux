@@ -26,6 +26,7 @@ export const createScreenshotSet = internalMutation({
         commitSha: v.optional(v.string()),
         width: v.optional(v.number()),
         height: v.optional(v.number()),
+        description: v.optional(v.string()),
       }),
     ),
   },
@@ -53,6 +54,7 @@ export const createScreenshotSet = internalMutation({
       mimeType: image.mimeType,
       fileName: image.fileName,
       commitSha: image.commitSha ?? args.commitSha,
+      description: image.description,
     }));
 
     const screenshotSetId: Id<"taskRunScreenshotSets"> = await ctx.runMutation(
@@ -194,6 +196,7 @@ export const uploadAndComment = action({
           commitSha: v.string(),
           width: v.optional(v.number()),
           height: v.optional(v.number()),
+          description: v.optional(v.string()),
         }),
       ),
     ),
@@ -233,6 +236,7 @@ export const uploadAndComment = action({
       commitSha?: string;
       width?: number;
       height?: number;
+      description?: string;
     }> = (args.images ?? []).map((img) => ({
       storageId: img.storageId as unknown as Id<"_storage">,
       mimeType: img.mimeType,
@@ -240,6 +244,7 @@ export const uploadAndComment = action({
       commitSha: img.commitSha,
       width: img.width,
       height: img.height,
+      description: img.description,
     }));
 
     const screenshotSetId = await ctx.runMutation(

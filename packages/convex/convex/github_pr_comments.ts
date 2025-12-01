@@ -76,6 +76,27 @@ const summarizeSet = (
   return `${prefix} – commit ${commit} (${timestamp})`;
 };
 
+/**
+ * Formats a single screenshot image into markdown lines.
+ * Shared helper to ensure consistent rendering across all codepaths.
+ */
+const formatScreenshotImageMarkdown = (
+  storageUrl: string,
+  fileName: string,
+  description?: string,
+  options?: { includeHeader?: boolean },
+): string[] => {
+  const lines: string[] = [];
+  if (options?.includeHeader) {
+    lines.push(`### ${fileName}`);
+  }
+  if (description) {
+    lines.push(`**${description}**`, "");
+  }
+  lines.push(`![${fileName}](${storageUrl})`, "");
+  return lines;
+};
+
 async function renderScreenshotSetMarkdown(
   ctx: ActionCtx,
   set: ScreenshotSetDoc,
@@ -93,7 +114,7 @@ async function renderScreenshotSetMarkdown(
       const storageUrl = await ctx.storage.getUrl(image.storageId);
       if (!storageUrl) continue;
       const fileName = image.fileName || "screenshot";
-      lines.push(`![${fileName}](${storageUrl})`, "");
+      lines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description));
     }
   } else if (set.status === "failed") {
     lines.push(
@@ -516,7 +537,7 @@ async function getScreenshotsForPr(
     repoFullName: string;
     prNumber: number;
   },
-): Promise<Array<{ url: string; fileName?: string }>> {
+): Promise<Array<{ url: string; fileName?: string; description?: string }>> {
   try {
     const taskRuns = await ctx.runQuery(
       internal.github_pr_queries.findTaskRunsForPr,
@@ -531,7 +552,7 @@ async function getScreenshotsForPr(
       return [];
     }
 
-    const screenshots: Array<{ url: string; fileName?: string }> = [];
+    const screenshots: Array<{ url: string; fileName?: string; description?: string }> = [];
 
     for (const run of taskRuns) {
       if (run.latestScreenshotSetId) {
@@ -548,6 +569,7 @@ async function getScreenshotsForPr(
               screenshots.push({
                 url: image.url,
                 fileName: image.fileName,
+                description: image.description,
               });
             }
           }
@@ -571,7 +593,7 @@ async function getScreenshotsForPr(
 }
 
 function formatScreenshotComment(
-  screenshots: Array<{ url: string; fileName?: string }>,
+  screenshots: Array<{ url: string; fileName?: string; description?: string }>,
 ): string {
   if (screenshots.length === 0) {
     return "";
@@ -583,8 +605,8 @@ function formatScreenshotComment(
 
   for (const screenshot of screenshots) {
     const title = screenshot.fileName || "Screenshot";
-    markdown += `### ${title}\n\n`;
-    markdown += `![${title}](${screenshot.url})\n\n`;
+    const lines = formatScreenshotImageMarkdown(screenshot.url, title, screenshot.description, { includeHeader: true });
+    markdown += lines.join("\n") + "\n";
   }
 
   return markdown;
@@ -679,7 +701,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
           const storageUrl = await ctx.storage.getUrl(image.storageId);
           if (storageUrl) {
             const fileName = image.fileName || "screenshot";
-            commentLines.push(`### ${fileName}`, `![${fileName}](${storageUrl})`, "");
+            commentLines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description, { includeHeader: true }));
           }
         }
       } else if (screenshotSet.status === "failed") {

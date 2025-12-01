@@ -368,7 +368,6 @@ payload = {
     "images": [
         {
             "path": os.path.abspath(path),
-            "description": f"Screenshot {os.path.basename(path)}"
         }
         for path in images
     ],

@@ -36,7 +36,7 @@ interface ScreenshotManifest {
   hasUiChanges: boolean;
   images: Array<{
     path: string;
-    description: string;
+    description?: string;
   }>;
 }
 
@@ -410,6 +410,7 @@ async function main(): Promise<void> {
     mimeType: string;
     fileName: string;
     commitSha: string;
+    description?: string;
   }> = [];
 
   for (const image of manifest.images) {
@@ -423,6 +424,7 @@ async function main(): Promise<void> {
       uploadedImages.push({
         ...uploaded,
         commitSha,
+        description: image.description,
       });
       console.log(`   ✅ Uploaded: ${uploaded.storageId}`);
     } catch (err) {
