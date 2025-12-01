@@ -21,7 +21,10 @@ use crate::mux::commands::MuxCommand;
 use crate::mux::events::MuxEvent;
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId, TabId};
 use crate::mux::state::{FocusArea, MuxApp};
-use crate::mux::terminal::{connect_to_sandbox, create_terminal_manager, request_list_sandboxes};
+use crate::mux::terminal::{
+    connect_to_sandbox, create_terminal_manager, invalidate_all_render_caches,
+    request_list_sandboxes, send_signal_to_children,
+};
 use crate::mux::ui::ui;
 use crate::sync_files::{detect_sync_files, upload_sync_files_with_list};
 
@@ -224,13 +227,80 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                             sandbox_id,
                         );
                     }
-                    MuxEvent::ThemeChanged { colors } => {
-                        // Theme change signal received - update stored colors
-                        // Note: The actual color values here are from the cache.
-                        // For full re-query support, we'd need to temporarily exit
-                        // the alternate screen, but for now this enables signal-based
-                        // notification. Apps will get updated colors on next OSC query.
-                        crate::mux::colors::set_outer_colors(*colors);
+                    MuxEvent::ThemeChanged { colors: _ } => {
+                        // Theme change signal received - re-query colors from outer terminal
+                        // VSCode terminal doesn't respond to OSC 10/11 while in alternate screen,
+                        // so we need to leave alt screen, query, then re-enter.
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/dmux-colors.log")
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(f, "[RUNNER] ThemeChanged - leaving alt screen to query colors");
+                        }
+
+                        // Leave alternate screen and disable raw mode for clean OSC query
+                        let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+                        let _ = disable_raw_mode();
+
+                        // Small delay to let terminal settle
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+
+                        // Query colors now that we're in normal screen mode
+                        let new_colors = crate::mux::colors::query_outer_terminal_colors();
+
+                        // Re-enable raw mode and re-enter alternate screen
+                        let _ = enable_raw_mode();
+                        let _ = execute!(terminal.backend_mut(), EnterAlternateScreen);
+
+                        // Force full terminal redraw
+                        let _ = terminal.clear();
+
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/dmux-colors.log")
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(
+                                f,
+                                "[RUNNER] Re-queried colors: fg={:?}, bg={:?}",
+                                new_colors.foreground, new_colors.background
+                            );
+                        }
+
+                        app.set_status(format!(
+                            "Theme updated: bg={:?}",
+                            new_colors.background.map(|(r, g, b)| format!("#{:02x}{:02x}{:02x}", r, g, b))
+                        ));
+
+                        // Invalidate all render caches so terminal buffers re-render with new colors
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/dmux-colors.log")
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(f, "[RUNNER] About to call invalidate_all_render_caches...");
+                        }
+                        invalidate_all_render_caches(terminal_manager.clone()).await;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/dmux-colors.log")
+                        {
+                            use std::io::Write;
+                            let _ = writeln!(f, "[RUNNER] invalidate_all_render_caches completed");
+                        }
+
+                        // Send SIGWINCH to trigger re-render in TUI apps
+                        // Note: We don't send SIGUSR1 because most apps don't handle it
+                        // and the default action would kill them
+                        let manager_clone = terminal_manager.clone();
+                        tokio::spawn(async move {
+                            let _ = send_signal_to_children(manager_clone, libc::SIGWINCH).await;
+                        });
                     }
                     _ => {}
                 }
@@ -239,6 +309,14 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                 redraw_needed = true;
             }
             Some(Ok(event)) = reader.next() => {
+                // Skip focus events - we don't forward them to inner ptys because:
+                // 1. Bash and most shells don't handle focus tracking and just echo ^[[I
+                // 2. Querying colors on focus is problematic (responses leak or cause flicker)
+                // Colors are queried at startup before entering alt screen.
+                if matches!(event, Event::FocusGained | Event::FocusLost) {
+                    continue;
+                }
+
                 if handle_input(&mut app, event, &terminal_manager) {
                     break;
                 }

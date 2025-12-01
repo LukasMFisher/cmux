@@ -291,6 +291,12 @@ pub enum MuxClientMessage {
         stdout: String,
         stderr: String,
     },
+    /// Forward a signal to all PTY child processes.
+    /// Common uses: SIGUSR1 (theme change), SIGUSR2, SIGHUP (config reload).
+    Signal {
+        /// Signal number to send (e.g., 10 for SIGUSR1 on most Unix systems)
+        signum: i32,
+    },
 }
 
 /// Server-to-client messages for the multiplexed WebSocket protocol.

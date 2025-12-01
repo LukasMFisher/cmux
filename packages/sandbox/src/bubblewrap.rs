@@ -41,6 +41,8 @@ struct PtySessionHandle {
     master: Box<dyn MasterPty + Send>,
     #[allow(dead_code)]
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// Child process ID for signal forwarding
+    child_pid: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -872,6 +874,7 @@ fi
             .slave
             .spawn_command(cmd)
             .map_err(|e| SandboxError::Internal(format!("failed to spawn pty command: {e}")))?;
+        let child_pid = child.process_id();
         // Release slave so it closes when child exits
         drop(pair.slave);
 
@@ -937,6 +940,7 @@ fi
             input_tx,
             master: pair.master,
             child,
+            child_pid,
         })
     }
 }
@@ -1885,6 +1889,32 @@ impl SandboxService for BubblewrapService {
                                 stdout,
                                 stderr,
                             });
+                        }
+
+                        MuxClientMessage::Signal { signum } => {
+                            // Forward signal to all PTY child processes
+                            let sessions = sessions.lock().await;
+                            let mut sent_count = 0;
+                            for (_session_id, handle) in sessions.iter() {
+                                if let Some(pid) = handle.child_pid {
+                                    // Use libc to send the signal
+                                    let result = unsafe { libc::kill(pid as i32, signum) };
+                                    if result == 0 {
+                                        sent_count += 1;
+                                    } else {
+                                        debug!(
+                                            "mux_attach: failed to send signal {} to pid {}: {}",
+                                            signum,
+                                            pid,
+                                            std::io::Error::last_os_error()
+                                        );
+                                    }
+                                }
+                            }
+                            debug!(
+                                "mux_attach: forwarded signal {} to {} processes",
+                                signum, sent_count
+                            );
                         }
                     }
                 }

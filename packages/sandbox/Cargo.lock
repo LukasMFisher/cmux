@@ -521,6 +521,7 @@ dependencies = [
  "crossterm 0.28.1",
  "futures",
  "ignore",
+ "libc",
  "open",
  "portable-pty",
  "predicates",

@@ -3040,7 +3040,8 @@ impl TerminalBuffer {
         }
     }
 
-    fn mark_dirty(&mut self) {
+    /// Mark the terminal buffer as dirty, invalidating the render cache.
+    pub(crate) fn mark_dirty(&mut self) {
         self.render_cache = None;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -3208,9 +3209,31 @@ impl TerminalBuffer {
 
     /// Build a cached render view for the given height.
     pub fn render_view(&mut self, height: usize) -> TerminalRenderView {
+        // Use a static counter to log cache misses only (to avoid log spam)
+        static RENDER_LOG_COUNTER: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+
         if let Some(cache) = &self.render_cache {
             if cache.is_valid(height, self.generation, self.scroll_offset) {
                 return cache.as_view();
+            }
+        }
+
+        // Cache miss - log this
+        let counter = RENDER_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let outer_bg = get_outer_bg();
+        let outer_fg = get_outer_fg();
+
+        // Only log first few cache misses after invalidation to avoid spam
+        if counter < 5 || counter % 100 == 0 {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "[RENDER] Cache miss #{}, gen={}, outer_bg={:?}, outer_fg={:?}, terminal.default_bg={:?}",
+                    counter, self.generation, outer_bg, outer_fg, self.terminal.default_bg_color);
             }
         }
 
@@ -3219,7 +3242,10 @@ impl TerminalBuffer {
         let mut has_content = self.terminal.scrollback_len() > 0;
         let default_styles = CharacterStyles::default();
 
-        // Get default colors from terminal (OSC 10/11) - None means use terminal's native color
+        // Get default colors from terminal (OSC 10/11)
+        // If the inner app explicitly set default colors via OSC 10/11, use those.
+        // Otherwise, use None to let the terminal use its actual default colors.
+        // This allows theme changes in the outer terminal to automatically propagate.
         let default_fg = self
             .terminal
             .default_fg_color
@@ -3380,6 +3406,41 @@ impl TerminalManager {
     /// Get the output buffer for a pane mutably
     pub fn get_buffer_mut(&mut self, pane_id: PaneId) -> Option<&mut TerminalBuffer> {
         self.buffers.get_mut(&pane_id)
+    }
+
+    /// Invalidate render caches for all terminal buffers.
+    /// Call this when outer terminal colors change to force re-rendering.
+    pub fn invalidate_all_render_caches(&mut self) {
+        let count = self.buffers.len();
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                f,
+                "[INVALIDATE] Invalidating {} terminal buffer caches",
+                count
+            );
+        }
+        for (pane_id, buffer) in self.buffers.iter_mut() {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                use std::io::Write;
+                let _ = writeln!(
+                    f,
+                    "[INVALIDATE] Marking buffer for pane {:?} dirty (gen {} -> {})",
+                    pane_id,
+                    buffer.generation,
+                    buffer.generation.wrapping_add(1)
+                );
+            }
+            buffer.mark_dirty();
+        }
     }
 
     /// Check if a pane has an active terminal session
@@ -3847,6 +3908,28 @@ pub async fn request_list_sandboxes(manager: SharedTerminalManager) -> anyhow::R
     } else {
         Err(anyhow::anyhow!("Mux connection not established"))
     }
+}
+
+/// Forward a signal to all PTY child processes via the multiplexed WebSocket connection.
+pub async fn send_signal_to_children(
+    manager: SharedTerminalManager,
+    signum: i32,
+) -> anyhow::Result<()> {
+    let mgr = manager.lock().await;
+    if let Some(sender) = mgr.get_mux_sender() {
+        sender.send(MuxClientMessage::Signal { signum });
+        Ok(())
+    } else {
+        // Connection not established yet, silently ignore
+        Ok(())
+    }
+}
+
+/// Invalidate all render caches in all terminal buffers.
+/// Call this when outer terminal colors change to force re-rendering with new colors.
+pub async fn invalidate_all_render_caches(manager: SharedTerminalManager) {
+    let mut mgr = manager.lock().await;
+    mgr.invalidate_all_render_caches();
 }
 
 /// Run a gh command locally on the host machine.
@@ -4369,12 +4452,13 @@ mod tests {
     }
 
     #[test]
-    fn osc4_palette_color_applied_in_render() {
+    fn osc4_palette_color_stays_indexed_in_render() {
         use crate::mux::terminal::TerminalBuffer;
 
         let mut buffer = TerminalBuffer::with_size(24, 80);
 
         // Set custom palette color 235 to (53, 55, 49)
+        // This is stored for OSC 4 query responses but NOT used during rendering
         buffer.process(b"\x1b]4;235;rgb:35/37/31\x1b\\");
 
         // Use palette color 235 as background
@@ -4383,14 +4467,16 @@ mod tests {
         // Get render view
         let view = buffer.render_view(24);
 
-        // The first span should have background color converted from indexed to RGB
+        // Indexed colors should NOT be converted to RGB during rendering.
+        // This allows the outer terminal (e.g., VSCode) to render with its
+        // current theme's palette, enabling automatic theme following.
         let first_line = &view.lines[0];
         assert!(!first_line.spans.is_empty());
         let bg = first_line.spans[0].style.bg;
         assert_eq!(
             bg,
-            Some(Color::Rgb(53, 55, 49)),
-            "Indexed color should be converted to RGB using custom palette"
+            Some(Color::Indexed(235)),
+            "Indexed color should stay indexed to allow outer terminal to use its palette"
         );
     }
 

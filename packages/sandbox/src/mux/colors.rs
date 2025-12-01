@@ -7,7 +7,7 @@
 //! Theme changes are detected via SIGUSR1 signal (Unix) which triggers
 //! a re-query of terminal colors.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
@@ -37,31 +37,65 @@ pub fn get_outer_colors() -> TerminalColors {
 
 /// Get the outer terminal's foreground color with fallback.
 pub fn get_outer_fg() -> (u8, u8, u8) {
-    OUTER_FG_COLOR
+    let color = OUTER_FG_COLOR
         .read()
         .ok()
         .and_then(|g| *g)
-        .unwrap_or((255, 255, 255)) // White fallback
+        .unwrap_or((255, 255, 255)); // White fallback
+    color
 }
 
 /// Get the outer terminal's background color with fallback.
 pub fn get_outer_bg() -> (u8, u8, u8) {
-    OUTER_BG_COLOR
+    let color = OUTER_BG_COLOR
         .read()
         .ok()
         .and_then(|g| *g)
-        .unwrap_or((53, 55, 49)) // Dark gray fallback (matches ghostty)
+        .unwrap_or((53, 55, 49)); // Dark gray fallback (matches ghostty)
+    color
 }
 
 /// Update the stored outer terminal colors.
+/// Only updates if BOTH fg and bg were successfully queried to avoid mismatched colors.
 pub fn set_outer_colors(colors: TerminalColors) {
-    if let Ok(mut fg) = OUTER_FG_COLOR.write() {
-        *fg = colors.foreground;
+    // Only update if we got BOTH colors - otherwise we'd have mismatched theme
+    match (colors.foreground, colors.background) {
+        (Some(fg_color), Some(bg_color)) => {
+            if let Ok(mut fg) = OUTER_FG_COLOR.write() {
+                *fg = Some(fg_color);
+            }
+            if let Ok(mut bg) = OUTER_BG_COLOR.write() {
+                *bg = Some(bg_color);
+            }
+            COLORS_INITIALIZED.store(true, Ordering::SeqCst);
+
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                let _ = writeln!(
+                    f,
+                    "[COLORS] Updated both: fg={:?}, bg={:?}",
+                    fg_color, bg_color
+                );
+            }
+        }
+        _ => {
+            // Don't update anything if one query failed - keep previous colors
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                let _ = writeln!(
+                    f,
+                    "[COLORS] Query incomplete, keeping old colors: fg={:?}, bg={:?}",
+                    colors.foreground, colors.background
+                );
+            }
+        }
     }
-    if let Ok(mut bg) = OUTER_BG_COLOR.write() {
-        *bg = colors.background;
-    }
-    COLORS_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
 /// Check if colors have been initialized.
@@ -79,8 +113,26 @@ pub fn colors_initialized() -> bool {
 pub fn query_outer_terminal_colors() -> TerminalColors {
     let mut colors = TerminalColors::default();
 
+    // Debug log
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-colors.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[QUERY] Starting outer terminal color query...");
+    }
+
     // We need raw mode to read terminal responses
     if crossterm::terminal::enable_raw_mode().is_err() {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "[QUERY] Failed to enable raw mode");
+        }
         return colors;
     }
 
@@ -91,75 +143,170 @@ pub fn query_outer_terminal_colors() -> TerminalColors {
     // Restore normal mode
     let _ = crossterm::terminal::disable_raw_mode();
 
+    // Debug log results
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-colors.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(
+            f,
+            "[QUERY] Result: fg={:?}, bg={:?}",
+            colors.foreground, colors.background
+        );
+    }
+
     // Store for later use
     set_outer_colors(colors);
 
     colors
 }
 
+/// Drain any pending data from stdin (non-blocking).
+fn drain_stdin() {
+    use std::os::unix::io::AsRawFd;
+
+    let stdin = std::io::stdin();
+    let stdin_handle = stdin.lock();
+    let stdin_fd = stdin_handle.as_raw_fd();
+
+    // Set non-blocking
+    let flags = unsafe { libc::fcntl(stdin_fd, libc::F_GETFL) };
+    unsafe { libc::fcntl(stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+
+    // Drain all pending data
+    let mut buf = [0u8; 256];
+    let mut total_drained = 0;
+    loop {
+        let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        total_drained += n as usize;
+    }
+
+    // Restore blocking mode
+    unsafe { libc::fcntl(stdin_fd, libc::F_SETFL, flags) };
+
+    if total_drained > 0 {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            let _ = writeln!(f, "[DRAIN] Drained {} bytes from stdin", total_drained);
+        }
+    }
+}
+
 /// Query a specific OSC color (10=fg, 11=bg, 12=cursor).
 fn query_osc_color(code: u8) -> Option<(u8, u8, u8)> {
+    use std::os::unix::io::AsRawFd;
+
+    let log = |msg: &str| {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            let _ = writeln!(f, "[OSC{}] {}", code, msg);
+        }
+    };
+
+    // Drain any leftover data from previous queries or terminal events
+    drain_stdin();
+
     let mut stdout = std::io::stdout();
     let stdin = std::io::stdin();
 
     // Send query: OSC code ; ? ST
     let query = format!("\x1b]{};?\x1b\\", code);
+    log(&format!("Sending query: {:?}", query.as_bytes()));
+
     if stdout.write_all(query.as_bytes()).is_err() {
+        log("Failed to write query");
         return None;
     }
     if stdout.flush().is_err() {
+        log("Failed to flush");
         return None;
     }
 
-    // Read response with timeout
+    log("Query sent, waiting for response...");
+
+    // Read response with timeout using select/poll
     // Response format: OSC code ; rgb:RRRR/GGGG/BBBB ST
     let mut response = Vec::with_capacity(64);
-    let deadline = std::time::Instant::now() + Duration::from_millis(100);
+    let deadline = std::time::Instant::now() + Duration::from_millis(200);
 
-    // Use non-blocking read with polling
-    let mut stdin_handle = stdin.lock();
+    let stdin_handle = stdin.lock();
+    let stdin_fd = stdin_handle.as_raw_fd();
+
+    // Set stdin to non-blocking
+    let flags = unsafe { libc::fcntl(stdin_fd, libc::F_GETFL) };
+    unsafe { libc::fcntl(stdin_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
 
     loop {
-        if std::time::Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            log(&format!(
+                "Timeout! Response so far: {:?} ({} bytes)",
+                String::from_utf8_lossy(&response),
+                response.len()
+            ));
             break;
         }
 
-        // Try to read one byte at a time
-        let mut buf = [0u8; 1];
+        // Use poll to wait for input
+        let mut pollfd = libc::pollfd {
+            fd: stdin_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
 
-        // Use crossterm's poll to check if input is available
-        if crossterm::event::poll(Duration::from_millis(10)).unwrap_or(false) {
-            if let Ok(crossterm::event::Event::Key(_)) = crossterm::event::read() {
-                // Ignore key events, we want raw bytes
-                continue;
-            }
+        let timeout_ms = remaining.as_millis().min(50) as i32;
+        let poll_result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+
+        if poll_result <= 0 {
+            continue; // Timeout or error, try again
         }
 
-        // Try direct read with very short timeout
-        match stdin_handle.read(&mut buf) {
-            Ok(0) => break, // EOF
-            Ok(1) => {
-                response.push(buf[0]);
-                // Check for ST (ESC \) or BEL terminator
-                if buf[0] == b'\\' && response.len() >= 2 && response[response.len() - 2] == 0x1b {
-                    break;
-                }
-                if buf[0] == 0x07 {
-                    // BEL terminator
-                    break;
-                }
+        // Read available bytes
+        let mut buf = [0u8; 64];
+        let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+
+        if n > 0 {
+            let bytes = &buf[..n as usize];
+            log(&format!("Read {} bytes: {:?}", n, bytes));
+            response.extend_from_slice(bytes);
+
+            // Check for ST (ESC \) or BEL terminator
+            if response.ends_with(&[0x1b, b'\\']) || response.ends_with(&[0x07]) {
+                log("Found terminator");
+                break;
             }
-            _ => {
-                // Would block or error, wait a bit
-                std::thread::sleep(Duration::from_millis(5));
-            }
+        } else if n == 0 {
+            log("EOF");
+            break;
         }
+        // n < 0 means EAGAIN/EWOULDBLOCK, continue polling
     }
+
+    // Restore blocking mode
+    unsafe { libc::fcntl(stdin_fd, libc::F_SETFL, flags) };
 
     drop(stdin_handle);
 
+    log(&format!(
+        "Final response: {:?}",
+        String::from_utf8_lossy(&response)
+    ));
+
     // Parse response
-    parse_osc_color_response(&response)
+    let result = parse_osc_color_response(&response);
+    log(&format!("Parsed result: {:?}", result));
+    result
 }
 
 /// Parse an OSC color response.
@@ -201,6 +348,124 @@ fn parse_hex_component(s: &str) -> Option<u8> {
     }
 }
 
+/// Query outer terminal colors via a subprocess.
+/// This spawns a helper process that queries colors independently,
+/// avoiding conflicts with the main EventStream.
+///
+/// This is faster and less disruptive than query_outer_terminal_colors()
+/// which requires exiting alternate screen.
+pub fn query_colors_via_subprocess() -> TerminalColors {
+    let mut colors = TerminalColors::default();
+
+    let log = |msg: &str| {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            let _ = writeln!(f, "[SUBPROCESS] {}", msg);
+        }
+    };
+
+    log("Querying colors via subprocess");
+
+    colors.foreground = query_osc_color_via_subprocess(10);
+    colors.background = query_osc_color_via_subprocess(11);
+
+    log(&format!(
+        "Result: fg={:?}, bg={:?}",
+        colors.foreground, colors.background
+    ));
+
+    // Store for later use
+    set_outer_colors(colors);
+
+    colors
+}
+
+/// Query a specific OSC color via a subprocess.
+/// The subprocess opens /dev/tty directly, queries the color, and prints the RGB result.
+fn query_osc_color_via_subprocess(code: u8) -> Option<(u8, u8, u8)> {
+    use std::process::{Command, Stdio};
+
+    let log = |msg: &str| {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            let _ = writeln!(f, "[SUBPROCESS-OSC{}] {}", code, msg);
+        }
+    };
+
+    // Use sh -c with a script that queries the color via /dev/tty
+    // The script:
+    // 1. Opens /dev/tty for input/output
+    // 2. Sets raw mode using stty
+    // 3. Sends OSC query
+    // 4. Reads response with timeout
+    // 5. Parses and prints RGB values
+    let script = format!(
+        r#"
+exec 3<>/dev/tty
+old_settings=$(stty -g <&3 2>/dev/null)
+stty raw -echo min 0 time 2 <&3 2>/dev/null
+printf '\033]{};?\033\\' >&3
+response=""
+while IFS= read -r -t 0.15 -n 1 char <&3 2>/dev/null; do
+    response="$response$char"
+    case "$response" in
+        *$'\033''\') break ;;
+        *$'\007') break ;;
+    esac
+done
+stty "$old_settings" <&3 2>/dev/null
+exec 3>&-
+echo "$response" | sed -n 's/.*rgb:\([0-9a-fA-F]*\)\/\([0-9a-fA-F]*\)\/\([0-9a-fA-F]*\).*/\1 \2 \3/p'
+"#,
+        code
+    );
+
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let trimmed = stdout.trim();
+            log(&format!("Script output: {:?}", trimmed));
+
+            if trimmed.is_empty() {
+                log("No response from script");
+                return None;
+            }
+
+            // Parse "RRRR GGGG BBBB" format
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() != 3 {
+                log(&format!("Invalid format: {:?}", parts));
+                return None;
+            }
+
+            let r = parse_hex_component(parts[0])?;
+            let g = parse_hex_component(parts[1])?;
+            let b = parse_hex_component(parts[2])?;
+
+            log(&format!("Parsed: ({}, {}, {})", r, g, b));
+            Some((r, g, b))
+        }
+        Err(e) => {
+            log(&format!("Failed to run subprocess: {}", e));
+            None
+        }
+    }
+}
+
 /// Message sent when theme colors change.
 #[derive(Debug, Clone)]
 pub struct ThemeChangeEvent {
@@ -216,25 +481,84 @@ pub struct ThemeChangeEvent {
 /// temporarily exiting the alternate screen buffer.
 #[cfg(unix)]
 pub fn spawn_theme_change_listener(tx: mpsc::UnboundedSender<ThemeChangeEvent>) {
+    // Log that we're setting up the listener
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-colors.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[SIGNAL] Setting up SIGUSR1 listener for theme changes");
+    }
+
     tokio::spawn(async move {
         let mut sigusr1 =
             match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1()) {
                 Ok(sig) => sig,
                 Err(e) => {
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/tmp/dmux-colors.log")
+                    {
+                        use std::io::Write;
+                        let _ = writeln!(f, "[SIGNAL] Failed to register SIGUSR1: {e}");
+                    }
                     eprintln!("Warning: Failed to register SIGUSR1 handler for theme changes: {e}");
                     return;
                 }
             };
 
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/dmux-colors.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "[SIGNAL] SIGUSR1 listener ready, waiting for signals...");
+        }
+
         loop {
             sigusr1.recv().await;
+
+            // Log signal received
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "[SIGNAL] SIGUSR1 received! Theme may have changed.");
+            }
 
             // Signal received - notify that theme may have changed
             // The actual color re-query happens in the main event loop
             // because we need to temporarily exit the alternate screen
             let colors = get_outer_colors();
+
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/dmux-colors.log")
+            {
+                use std::io::Write;
+                let _ = writeln!(
+                    f,
+                    "[SIGNAL] Sending ThemeChangeEvent with cached colors: fg={:?}, bg={:?}",
+                    colors.foreground, colors.background
+                );
+            }
+
             if tx.send(ThemeChangeEvent { colors }).is_err() {
                 // Channel closed, exit the task
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/dmux-colors.log")
+                {
+                    use std::io::Write;
+                    let _ = writeln!(f, "[SIGNAL] Channel closed, exiting signal listener");
+                }
                 break;
             }
         }

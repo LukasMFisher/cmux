@@ -544,19 +544,12 @@ impl Row {
         let mut current_style = Style::default();
         let mut current_text = String::new();
 
-        // Helper to apply palette to indexed colors
-        let apply_palette = |color: Option<Color>| -> Option<Color> {
-            match (color, palette) {
-                (Some(Color::Indexed(idx)), Some(pal)) => {
-                    if let Some((r, g, b)) = pal[idx as usize] {
-                        Some(Color::Rgb(r, g, b))
-                    } else {
-                        color
-                    }
-                }
-                _ => color,
-            }
-        };
+        // Don't convert indexed colors to RGB - keep them as indexed so the outer
+        // terminal (VSCode) can render them with its current theme's palette.
+        // This allows theme changes to automatically propagate to inner apps.
+        // The palette parameter is only used for OSC 4 query responses, not rendering.
+        let _ = palette; // Acknowledge but don't use for rendering
+        let apply_palette = |color: Option<Color>| -> Option<Color> { color };
 
         for character in &self.columns {
             if character.wide_spacer {
