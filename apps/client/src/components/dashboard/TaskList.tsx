@@ -118,7 +118,7 @@ type PreviewRunWithConfig = Doc<"previewRuns"> & {
 
 type PreviewCategoryKey = "in_progress" | "completed";
 
-const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["completed", "in_progress"];
+const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["in_progress", "completed"];
 
 const PREVIEW_CATEGORY_META: Record<
   PreviewCategoryKey,
@@ -142,11 +142,16 @@ const createEmptyPreviewCategoryBuckets = (): Record<
   completed: [],
 });
 
-const getPreviewCategory = (run: PreviewRunWithConfig): PreviewCategoryKey => {
+const getPreviewCategory = (run: PreviewRunWithConfig): PreviewCategoryKey | null => {
   if (run.status === "pending" || run.status === "running") {
     return "in_progress";
   }
-  return "completed";
+  // Only "completed" and "skipped" should show as completed (green circles)
+  if (run.status === "completed" || run.status === "skipped") {
+    return "completed";
+  }
+  // "failed" runs are excluded from both categories
+  return null;
 };
 
 const categorizePreviewRuns = (
@@ -158,7 +163,10 @@ const categorizePreviewRuns = (
   const buckets = createEmptyPreviewCategoryBuckets();
   for (const run of runs) {
     const key = getPreviewCategory(run);
-    buckets[key].push(run);
+    // Skip runs that don't belong to any category (e.g., failed runs)
+    if (key !== null) {
+      buckets[key].push(run);
+    }
   }
   return buckets;
 };

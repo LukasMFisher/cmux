@@ -26,6 +26,9 @@ export const get = authQuery({
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
 
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -46,13 +49,14 @@ export const getPinned = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get pinned tasks
+    // Get pinned tasks (excluding archived and preview tasks)
     const pinnedTasks = await ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
+      .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
     return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -79,6 +83,9 @@ export const getTasksWithTaskRuns = authQuery({
     } else {
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
+
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -849,6 +856,7 @@ export const createForPreview = internalMutation({
       baseBranch: args.baseBranch,
       worktreePath: undefined,
       isCompleted: false,
+      isPreview: true,
       createdAt: now,
       updatedAt: now,
       images: undefined,
