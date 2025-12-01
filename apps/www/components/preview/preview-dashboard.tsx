@@ -93,6 +93,7 @@ export function PreviewDashboard({
   const [configs, setConfigs] = useState<PreviewConfigListItem[]>(previewConfigs);
   const [updatingConfigId, setUpdatingConfigId] = useState<string | null>(null);
   const [openingConfigId, setOpeningConfigId] = useState<string | null>(null);
+  const [configPendingDelete, setConfigPendingDelete] = useState<PreviewConfigListItem | null>(null);
 
   // Public URL input state
   const [repoUrlInput, setRepoUrlInput] = useState("");
@@ -153,31 +154,39 @@ export function PreviewDashboard({
     window.location.href = `/preview/configure?${params.toString()}`;
   }, []);
 
-  const handleDeleteConfig = useCallback(
-    async (config: PreviewConfigListItem) => {
-      setUpdatingConfigId(config.id);
-      setConfigError(null);
-      try {
-        const params = new URLSearchParams({ teamSlugOrId: config.teamSlugOrId });
-        const response = await fetch(`/api/preview/configs/${config.id}?${params.toString()}`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-        });
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        setConfigs((previous) => previous.filter((item) => item.id !== config.id));
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to delete preview configuration";
-        console.error("[PreviewDashboard] Failed to delete preview configuration", error);
-        setConfigError(message);
-      } finally {
-        setUpdatingConfigId(null);
+  const handleRequestDelete = useCallback((config: PreviewConfigListItem) => {
+    setConfigError(null);
+    setConfigPendingDelete(config);
+  }, []);
+
+  const handleDeleteConfig = useCallback(async () => {
+    if (!configPendingDelete) return;
+    setUpdatingConfigId(configPendingDelete.id);
+    setConfigError(null);
+    try {
+      const params = new URLSearchParams({ teamSlugOrId: configPendingDelete.teamSlugOrId });
+      const response = await fetch(`/api/preview/configs/${configPendingDelete.id}?${params.toString()}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
       }
-    },
-    []
-  );
+      setConfigs((previous) => previous.filter((item) => item.id !== configPendingDelete.id));
+      setConfigPendingDelete(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete preview configuration";
+      console.error("[PreviewDashboard] Failed to delete preview configuration", error);
+      setConfigError(message);
+    } finally {
+      setUpdatingConfigId(null);
+    }
+  }, [configPendingDelete]);
+
+  const handleCancelDelete = useCallback(() => {
+    setConfigPendingDelete(null);
+  }, []);
 
   const handleTeamChange = useCallback(
     (nextTeam: string) => {
@@ -752,7 +761,7 @@ export function PreviewDashboard({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => void handleDeleteConfig(config)}
+                            onClick={() => handleRequestDelete(config)}
                             disabled={updatingConfigId === config.id}
                             className="p-1.5 text-red-400 disabled:opacity-50"
                           >
@@ -807,6 +816,58 @@ export function PreviewDashboard({
           </div>
         </div>
       </div>
+
+      {configPendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+          onClick={() => {
+            if (updatingConfigId === configPendingDelete.id) return;
+            handleCancelDelete();
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-red-500/10 p-2 text-red-400">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-white">Delete configuration?</h3>
+                <p className="mt-1 text-sm text-neutral-400">
+                  Are you sure you want to remove{" "}
+                  <span className="text-white">{configPendingDelete.repoFullName}</span>{" "}
+                  from preview.new? This stops screenshot previews for this repository.
+                </p>
+              </div>
+            </div>
+            {configError && (
+              <p className="mt-3 text-sm text-red-400">{configError}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-3">
+              <Button
+                onClick={handleCancelDelete}
+                disabled={updatingConfigId === configPendingDelete.id}
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleDeleteConfig()}
+                disabled={updatingConfigId === configPendingDelete.id}
+                variant="destructive"
+              >
+                {updatingConfigId === configPendingDelete.id ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
