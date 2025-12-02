@@ -24,7 +24,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/ui/tooltip-base";
 import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 
@@ -131,7 +131,7 @@ function Section({
   return (
     <div className={`flex flex-col h-full ${className ?? ""}`}>
       <div
-        className={`flex items-center ${inlineHeader ? "gap-2" : "justify-between gap-2"} h-[34px] shrink-0 ${inlineHeader ? "pb-2" : "pb-3"}`}
+        className={`flex flex-col sm:flex-row sm:items-center ${inlineHeader ? "gap-2" : "justify-between gap-2"} h-auto sm:h-[34px] shrink-0 ${inlineHeader ? "pb-2" : "pb-3"}`}
       >
         <h2 className="text-base font-medium text-white">{title}</h2>
         {headerContent}
@@ -203,7 +203,12 @@ function PopupCompleteView() {
 }
 
 /** Opens a centered popup window */
-function openCenteredPopup(url: string, name: string, width: number, height: number) {
+function openCenteredPopup(
+  url: string,
+  name: string,
+  width: number,
+  height: number
+) {
   const screenLeft = window.screenLeft ?? window.screenX;
   const screenTop = window.screenTop ?? window.screenY;
   const screenWidth = window.innerWidth;
@@ -544,11 +549,18 @@ export function PreviewDashboard({
       const payload = (await response.json()) as { installUrl: string };
 
       // Open centered popup for GitHub App installation
-      const popup = openCenteredPopup(payload.installUrl, "github-app-install", 1000, 700);
+      const popup = openCenteredPopup(
+        payload.installUrl,
+        "github-app-install",
+        1000,
+        700
+      );
 
       if (!popup) {
         // Popup was blocked - fall back to redirect
-        console.warn("[PreviewDashboard] Popup blocked, falling back to redirect");
+        console.warn(
+          "[PreviewDashboard] Popup blocked, falling back to redirect"
+        );
         window.location.href = payload.installUrl;
         return;
       }
@@ -752,7 +764,7 @@ export function PreviewDashboard({
       </div>
     </div>
   ) : !hasGithubAppInstallation ? (
-    <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden">
+    <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden py-16 sm:py-10">
       <GrainOverlay opacity={0.02} />
       <h3 className="text-base font-medium text-white pb-5">
         No connected repositories
@@ -765,11 +777,7 @@ export function PreviewDashboard({
         {isInstallingApp ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <svg
-            className="h-4 w-4"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-          >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
           </svg>
         )}
@@ -783,7 +791,13 @@ export function PreviewDashboard({
     <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-white/10">
       <div className="flex border-b border-white/10 shrink-0">
         <div className="relative border-r border-white/10">
-          <Github className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+          <svg
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4"
+            viewBox="0 0 24 24"
+            fill="white"
+          >
+            <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+          </svg>
           <select
             value={selectedInstallationId ?? ""}
             onChange={(e) => {
@@ -848,7 +862,7 @@ export function PreviewDashboard({
             Select a team and install the GitHub App to search.
           </div>
         ) : isLoadingRepos ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center h-full min-h-[225px]">
             <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
           </div>
         ) : repos.length > 0 ? (
@@ -858,14 +872,22 @@ export function PreviewDashboard({
               className="flex items-center justify-between px-4 py-2.5"
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <Github className="h-4 w-4 text-neutral-400 shrink-0" />
-                <span className="text-sm text-white">{repo.full_name}</span>
+                <svg
+                  className="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="white"
+                >
+                  <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+                </svg>
+                <span className="text-sm text-white truncate">
+                  {repo.full_name}
+                </span>
               </div>
               <Button
                 onClick={() => handleContinue(repo.full_name)}
                 disabled={navigatingRepo !== null || !selectedInstallationId}
                 size="sm"
-                className="h-6 px-3 text-xs bg-white text-black hover:bg-neutral-200 min-w-[55px]"
+                className="h-6 px-3 text-xs bg-white text-black hover:bg-neutral-200 min-w-[55px] cursor-pointer"
               >
                 {navigatingRepo === repo.full_name ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1035,37 +1057,45 @@ export function PreviewDashboard({
                   : "Connect GitHub and import a repository to get started."}
               </p>
             ) : (
-              <TooltipProvider delayDuration={100}>
+              <TooltipProvider>
                 <div className="space-y-1.5">
                   {configs.map((config) => (
                     <div
                       key={config.id}
-                      className="flex items-center justify-between px-3 py-2.5"
+                      className="flex items-center justify-between pl-0 pr-3 py-2.5"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <Github className="h-4 w-4 text-neutral-500 shrink-0" />
+                        <svg
+                          className="h-4 w-4 shrink-0"
+                          viewBox="0 0 24 24"
+                          fill="white"
+                        >
+                          <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+                        </svg>
                         <span className="text-sm text-white truncate">
                           {config.repoFullName}
                         </span>
-                        <span className="text-xs text-neutral-600">
-                          {config.teamName}
-                        </span>
-                        <span
-                          className={clsx(
-                            "text-xs px-2 py-0.5 rounded",
-                            config.status === "active"
-                              ? "bg-emerald-500/10 text-emerald-400"
-                              : config.status === "paused"
-                                ? "bg-amber-500/10 text-amber-400"
-                                : "bg-neutral-500/10 text-neutral-400"
-                          )}
-                        >
-                          {config.status}
-                        </span>
+                        <div className="flex items-center gap-2.5 translate-y-[0.5px]">
+                          <span className="text-xs text-neutral-600">
+                            {config.teamName}
+                          </span>
+                          <span
+                            className={clsx(
+                              "text-xs px-2 py-0.5 rounded",
+                              config.status === "active"
+                                ? "bg-emerald-500/10 text-emerald-400"
+                                : config.status === "paused"
+                                  ? "bg-amber-500/10 text-amber-400"
+                                  : "bg-neutral-500/10 text-neutral-400"
+                            )}
+                          >
+                            {config.status}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Tooltip>
-                          <TooltipTrigger asChild>
+                          <TooltipTrigger asChild delayDuration={0}>
                             <button
                               type="button"
                               onClick={() => handleOpenConfig(config)}
@@ -1084,7 +1114,7 @@ export function PreviewDashboard({
                           </TooltipContent>
                         </Tooltip>
                         <Tooltip>
-                          <TooltipTrigger asChild>
+                          <TooltipTrigger asChild delayDuration={0}>
                             <button
                               type="button"
                               onClick={() => handleRequestDelete(config)}
