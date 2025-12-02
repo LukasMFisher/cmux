@@ -1832,7 +1832,7 @@ export function PreviewConfigureClient({
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-mono text-[15px] leading-6">
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
       {/* Left: Configuration Form */}
       <div className="w-[420px] flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
         <div className="flex-shrink-0 px-5 pt-4 pb-2">
