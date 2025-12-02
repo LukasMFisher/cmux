@@ -36,6 +36,16 @@ export function useArchiveTask(teamSlugOrId: string) {
       // default args variant used across app
       updateLists({ teamSlugOrId });
       updateLists({ teamSlugOrId, archived: false });
+
+      // Also update getById query if it exists (used by preview list)
+      const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+      const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+      if (existingDetail) {
+        localStore.setQuery(api.tasks.getById, detailArgs, {
+          ...existingDetail,
+          isArchived: true,
+        });
+      }
     }
   );
 
@@ -61,6 +71,16 @@ export function useArchiveTask(teamSlugOrId: string) {
     };
     updateLists({ teamSlugOrId });
     updateLists({ teamSlugOrId, archived: false });
+
+    // Also update getById query if it exists (used by preview list)
+    const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+    const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+    if (existingDetail) {
+      localStore.setQuery(api.tasks.getById, detailArgs, {
+        ...existingDetail,
+        isArchived: false,
+      });
+    }
   });
 
   const archiveWithUndo = (task: Doc<"tasks">) => {

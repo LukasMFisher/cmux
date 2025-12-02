@@ -3,11 +3,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useArchiveTask } from "@/hooks/useArchiveTask";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { useClipboard } from "@mantine/hooks";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
 import {
+  Archive,
   Check,
   Copy,
   ExternalLink,
@@ -30,6 +32,7 @@ export const PreviewItem = memo(function PreviewItem({
   teamSlugOrId,
 }: PreviewItemProps) {
   const clipboard = useClipboard({ timeout: 2000 });
+  const { archive } = useArchiveTask(teamSlugOrId);
 
   // Determine if this is a "completed" status (filled green circle) or "in progress" (empty circle)
   // "completed" and "skipped" show as green (done), "failed" shows as red
@@ -56,6 +59,17 @@ export const PreviewItem = memo(function PreviewItem({
       window.open(previewRun.prUrl, "_blank", "noopener,noreferrer");
     },
     [previewRun.prUrl]
+  );
+
+  const handleArchive = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (previewRun.taskId) {
+        archive(previewRun.taskId);
+      }
+    },
+    [archive, previewRun.taskId]
   );
 
   // Format the timestamp
@@ -184,6 +198,28 @@ export const PreviewItem = memo(function PreviewItem({
             </TooltipTrigger>
             <TooltipContent side="top">Open PR</TooltipContent>
           </Tooltip>
+
+          {/* Archive button - only show if there's a linked task */}
+          {previewRun.taskId && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleArchive}
+                  className={clsx(
+                    "p-1 rounded",
+                    "bg-neutral-100 dark:bg-neutral-700",
+                    "text-neutral-600 dark:text-neutral-400",
+                    "hover:bg-neutral-200 dark:hover:bg-neutral-600",
+                    "group-hover:opacity-100 opacity-0"
+                  )}
+                  title="Archive"
+                >
+                  <Archive className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Archive</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>

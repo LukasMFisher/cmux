@@ -9,7 +9,8 @@ type Props = {
   limit?: number;
 };
 
-const DEFAULT_LIMIT = 10;
+// Increase limit to ensure we capture enough preview runs to get all unique tasks
+const DEFAULT_LIMIT = 50;
 
 export function SidebarPreviewList({
   teamSlugOrId,
@@ -23,16 +24,21 @@ export function SidebarPreviewList({
   const list = useMemo(() => previewRuns ?? [], [previewRuns]);
 
   // Get unique task IDs from preview runs, preserving order (most recent preview run first)
-  const taskIds = useMemo(() => {
+  // Also track the preview run status for each task to help with sorting
+  const { taskIds, taskPreviewStatus } = useMemo(() => {
     const seen = new Set<Id<"tasks">>();
     const ids: Id<"tasks">[] = [];
+    const statusMap = new Map<Id<"tasks">, string>();
+
     for (const run of list) {
       if (run.taskId && !seen.has(run.taskId)) {
         seen.add(run.taskId);
         ids.push(run.taskId);
+        // Track the status of the most recent preview run for this task
+        statusMap.set(run.taskId, run.status);
       }
     }
-    return ids;
+    return { taskIds: ids, taskPreviewStatus: statusMap };
   }, [list]);
 
   // Batch fetch all tasks in parallel using useQueries
@@ -59,12 +65,27 @@ export function SidebarPreviewList({
     taskQueries as Parameters<typeof useQueries>[0]
   );
 
-  // Build ordered list of tasks (preserving preview run order)
+  // Build ordered list of tasks:
+  // 1. Filter out archived tasks
+  // 2. Sort by status: in-progress first (pending/running), then completed
+  // 3. Within each group, preserve the preview run order (most recent first)
   const tasks = useMemo(() => {
-    return taskIds
-      .map((id) => taskResults?.[id])
-      .filter((task): task is NonNullable<typeof task> => task != null);
-  }, [taskIds, taskResults]);
+    const validTasks = taskIds
+      .map((id) => {
+        const task = taskResults?.[id];
+        if (!task || task.isArchived) return null;
+        const previewStatus = taskPreviewStatus.get(id);
+        const isInProgress = previewStatus === "pending" || previewStatus === "running";
+        return { task, isInProgress };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+
+    // Sort: in-progress first, then completed (preserving original order within groups)
+    const inProgress = validTasks.filter((t) => t.isInProgress).map((t) => t.task);
+    const completed = validTasks.filter((t) => !t.isInProgress).map((t) => t.task);
+
+    return [...inProgress, ...completed];
+  }, [taskIds, taskResults, taskPreviewStatus]);
 
   if (previewRuns === undefined) {
     return (
