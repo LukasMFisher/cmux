@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
 import { internalMutation, internalQuery } from "./_generated/server";
 
@@ -445,24 +446,43 @@ export const listByTeam = authQuery({
       .query("previewRuns")
       .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
       .order("desc")
-      .take(take);
+      .take(take * 2); // Fetch extra to account for filtered archived tasks
 
     // Enrich with config repo name and taskId from linked taskRun
-    const enrichedRuns = await Promise.all(
-      runs.map(async (run) => {
-        const config = await ctx.db.get(run.previewConfigId);
-        let taskId = undefined;
-        if (run.taskRunId) {
-          const taskRun = await ctx.db.get(run.taskRunId);
-          taskId = taskRun?.taskId;
+    // Also filter out runs whose linked task is archived
+    const enrichedRuns: Array<
+      (typeof runs)[number] & {
+        configRepoFullName?: string;
+        taskId?: Id<"tasks">;
+      }
+    > = [];
+
+    for (const run of runs) {
+      if (enrichedRuns.length >= take) break;
+
+      const config = await ctx.db.get(run.previewConfigId);
+      let taskId = undefined;
+      let isTaskArchived = false;
+
+      if (run.taskRunId) {
+        const taskRun = await ctx.db.get(run.taskRunId);
+        if (taskRun) {
+          taskId = taskRun.taskId;
+          // Check if the linked task is archived
+          const task = await ctx.db.get(taskRun.taskId);
+          isTaskArchived = task?.isArchived === true;
         }
-        return {
-          ...run,
-          configRepoFullName: config?.repoFullName,
-          taskId,
-        };
-      }),
-    );
+      }
+
+      // Skip runs whose linked task is archived
+      if (isTaskArchived) continue;
+
+      enrichedRuns.push({
+        ...run,
+        configRepoFullName: config?.repoFullName,
+        taskId,
+      });
+    }
 
     return enrichedRuns;
   },
