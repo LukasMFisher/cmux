@@ -29,7 +29,7 @@ export const githubSetup = httpAction(async (ctx, req) => {
   }
 
   // If state is missing (e.g. user used "Configure" from GitHub settings),
-  // redirect to the complete page which handles popup detection and fallback.
+  // try to resolve the target team from an existing connection and redirect.
   if (!state) {
     const existing = await ctx.runQuery(
       internal.github_app.getProviderConnectionByInstallationId,
@@ -40,10 +40,11 @@ export const githubSetup = httpAction(async (ctx, req) => {
         teamId: existing.teamId,
       });
       const teamPath = team?.slug ?? existing.teamId;
-      return Response.redirect(`${base}/github-install-complete?team=${encodeURIComponent(teamPath)}`, 302);
+      // Prefer deep-linking back to the app to finish the flow
+      return Response.redirect(toCmuxDeepLink(teamPath), 302);
     }
-    // Fallback: no team context, just go to complete page
-    return Response.redirect(`${base}/github-install-complete`, 302);
+    // Fallback: send user to team picker if we can't resolve a team
+    return Response.redirect(`${base}/team-picker`, 302);
   }
 
   if (!env.INSTALL_STATE_SECRET) {
