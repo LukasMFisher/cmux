@@ -107,12 +107,13 @@ jobs:
       - name: Test coding agent CLIs
         run: |
           docker run --rm --entrypoint /bin/bash ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test -c '
-            set -e
-            claude --version
-            codex --version
-            gemini --version
-            opencode --version
-            amp --version
+            pids=()
+            claude --version & pids+=($!)
+            codex --version & pids+=($!)
+            gemini --version & pids+=($!)
+            opencode --version & pids+=($!)
+            amp --version & pids+=($!)
+            for pid in "${pids[@]}"; do wait $pid || exit 1; done
           '
 
       - name: Build and push by digest
