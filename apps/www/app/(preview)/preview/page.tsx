@@ -54,7 +54,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   if (!user) {
     return (
       <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_calc(50%_+_150px)_450px,_rgba(4,120,255,0.25),_transparent_82%)]" />
+        <div className="absolute -top-[200px] left-1/2 -translate-x-1/2 h-[1400px] w-[3200px] rounded-[921px] opacity-40 bg-[radial-gradient(50%_50%_at_50%_50%,_#0478ff_0,_rgba(4,120,255,0.45)_23%,_rgba(4,120,255,0.25)_50%,_rgba(4,120,255,0)_100%)] blur-[16px] pointer-events-none -z-10" />
 
         <PreviewDashboard
           selectedTeamSlugOrId=""
@@ -91,7 +91,9 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
 
   const selectedTeam =
     teams.find((team) => getTeamSlugOrId(team) === searchTeam) ?? teams[0];
-  const selectedTeamSlugOrId = selectedTeam ? getTeamSlugOrId(selectedTeam) : "";
+  const selectedTeamSlugOrId = selectedTeam
+    ? getTeamSlugOrId(selectedTeam)
+    : "";
   const teamOptions: TeamOption[] = teams.map((team) => ({
     slugOrId: getTeamSlugOrId(team),
     displayName: getTeamDisplayName(team),
@@ -102,12 +104,15 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     Promise.all(
       teams.map(async (team) => {
         const teamSlugOrId = getTeamSlugOrId(team);
-        const connections = await convex.query(api.github.listProviderConnections, {
-          teamSlugOrId,
-        });
+        const connections = await convex.query(
+          api.github.listProviderConnections,
+          {
+            teamSlugOrId,
+          }
+        );
         const serialized = serializeProviderConnections(connections);
         return [teamSlugOrId, serialized];
-      }),
+      })
     ),
     Promise.all(
       teams.map(async (team) => {
@@ -140,12 +145,12 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     ).then((results) => results.flat()),
   ]);
   const providerConnectionsByTeam = Object.fromEntries(
-    providerConnectionsByTeamEntries,
+    providerConnectionsByTeamEntries
   );
 
   return (
     <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_calc(50%_+_150px)_450px,_rgba(4,120,255,0.25),_transparent_82%)]" />
+      <div className="absolute top-[33%] left-1/2 -translate-x-1/2 h-[500px] w-[1000px] rounded-[921px] opacity-40 bg-[radial-gradient(50%_50%_at_50%_50%,_#6b5df7_0,_rgba(107,93,247,0.45)_23%,_rgba(107,93,247,0.25)_50%,_rgba(107,93,247,0)_100%)] blur-[16px] pointer-events-none -z-10" />
 
       <PreviewDashboard
         selectedTeamSlugOrId={selectedTeamSlugOrId}
