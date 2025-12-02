@@ -322,15 +322,6 @@ export function PreviewDashboard({
       setNavigatingRepo("__url_input__");
 
       try {
-        try {
-          sessionStorage.setItem("pr_review_return_url", configurePath);
-        } catch (storageError) {
-          console.warn(
-            "[PreviewDashboard] Failed to persist return URL",
-            storageError
-          );
-        }
-
         const response = await fetch("/api/integrations/github/install-state", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -456,14 +447,6 @@ export function PreviewDashboard({
     setErrorMessage(null);
     try {
       const currentUrl = window.location.href;
-      try {
-        sessionStorage.setItem("pr_review_return_url", currentUrl);
-      } catch (storageError) {
-        console.warn(
-          "[PreviewDashboard] Failed to persist return URL",
-          storageError
-        );
-      }
 
       const response = await fetch("/api/integrations/github/install-state", {
         method: "POST",

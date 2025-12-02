@@ -25,14 +25,6 @@ export function PrivateRepoPrompt({
 
     try {
       const currentUrl = window.location.href;
-      try {
-        sessionStorage.setItem("pr_review_return_url", currentUrl);
-      } catch (storageError) {
-        console.warn(
-          "[PrivateRepoPrompt] Failed to persist return URL",
-          storageError,
-        );
-      }
 
       const response = await fetch("/api/integrations/github/install-state", {
         method: "POST",

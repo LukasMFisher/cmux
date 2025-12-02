@@ -1,18 +1,14 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 
 function GitHubInstallCompleteContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [isRedirecting, setIsRedirecting] = useState(true);
-  const [returnPath, setReturnPath] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log("[GitHubInstallComplete] Checking return URL from session storage");
-
     // If opened in a popup, signal the opener and close
     const hasOpener = window.opener && !window.opener.closed;
     if (hasOpener) {
@@ -32,42 +28,7 @@ function GitHubInstallCompleteContent() {
       return;
     }
 
-    let storedUrl: string | null = null;
-    try {
-      storedUrl = sessionStorage.getItem("pr_review_return_url");
-    } catch (error) {
-      console.warn(
-        "[GitHubInstallComplete] Failed to read return URL from storage",
-        error,
-      );
-    }
-
-    if (storedUrl) {
-      try {
-        const next = new URL(storedUrl);
-        const path = `${next.pathname}${next.search}${next.hash}`;
-        setReturnPath(path);
-        setTimeout(() => {
-          router.push(path);
-        }, 1_500);
-        return;
-      } catch (parseError) {
-        console.error(
-          "[GitHubInstallComplete] Failed to parse stored return URL",
-          parseError,
-        );
-      } finally {
-        try {
-          sessionStorage.removeItem("pr_review_return_url");
-        } catch (error) {
-          console.warn(
-            "[GitHubInstallComplete] Failed to clear return URL",
-            error,
-          );
-        }
-      }
-    }
-
+    // Not in a popup - try deep link for Electron, otherwise show success page
     const teamParam = searchParams.get("team");
     if (teamParam) {
       try {
@@ -88,7 +49,7 @@ function GitHubInstallCompleteContent() {
     }
 
     setIsRedirecting(false);
-  }, [router, searchParams]);
+  }, [searchParams]);
 
   if (isRedirecting) {
     return (
@@ -103,9 +64,7 @@ function GitHubInstallCompleteContent() {
             Installation Complete
           </h1>
           <p className="mt-2 text-sm text-neutral-600">
-            {returnPath
-              ? "Redirecting you back to the pull request…"
-              : "Opening cmux app…"}
+            Completing setup…
           </p>
         </div>
       </div>
