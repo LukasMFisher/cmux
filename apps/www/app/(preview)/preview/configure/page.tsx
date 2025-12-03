@@ -11,7 +11,7 @@ import {
   getTeamSlugOrId,
   type StackTeam,
 } from "@/lib/team-utils";
-import { detectFrameworkPreset } from "@/lib/github/framework-detection";
+import { detectFrameworkAndPackageManager } from "@/lib/github/framework-detection";
 import { env } from "@/lib/utils/www-env";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 
@@ -150,11 +150,12 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
     console.error("Failed to fetch GitHub access token", error);
   }
 
-  const detectedFrameworkPreset = await detectFrameworkPreset(repo, githubAccessToken);
+  const detectionResult = await detectFrameworkAndPackageManager(repo, githubAccessToken);
 
   let initialEnvVarsContent: string | null = null;
-  let initialMaintenanceScript: string | null = null;
-  let initialDevScript: string | null = null;
+  // Use detected scripts from package.json, can be overridden by environment
+  let initialMaintenanceScript: string | null = detectionResult.maintenanceScript || null;
+  let initialDevScript: string | null = detectionResult.devScript || null;
 
   if (environmentId) {
     try {
@@ -195,7 +196,8 @@ export default async function PreviewConfigurePage({ searchParams }: PageProps) 
       teams={clientTeams}
       repo={repo}
       installationId={installationId}
-      initialFrameworkPreset={detectedFrameworkPreset}
+      initialFrameworkPreset={detectionResult.framework}
+      initialPackageManager={detectionResult.packageManager}
       initialEnvVarsContent={initialEnvVarsContent}
       initialMaintenanceScript={initialMaintenanceScript}
       initialDevScript={initialDevScript}

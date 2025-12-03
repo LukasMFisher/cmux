@@ -1,6 +1,15 @@
 import { type FrameworkPreset } from "@/components/preview/preview-configure-client";
 import { createGitHubClient } from "@/lib/github/octokit";
 
+export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
+
+export type FrameworkDetectionResult = {
+  framework: FrameworkPreset;
+  packageManager: PackageManager;
+  maintenanceScript: string;
+  devScript: string;
+};
+
 type PackageJson = {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -39,6 +48,7 @@ type DetectionContext = {
   packageJsons: PackageJsonWithPath[];
   fileExistsCache: Map<string, boolean>;
   fileContentCache: Map<string, string | null>;
+  detectedPackageManager: PackageManager | null;
 };
 
 type FrameworkMatch = {
@@ -47,6 +57,15 @@ type FrameworkMatch = {
 
 const MAX_PACKAGE_JSON_FILES = 20;
 const MIN_PACKAGE_JSONS_BEFORE_FALLBACK = 3;
+
+// Package manager lock files in priority order (more specific first)
+const PACKAGE_MANAGER_LOCK_FILES: Array<{ file: string; manager: PackageManager }> = [
+  { file: "bun.lockb", manager: "bun" },
+  { file: "bun.lock", manager: "bun" },
+  { file: "pnpm-lock.yaml", manager: "pnpm" },
+  { file: "yarn.lock", manager: "yarn" },
+  { file: "package-lock.json", manager: "npm" },
+];
 const FALLBACK_PACKAGE_JSON_PATHS = [
   "app/package.json",
   "apps/web/package.json",
@@ -183,13 +202,13 @@ const FRAMEWORK_DEFINITIONS: FrameworkDefinition[] = [
   },
 ];
 
-export async function detectFrameworkPreset(
+export async function detectFrameworkAndPackageManager(
   repoFullName: string,
   accessToken?: string
-): Promise<FrameworkPreset> {
+): Promise<FrameworkDetectionResult> {
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) {
-    return "other";
+    return { framework: "other", packageManager: "npm", maintenanceScript: "", devScript: "" };
   }
 
   const octokit = createGitHubClient(accessToken, { useTokenRotation: true });
@@ -204,11 +223,63 @@ export async function detectFrameworkPreset(
   }
 
   const resolvedMatches = applySupersedes(matches);
-  if (resolvedMatches.length === 0) {
-    return "other";
+  const framework = resolvedMatches[0]?.definition.preset ?? "other";
+  const packageManager = context.detectedPackageManager ?? "npm";
+
+  // Detect scripts from root package.json
+  const { maintenanceScript, devScript } = detectScripts(context.packageJsons, packageManager);
+
+  return { framework, packageManager, maintenanceScript, devScript };
+}
+
+function getInstallCommand(pm: PackageManager): string {
+  switch (pm) {
+    case "bun":
+      return "bun install";
+    case "pnpm":
+      return "pnpm install";
+    case "yarn":
+      return "yarn install";
+    case "npm":
+    default:
+      return "npm install";
+  }
+}
+
+function getRunCommand(pm: PackageManager, scriptName: string): string {
+  switch (pm) {
+    case "bun":
+      return `bun run ${scriptName}`;
+    case "pnpm":
+      return `pnpm run ${scriptName}`;
+    case "yarn":
+      return `yarn ${scriptName}`;
+    case "npm":
+    default:
+      return `npm run ${scriptName}`;
+  }
+}
+
+function detectScripts(
+  packageJsons: PackageJsonWithPath[],
+  packageManager: PackageManager
+): { maintenanceScript: string; devScript: string } {
+  // Prefer root package.json, then first available
+  const rootPkg = packageJsons.find((p) => p.path === "package.json");
+  const pkg = rootPkg ?? packageJsons[0];
+
+  if (!pkg) {
+    return { maintenanceScript: "", devScript: "" };
   }
 
-  return resolvedMatches[0]?.definition.preset ?? "other";
+  const scripts = pkg.json.scripts ?? {};
+  const maintenanceScript = getInstallCommand(packageManager);
+
+  // Check for dev script in priority order
+  const devScriptName = ["dev", "start", "serve", "develop"].find((name) => name in scripts);
+  const devScript = devScriptName ? getRunCommand(packageManager, devScriptName) : "";
+
+  return { maintenanceScript, devScript };
 }
 
 async function buildDetectionContext(
@@ -226,6 +297,14 @@ async function buildDetectionContext(
     !treeSnapshot || treeSnapshot.truncated
   );
 
+  // Detect package manager from lock files
+  const detectedPackageManager = await detectPackageManager(
+    octokit,
+    owner,
+    name,
+    treeSnapshot?.normalizedFilePaths ?? null
+  );
+
   return {
     owner,
     name,
@@ -235,7 +314,34 @@ async function buildDetectionContext(
     packageJsons,
     fileExistsCache: new Map<string, boolean>(),
     fileContentCache: new Map<string, string | null>(),
+    detectedPackageManager,
   };
+}
+
+async function detectPackageManager(
+  octokit: ReturnType<typeof createGitHubClient>,
+  owner: string,
+  name: string,
+  normalizedFilePaths: Set<string> | null
+): Promise<PackageManager | null> {
+  for (const { file, manager } of PACKAGE_MANAGER_LOCK_FILES) {
+    const normalized = file.toLowerCase();
+
+    // Fast path: check if we have the file in our tree snapshot
+    if (normalizedFilePaths?.has(normalized)) {
+      return manager;
+    }
+
+    // Slow path: check via API if tree was truncated or unavailable
+    if (!normalizedFilePaths) {
+      const exists = await repoFileExists(octokit, owner, name, file);
+      if (exists) {
+        return manager;
+      }
+    }
+  }
+
+  return null;
 }
 
 async function fetchRepoTree(
@@ -299,13 +405,14 @@ async function loadPackageJsons(
   const sortedPaths = prioritizePackageJsonPaths([...new Set(packageJsonPaths)]).slice(0, MAX_PACKAGE_JSON_FILES);
   const seenPaths = new Set(sortedPaths);
 
-  const packages: PackageJsonWithPath[] = [];
-  for (const path of sortedPaths) {
-    const pkg = await fetchPackageJson(octokit, owner, name, path);
-    if (pkg) {
-      packages.push({ path, json: pkg });
-    }
-  }
+  // Parallel fetch all package.json files
+  const results = await Promise.all(
+    sortedPaths.map(async (path) => {
+      const pkg = await fetchPackageJson(octokit, owner, name, path);
+      return pkg ? { path, json: pkg } : null;
+    })
+  );
+  const packages = results.filter((r): r is PackageJsonWithPath => r !== null);
 
   // If nothing could be fetched, still try the root package.json once more as a fallback.
   if (packages.length === 0 && !seenPaths.has("package.json")) {
@@ -319,18 +426,18 @@ async function loadPackageJsons(
     packages.length === 0 || (includeFallbackCandidates && packages.length < MIN_PACKAGE_JSONS_BEFORE_FALLBACK);
 
   if (shouldTryFallbackCandidates) {
-    for (const candidate of FALLBACK_PACKAGE_JSON_PATHS) {
-      if (packages.length >= MAX_PACKAGE_JSON_FILES) {
-        break;
-      }
-      if (seenPaths.has(candidate)) {
-        continue;
-      }
-      const pkg = await fetchPackageJson(octokit, owner, name, candidate);
-      if (pkg) {
-        packages.push({ path: candidate, json: pkg });
-      }
-    }
+    // Parallel fetch fallback candidates
+    const candidatesToTry = FALLBACK_PACKAGE_JSON_PATHS
+      .filter((c) => !seenPaths.has(c))
+      .slice(0, MAX_PACKAGE_JSON_FILES - packages.length);
+
+    const fallbackResults = await Promise.all(
+      candidatesToTry.map(async (path) => {
+        const pkg = await fetchPackageJson(octokit, owner, name, path);
+        return pkg ? { path, json: pkg } : null;
+      })
+    );
+    packages.push(...fallbackResults.filter((r): r is PackageJsonWithPath => r !== null));
   }
 
   return packages;
