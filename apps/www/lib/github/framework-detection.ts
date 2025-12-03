@@ -324,24 +324,28 @@ async function detectPackageManager(
   name: string,
   normalizedFilePaths: Set<string> | null
 ): Promise<PackageManager | null> {
+  // Fast path: check tree snapshot (0 API requests)
   for (const { file, manager } of PACKAGE_MANAGER_LOCK_FILES) {
-    const normalized = file.toLowerCase();
-
-    // Fast path: check if we have the file in our tree snapshot
-    if (normalizedFilePaths?.has(normalized)) {
+    if (normalizedFilePaths?.has(file.toLowerCase())) {
       return manager;
-    }
-
-    // Slow path: check via API if tree was truncated or unavailable
-    if (!normalizedFilePaths) {
-      const exists = await repoFileExists(octokit, owner, name, file);
-      if (exists) {
-        return manager;
-      }
     }
   }
 
-  return null;
+  // If tree available, we already checked everything
+  if (normalizedFilePaths) {
+    return null;
+  }
+
+  // Slow path: parallel API checks when tree unavailable/truncated
+  const results = await Promise.all(
+    PACKAGE_MANAGER_LOCK_FILES.map(async ({ file, manager }) => {
+      const exists = await repoFileExists(octokit, owner, name, file);
+      return exists ? manager : null;
+    })
+  );
+
+  // Return first match (maintains priority order: bun > pnpm > yarn > npm)
+  return results.find((r): r is PackageManager => r !== null) ?? null;
 }
 
 async function fetchRepoTree(
