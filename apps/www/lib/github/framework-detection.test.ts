@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { detectFrameworkAndPackageManager } from "./framework-detection";
 
-// These tests make real GitHub API calls.
-// Without authentication, we're limited to 60 requests/hour.
-// Set GITHUB_TOKEN env var for higher rate limits.
+// These tests make real GitHub API calls and require authentication.
+// They are skipped in CI unless GITHUB_TOKEN is provided.
+// Run locally with: GITHUB_TOKEN=$(gh auth token) bun test framework-detection
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const shouldSkip = !GITHUB_TOKEN;
 
-describe("detectFrameworkAndPackageManager", () => {
+describe.skipIf(shouldSkip)("detectFrameworkAndPackageManager", () => {
   it("detects stack-auth/stack-auth as pnpm with dev script", async () => {
     const result = await detectFrameworkAndPackageManager("stack-auth/stack-auth", GITHUB_TOKEN);
 
