@@ -2,7 +2,10 @@ use std::{
     collections::VecDeque,
     io::{Read, Write},
     process::{Command, Stdio},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::SystemTime,
 };
 

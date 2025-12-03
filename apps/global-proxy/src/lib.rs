@@ -4,25 +4,25 @@ use std::{
     sync::Arc,
 };
 
+use brotli::Decompressor;
 use bytes::Bytes;
+use flate2::read::{GzDecoder, ZlibDecoder};
 use http::{
     HeaderMap, Method, Request, Response, StatusCode, Uri, Version,
-    header::{self, HeaderValue, CONNECTION, UPGRADE},
+    header::{self, CONNECTION, HeaderValue, UPGRADE},
     uri::Scheme,
 };
+use hyper::upgrade::Upgraded;
 use hyper::{
     Body, Client, body,
     client::HttpConnector,
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnectorBuilder;
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
-use flate2::read::{GzDecoder, ZlibDecoder};
-use brotli::Decompressor;
 use tokio::{
-    io::{copy_bidirectional, AsyncWriteExt},
+    io::{AsyncWriteExt, copy_bidirectional},
     sync::oneshot,
     task::JoinHandle,
 };
@@ -554,15 +554,16 @@ async fn handle_websocket(
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
-    let backend_uri = match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
-        Ok(uri) => uri,
-        Err(_) => {
-            return text_response(
-                StatusCode::BAD_GATEWAY,
-                "Failed to build upstream websocket URI",
-            );
-        }
-    };
+    let backend_uri =
+        match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
+            Ok(uri) => uri,
+            Err(_) => {
+                return text_response(
+                    StatusCode::BAD_GATEWAY,
+                    "Failed to build upstream websocket URI",
+                );
+            }
+        };
 
     let headers_to_forward = collect_forward_headers(req.headers(), &behavior);
 
@@ -590,10 +591,11 @@ async fn handle_websocket(
             .insert(name.clone(), value.clone());
     }
 
-    let (backend_stream, backend_headers) = match connect_upstream_websocket(state.client.clone(), backend_request).await {
-        Ok(result) => result,
-        Err(response) => return response,
-    };
+    let (backend_stream, backend_headers) =
+        match connect_upstream_websocket(state.client.clone(), backend_request).await {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
 
     let client_upgrade = hyper::upgrade::on(req);
     let response = build_websocket_response(&backend_headers);
@@ -717,12 +719,10 @@ async fn connect_upstream_websocket(
         let body_bytes = body::to_bytes(response.into_body())
             .await
             .unwrap_or_else(|_| Bytes::new());
-        return Err(
-            Response::builder()
-                .status(status)
-                .body(Body::from(body_bytes))
-                .unwrap(),
-        );
+        return Err(Response::builder()
+            .status(status)
+            .body(Body::from(body_bytes))
+            .unwrap());
     }
 
     let headers = response.headers().clone();
@@ -757,10 +757,7 @@ fn build_websocket_response(headers: &HeaderMap) -> Response<Body> {
     builder.body(Body::empty()).unwrap()
 }
 
-async fn tunnel_upgraded(
-    mut client: Upgraded,
-    mut backend: Upgraded,
-) -> io::Result<()> {
+async fn tunnel_upgraded(mut client: Upgraded, mut backend: Upgraded) -> io::Result<()> {
     let result = copy_bidirectional(&mut client, &mut backend).await;
     let _ = client.shutdown().await;
     let _ = backend.shutdown().await;
@@ -784,20 +781,21 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
     if content_type.contains("text/html") {
         match body::to_bytes(response.into_body()).await {
             Ok(bytes) => {
-                let decoded = match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
-                    Ok(body) => Bytes::from(body),
-                    Err(err) => {
-                        warn!(%err, "failed to decode upstream body; skipping rewrite");
-                        return forward_response_with_body(
-                            status,
-                            version,
-                            &headers,
-                            &behavior,
-                            Body::from(bytes),
-                            /* strip_payload_headers */ false,
-                        );
-                    }
-                };
+                let decoded =
+                    match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
+                        Ok(body) => Bytes::from(body),
+                        Err(err) => {
+                            warn!(%err, "failed to decode upstream body; skipping rewrite");
+                            return forward_response_with_body(
+                                status,
+                                version,
+                                &headers,
+                                &behavior,
+                                Body::from(bytes),
+                                /* strip_payload_headers */ false,
+                            );
+                        }
+                    };
                 match rewrite_html(decoded, behavior.skip_service_worker) {
                     Ok(body) => {
                         let mut builder = Response::builder().status(status).version(version);
@@ -824,7 +822,9 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                         }
                         builder.body(Body::from(body)).unwrap()
                     }
-                    Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed"),
+                    Err(_) => {
+                        text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed")
+                    }
                 }
             }
             Err(_) => text_response(StatusCode::BAD_GATEWAY, "Failed to read upstream body"),
@@ -909,16 +909,13 @@ fn decode_body_with_encoding(bytes: &[u8], encoding: Option<&str>) -> io::Result
 #[cfg(test)]
 mod tests {
     use super::decode_body_with_encoding;
-    use flate2::{write::GzEncoder, Compression};
+    use flate2::{Compression, write::GzEncoder};
     use std::io::Write;
 
     #[test]
     fn decodes_identity_and_none_encodings() {
         let payload = b"hello world";
-        assert_eq!(
-            decode_body_with_encoding(payload, None).unwrap(),
-            payload
-        );
+        assert_eq!(decode_body_with_encoding(payload, None).unwrap(), payload);
         assert_eq!(
             decode_body_with_encoding(payload, Some("identity")).unwrap(),
             payload
