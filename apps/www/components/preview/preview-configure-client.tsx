@@ -950,7 +950,7 @@ export function PreviewConfigureClient({
     // After animation completes, set to workspace-config
     setTimeout(() => {
       setLayoutPhase("workspace-config");
-    }, 400); // Match CSS transition duration
+    }, 650); // Match CSS transition duration (600ms + buffer)
   }, []);
 
   // Handle going back to initial setup from workspace config
@@ -1413,8 +1413,12 @@ export function PreviewConfigureClient({
               open={isCurrentStep("run-scripts")}
             >
               <summary
-                className="flex items-center gap-2 cursor-pointer list-none"
+                className={clsx(
+                  "flex items-center gap-2 list-none",
+                  isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                )}
                 onClick={(e) => {
+                  if (isSaving) return;
                   if (isStepCompleted("run-scripts") && !isCurrentStep("run-scripts")) {
                     e.preventDefault();
                     handleGoToStep("run-scripts");
@@ -1429,7 +1433,7 @@ export function PreviewConfigureClient({
               </summary>
               <div className="mt-3 ml-6 space-y-3">
                 <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                  Open terminal (
+                  Setup VS Code development environment. Open terminal (
                   <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
                     Ctrl+Shift+`
                   </kbd>{" "}
@@ -1494,8 +1498,12 @@ export function PreviewConfigureClient({
               open={isCurrentStep("browser-setup")}
             >
               <summary
-                className="flex items-center gap-2 cursor-pointer list-none"
+                className={clsx(
+                  "flex items-center gap-2 list-none",
+                  isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                )}
                 onClick={(e) => {
+                  if (isSaving) return;
                   if (isStepCompleted("browser-setup") && !isCurrentStep("browser-setup")) {
                     e.preventDefault();
                     handleGoToStep("browser-setup");
@@ -1619,7 +1627,13 @@ export function PreviewConfigureClient({
         <button
           type="button"
           onClick={handleBackToInitialSetup}
-          className="inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-3"
+          disabled={isSaving}
+          className={clsx(
+            "inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 mb-3",
+            isSaving
+              ? "opacity-50 cursor-not-allowed"
+              : "hover:text-neutral-900 dark:hover:text-neutral-100"
+          )}
         >
           <ArrowLeft className="h-3 w-3" />
           Back to project setup
@@ -1659,8 +1673,8 @@ export function PreviewConfigureClient({
     return renderInitialSetupPanel();
   }
 
-  // Show loading state if workspace config is requested but VSCode isn't ready
-  if ((layoutPhase === "workspace-config" || layoutPhase === "transitioning") && !isWorkspaceReady) {
+  // Show loading state if VSCode isn't ready (for both transitioning and workspace-config)
+  if (!isWorkspaceReady) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-sans">
         <div className="text-center px-6">
@@ -1676,12 +1690,61 @@ export function PreviewConfigureClient({
     );
   }
 
+  // Transitioning layout - animate the final sidebar from center position
+  if (layoutPhase === "transitioning") {
+    return (
+      <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
+        {/* Sidebar content animating from center */}
+        <div className="preview-setup-transitioning h-full flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
+          <div className="flex-shrink-0 px-5 pt-4 pb-2">
+            <button
+              type="button"
+              onClick={handleBackToInitialSetup}
+              disabled={isSaving}
+              className={clsx(
+                "inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 mb-3",
+                isSaving
+                  ? "opacity-50 cursor-not-allowed"
+                  : "hover:text-neutral-900 dark:hover:text-neutral-100"
+              )}
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back to project setup
+            </button>
+            <h1 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
+              Configure workspace
+            </h1>
+            <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-1">
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+              </svg>
+              <span className="font-sans text-xs">{repo}</span>
+            </div>
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed pt-3">
+              Your workspace root at{" "}
+              <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-700 dark:text-neutral-300">
+                /root/workspace
+              </code>{" "}
+              maps directly to your repo root.
+            </p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 pb-5">
+            {renderWorkspaceStepContent()}
+          </div>
+        </div>
+
+        {/* Preview panel fading in */}
+        <div className="preview-panel-entering flex-1 flex flex-col bg-neutral-950 overflow-hidden">
+          {renderPreviewPanel()}
+        </div>
+      </div>
+    );
+  }
+
   // Workspace config layout (split with sidebar + preview)
   return (
-    <div className={clsx(
-      "flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6",
-      layoutPhase === "transitioning" && "animate-fade-in"
-    )}>
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
       {/* Left: Configuration Form */}
       {renderWorkspaceConfigPanel()}
 
