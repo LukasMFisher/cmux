@@ -47,15 +47,14 @@ export const getPreviewTasks = authQuery({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const take = Math.max(1, Math.min(args.limit ?? 50, 100));
 
-    // Get preview tasks using the dedicated index
+    // Get preview tasks using the dedicated index (team-wide, not user-specific)
     const tasks = await ctx.db
       .query("tasks")
-      .withIndex("by_team_user_preview", (idx) =>
-        idx.eq("teamId", teamId).eq("userId", userId).eq("isPreview", true),
+      .withIndex("by_team_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("isPreview", true),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
