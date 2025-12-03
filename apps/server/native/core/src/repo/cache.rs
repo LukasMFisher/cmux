@@ -1,7 +1,11 @@
 use anyhow::{anyhow, Result};
 use dirs_next::cache_dir;
 use std::sync::{Mutex, OnceLock};
-use std::{collections::HashMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::util::run_git;
 
