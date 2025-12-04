@@ -458,11 +458,22 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         console.log("[VncViewer] Clipboard synced, sending Ctrl+V...");
 
         // X11 keysyms (same as noVNC's KeyTable)
+        const XK_Meta_L = 0xffe7;
+        const XK_Meta_R = 0xffe8;
+        const XK_Super_L = 0xffeb;
+        const XK_Super_R = 0xffec;
         const XK_Control_L = 0xffe3;
         const XK_v = 0x0076;
 
         // Small delay to ensure clipboard is processed by VNC server
         setTimeout(() => {
+          // Release Meta/Super keys that might be held from user's Cmd
+          // (noVNC sent Meta down before we intercepted the V keydown)
+          rfb.sendKey(XK_Meta_L, "MetaLeft", false);
+          rfb.sendKey(XK_Meta_R, "MetaRight", false);
+          rfb.sendKey(XK_Super_L, "OSLeft", false);
+          rfb.sendKey(XK_Super_R, "OSRight", false);
+
           // Send Ctrl+V with proper DOM codes (like noVNC's sendCtrlAltDel)
           rfb.sendKey(XK_Control_L, "ControlLeft", true);
           rfb.sendKey(XK_v, "KeyV", true);
@@ -480,8 +491,6 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
-
-      let pendingPaste: string | null = null;
 
       const handleKeyDown = async (e: KeyboardEvent) => {
         // Detect paste shortcut: Cmd+V on Mac, Ctrl+V elsewhere
@@ -502,33 +511,18 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         try {
           const text = await navigator.clipboard.readText();
           if (text) {
-            console.log("[VncViewer] Cmd+V intercepted, waiting for modifier release...");
-            // Store the text and wait for modifier keys to be released
-            // This prevents browser from interpreting our typed chars as shortcuts
-            pendingPaste = text;
+            console.log("[VncViewer] Cmd+V intercepted, pasting...");
+            clipboardPaste(text);
           }
         } catch (err) {
           console.error("[VncViewer] Clipboard read failed:", err);
         }
       };
 
-      const handleKeyUp = (e: KeyboardEvent) => {
-        // When modifier key is released and we have pending paste, execute it
-        if (pendingPaste && (e.key === "Meta" || e.key === "Control")) {
-          console.log("[VncViewer] Modifier released, executing paste");
-          const text = pendingPaste;
-          pendingPaste = null;
-          // Small additional delay to ensure browser state is clean
-          setTimeout(() => clipboardPaste(text), 10);
-        }
-      };
-
       // Capture phase ensures we intercept before noVNC's bubble-phase handlers
       container.addEventListener("keydown", handleKeyDown, { capture: true });
-      container.addEventListener("keyup", handleKeyUp, { capture: true });
       return () => {
         container.removeEventListener("keydown", handleKeyDown, { capture: true });
-        container.removeEventListener("keyup", handleKeyUp, { capture: true });
       };
     }, [clipboardPaste]);
 
