@@ -1,19 +1,6 @@
 use crate::models::{SandboxStatus, SandboxSummary};
 use uuid::Uuid;
 
-// DEBUG: Temporary logging for focus debugging
-fn debug_log(msg: &str) {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/dmux-focus-debug.log")
-        .unwrap();
-    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
-    writeln!(file, "[{}] {}", timestamp, msg).unwrap();
-}
-
 /// State for the sidebar showing sandbox list.
 ///
 /// ARCHITECTURE: Selection is tracked by ID, not index.
@@ -63,7 +50,6 @@ impl Sidebar {
     /// Selection is preserved by ID - if the selected sandbox is still in the list,
     /// it stays selected regardless of position changes.
     pub fn set_sandboxes(&mut self, sandboxes: Vec<SandboxSummary>) {
-        let old_count = self.sandboxes.len();
         self.sandboxes = sandboxes;
         self.is_loading = false;
         self.last_error = None;
@@ -71,24 +57,12 @@ impl Sidebar {
         // If selection no longer exists in list, clear it or select first
         if let Some(id) = self.selected_id {
             if !self.sandboxes.iter().any(|s| s.id == id) {
-                debug_log(&format!(
-                    "set_sandboxes: selected_id {:?} no longer in list, selecting first",
-                    id.to_string().chars().take(8).collect::<String>()
-                ));
                 self.selected_id = self.sandboxes.first().map(|s| s.id);
             }
         } else if !self.sandboxes.is_empty() {
             // Nothing was selected, select first
             self.selected_id = self.sandboxes.first().map(|s| s.id);
         }
-
-        debug_log(&format!(
-            "set_sandboxes: old_count={} new_count={} selected_id={:?}",
-            old_count,
-            self.sandboxes.len(),
-            self.selected_id
-                .map(|id| id.to_string().chars().take(8).collect::<String>())
-        ));
     }
 
     /// Set an error state.
@@ -143,18 +117,8 @@ impl Sidebar {
     pub fn select_by_id(&mut self, id: Uuid) {
         // Only select if the sandbox exists in the list
         if self.sandboxes.iter().any(|s| s.id == id) {
-            debug_log(&format!(
-                "select_by_id: selecting {}",
-                id.to_string().chars().take(8).collect::<String>()
-            ));
             self.selected_id = Some(id);
             self.ensure_visible();
-        } else {
-            debug_log(&format!(
-                "select_by_id: {} not found in list (count={})",
-                id.to_string().chars().take(8).collect::<String>(),
-                self.sandboxes.len()
-            ));
         }
     }
 
@@ -162,8 +126,6 @@ impl Sidebar {
     pub fn select_by_id_str(&mut self, id_str: &str) {
         if let Ok(id) = Uuid::parse_str(id_str) {
             self.select_by_id(id);
-        } else {
-            debug_log(&format!("select_by_id_str: invalid UUID {}", id_str));
         }
     }
 

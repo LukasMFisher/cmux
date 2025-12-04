@@ -2,19 +2,6 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-
-// DEBUG: Temporary logging for focus debugging
-fn debug_log(msg: &str) {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/dmux-focus-debug.log")
-        .unwrap();
-    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
-    writeln!(file, "[{}] {}", timestamp, msg).unwrap();
-}
 use tokio::sync::mpsc;
 
 use crate::models::{NotificationLevel, SandboxNetwork, SandboxStatus, SandboxSummary};
@@ -438,22 +425,6 @@ impl<'a> MuxApp<'a> {
                     }
                 } else if self.focus == FocusArea::Sidebar {
                     self.sidebar.select_previous();
-                    // DEBUG: Log the sidebar/workspace state
-                    debug_log(&format!(
-                        "FocusUp sidebar: idx={}, highlighted_id={:?}, active_workspace={:?}",
-                        self.sidebar.selected_index(),
-                        self.sidebar.selected_sandbox().map(|s| s
-                            .id
-                            .to_string()
-                            .chars()
-                            .take(8)
-                            .collect::<String>()),
-                        self.workspace_manager.active_sandbox_id.map(|id| id
-                            .to_string()
-                            .chars()
-                            .take(8)
-                            .collect::<String>())
-                    ));
                 }
             }
             MuxCommand::FocusDown => {
@@ -463,22 +434,6 @@ impl<'a> MuxApp<'a> {
                     }
                 } else if self.focus == FocusArea::Sidebar {
                     self.sidebar.select_next();
-                    // DEBUG: Log the sidebar/workspace state
-                    debug_log(&format!(
-                        "FocusDown sidebar: idx={}, highlighted_id={:?}, active_workspace={:?}",
-                        self.sidebar.selected_index(),
-                        self.sidebar.selected_sandbox().map(|s| s
-                            .id
-                            .to_string()
-                            .chars()
-                            .take(8)
-                            .collect::<String>()),
-                        self.workspace_manager.active_sandbox_id.map(|id| id
-                            .to_string()
-                            .chars()
-                            .take(8)
-                            .collect::<String>())
-                    ));
                 }
             }
             MuxCommand::FocusSidebar => {
@@ -807,17 +762,6 @@ impl<'a> MuxApp<'a> {
                 // Selection is preserved by ID (not index) - handled automatically by Sidebar.
                 use std::collections::HashSet;
 
-                debug_log(&format!(
-                    "SandboxesRefreshed START: count={}, incoming={}, selected_id={:?}",
-                    self.sidebar.sandboxes.len(),
-                    sandboxes.len(),
-                    self.sidebar.selected_id.map(|id| id
-                        .to_string()
-                        .chars()
-                        .take(8)
-                        .collect::<String>())
-                ));
-
                 // Build new list: server sandboxes first (server order), then local placeholders
                 let server_ids: HashSet<_> = sandboxes.iter().map(|s| s.id).collect();
 
@@ -840,11 +784,6 @@ impl<'a> MuxApp<'a> {
                             if let Some(&server_sandbox_id) = server_by_correlation.get(cid) {
                                 // Transfer selection to the server sandbox that replaced the placeholder
                                 self.sidebar.selected_id = Some(server_sandbox_id);
-                                debug_log(&format!(
-                                    "SandboxesRefreshed: transferred selection from placeholder {} to server {}",
-                                    selected_id.to_string().chars().take(8).collect::<String>(),
-                                    server_sandbox_id.to_string().chars().take(8).collect::<String>()
-                                ));
                             }
                         }
                     }
@@ -877,13 +816,6 @@ impl<'a> MuxApp<'a> {
                 let mut new_list = sandboxes.clone();
                 new_list.extend(local_placeholders);
 
-                debug_log(&format!(
-                    "SandboxesRefreshed MERGE: server={} placeholders_kept={} result={}",
-                    sandboxes.len(),
-                    new_list.len() - sandboxes.len(),
-                    new_list.len()
-                ));
-
                 // set_sandboxes preserves selection by ID automatically
                 self.sidebar.set_sandboxes(new_list);
 
@@ -894,32 +826,12 @@ impl<'a> MuxApp<'a> {
                 }
 
                 // Only add to pending_connects on first load (when we had no active sandbox)
-                debug_log(&format!(
-                    "SandboxesRefreshed PENDING_CONNECTS: had_active={}, queue_size={}, selected_id={:?}",
-                    had_active,
-                    self.pending_connects.len(),
-                    self.sidebar.selected_id.map(|id| id.to_string().chars().take(8).collect::<String>())
-                ));
                 if !had_active && self.pending_connects.is_empty() {
                     if let Some(first) = self.sidebar.sandboxes.first() {
                         let first_id = first.id.to_string();
-                        debug_log(&format!(
-                            "SandboxesRefreshed SET_PENDING: first sandbox = {}",
-                            first_id.chars().take(8).collect::<String>()
-                        ));
                         self.pending_connects.push_back(first_id);
                     }
                 }
-
-                debug_log(&format!(
-                    "SandboxesRefreshed END: count={}, selected_id={:?}",
-                    self.sidebar.sandboxes.len(),
-                    self.sidebar.selected_id.map(|id| id
-                        .to_string()
-                        .chars()
-                        .take(8)
-                        .collect::<String>())
-                ));
             }
             MuxEvent::SandboxRefreshFailed(error) => {
                 self.sidebar.set_error(error.clone());
@@ -927,19 +839,6 @@ impl<'a> MuxApp<'a> {
             }
             MuxEvent::SandboxCreated { sandbox, tab_id } => {
                 let sandbox_id_str = sandbox.id.to_string();
-                let creating_count = self
-                    .sidebar
-                    .sandboxes
-                    .iter()
-                    .filter(|s| s.status == SandboxStatus::Creating)
-                    .count();
-                debug_log(&format!(
-                    "SandboxCreated START: count={}, new_sandbox={}, tab_id={:?}, creating_count={}",
-                    self.sidebar.sandboxes.len(),
-                    sandbox.name,
-                    tab_id.as_ref().map(|s| s.chars().take(8).collect::<String>()),
-                    creating_count
-                ));
 
                 // Find placeholder by correlation_id directly in the sandbox list
                 // This is the single source of truth - no separate HashMap
@@ -974,13 +873,6 @@ impl<'a> MuxApp<'a> {
                             self.sidebar.selected_id = Some(sandbox.id);
                         }
 
-                        debug_log(&format!(
-                            "SandboxCreated UPDATED placeholder in-place: old_id={}, new_id={}, was_selected={}",
-                            old_id.to_string().chars().take(8).collect::<String>(),
-                            sandbox.id.to_string().chars().take(8).collect::<String>(),
-                            was_selected
-                        ));
-
                         // Update workspace_manager
                         self.workspace_manager
                             .remove_sandbox(SandboxId::from_uuid(old_id));
@@ -1000,7 +892,6 @@ impl<'a> MuxApp<'a> {
                         .retain(|existing| existing.id != sandbox.id);
                     self.sidebar.sandboxes.push(sandbox.clone());
                     self.add_sandbox(&sandbox_id_str, &sandbox.name);
-                    debug_log("SandboxCreated ADDED new sandbox (no placeholder found)");
                 }
 
                 // Map tab_id to sandbox in workspace manager
@@ -1022,11 +913,6 @@ impl<'a> MuxApp<'a> {
                 if is_user_initiated {
                     // Add to pending_connects queue - ALL user-initiated sandboxes get terminals
                     self.pending_connects.push_back(sandbox_id_str.clone());
-                    debug_log(&format!(
-                        "SandboxCreated: added {} to pending_connects queue (size={})",
-                        &sandbox_id_str[..8.min(sandbox_id_str.len())],
-                        self.pending_connects.len()
-                    ));
                 }
 
                 // Only select the MOST RECENT creation (prevents focus jumping)
@@ -1039,21 +925,8 @@ impl<'a> MuxApp<'a> {
                     self.sidebar.select_by_id(sandbox.id);
                     self.workspace_manager
                         .select_sandbox(SandboxId::from_uuid(sandbox.id));
-                    debug_log(&format!(
-                        "SandboxCreated: selected most recent sandbox {}",
-                        &sandbox_id_str[..8.min(sandbox_id_str.len())]
-                    ));
                 }
 
-                debug_log(&format!(
-                    "SandboxCreated END: count={}, selected_id={:?}",
-                    self.sidebar.sandboxes.len(),
-                    self.sidebar.selected_id.map(|id| id
-                        .to_string()
-                        .chars()
-                        .take(8)
-                        .collect::<String>())
-                ));
                 self.set_status(format!("Created sandbox: {}", sandbox.name));
             }
             MuxEvent::SandboxTabMapped { sandbox_id, tab_id } => {
@@ -1160,13 +1033,6 @@ impl<'a> MuxApp<'a> {
         self.workspace_manager.add_sandbox(sandbox_id, name.clone());
 
         // IMMEDIATELY select the new placeholder - this is SYNC feedback for user's key press
-        debug_log(&format!(
-            "add_placeholder: name={}, correlation_id={:?}",
-            name,
-            tab_id_str
-                .as_ref()
-                .map(|s| s.chars().take(8).collect::<String>())
-        ));
         // With ID-based selection, just set the selected_id directly
         self.sidebar.select_by_id(sandbox_id.0);
         self.workspace_manager.select_sandbox(sandbox_id);

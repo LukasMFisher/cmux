@@ -18,19 +18,6 @@ use tokio::time::MissedTickBehavior;
 
 use crate::mux::colors::{query_outer_terminal_colors, spawn_theme_change_listener};
 use crate::mux::commands::MuxCommand;
-
-// DEBUG: Temporary logging for focus debugging
-fn debug_log(msg: &str) {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/dmux-focus-debug.log")
-        .unwrap();
-    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
-    writeln!(file, "[{}] {}", timestamp, msg).unwrap();
-}
 use crate::mux::events::MuxEvent;
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId, TabId};
 use crate::mux::onboard::{
@@ -371,12 +358,6 @@ fn try_consume_pending_connection(
 ) {
     // Process all pending connections in the queue
     while let Some(sandbox_id) = app.pending_connects.pop_front() {
-        debug_log(&format!(
-            "try_consume_pending_connection: processing {}, queue_remaining={}",
-            &sandbox_id[..8.min(sandbox_id.len())],
-            app.pending_connects.len()
-        ));
-
         // Verify the sandbox exists in sidebar
         let sandbox_exists = app
             .sidebar
@@ -384,10 +365,6 @@ fn try_consume_pending_connection(
             .iter()
             .any(|s| s.id.to_string() == sandbox_id);
         if !sandbox_exists {
-            debug_log(&format!(
-                "try_consume_pending_connection: sandbox {} NOT in sidebar list, skipping",
-                &sandbox_id[..8.min(sandbox_id.len())]
-            ));
             continue;
         }
 
@@ -407,10 +384,6 @@ fn connect_sandbox_terminal(
 
     // Parse the sandbox ID
     let Ok(sandbox_uuid) = uuid::Uuid::parse_str(sandbox_id) else {
-        debug_log(&format!(
-            "connect_sandbox_terminal: invalid UUID {}",
-            sandbox_id
-        ));
         return;
     };
     let sandbox_layout_id = SandboxId::from_uuid(sandbox_uuid);
@@ -423,18 +396,8 @@ fn connect_sandbox_terminal(
         .and_then(|tab| tab.active_pane);
 
     let Some(pane_id) = pane_id else {
-        debug_log(&format!(
-            "connect_sandbox_terminal: no pane_id for sandbox {}",
-            &sandbox_id[..8.min(sandbox_id.len())]
-        ));
         return;
     };
-
-    debug_log(&format!(
-        "connect_sandbox_terminal: sandbox={}, pane_id={}",
-        &sandbox_id[..8.min(sandbox_id.len())],
-        pane_id.to_string().chars().take(8).collect::<String>()
-    ));
 
     // Update the pane's sandbox_id in the workspace
     if let Some(ws) = app.workspace_manager.get_workspace_mut(sandbox_layout_id) {
@@ -458,10 +421,6 @@ fn connect_sandbox_terminal(
         .unwrap_or(false);
 
     if already_connected {
-        debug_log(&format!(
-            "connect_sandbox_terminal: already connected for {}",
-            &sandbox_id[..8.min(sandbox_id.len())]
-        ));
         return;
     }
 
@@ -483,11 +442,6 @@ fn connect_sandbox_terminal(
         .get_workspace(sandbox_layout_id)
         .and_then(|ws| ws.active_tab())
         .map(|tab| tab.id);
-
-    debug_log(&format!(
-        "connect_sandbox_terminal: spawning connection for {}",
-        &sandbox_id[..8.min(sandbox_id.len())]
-    ));
 
     tokio::spawn(async move {
         if let Err(e) =
