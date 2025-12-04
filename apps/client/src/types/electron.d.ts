@@ -86,6 +86,29 @@ interface CmuxWebContentsViewAPI {
   ) => Promise<{ ok: boolean; focused: boolean }>;
 }
 
+interface CmuxSandboxInfo {
+  id: string;
+  index: number;
+  name: string;
+  status: string;
+}
+
+interface CmuxSshAPI {
+  listSandboxes: () => Promise<{
+    ok: boolean;
+    sandboxes?: CmuxSandboxInfo[];
+    error?: string;
+  }>;
+  openVscode: (sandboxId: string) => Promise<{
+    ok: boolean;
+    error?: string;
+  }>;
+  setupConfig: () => Promise<{
+    ok: boolean;
+    error?: string;
+  }>;
+}
+
 interface CmuxAPI {
   getCurrentWebContentsId?: () => number | undefined;
   register: (meta: {
@@ -121,6 +144,7 @@ interface CmuxAPI {
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
   };
+  ssh?: CmuxSshAPI;
 }
 
 declare global {
