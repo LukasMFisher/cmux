@@ -540,18 +540,19 @@ ${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
 `;
 
   const scriptBase64 = stringToBase64(wrappedScript);
-  const scriptPath = `${CMUX_RUNTIME_DIR}/${windowName}.sh`;
+  const runtimeDir = "/var/tmp/cmux-scripts";
+  const scriptFilePath = `${runtimeDir}/${windowName}.sh`;
 
   const command = [
     "zsh",
     "-lc",
     [
-      `mkdir -p ${CMUX_RUNTIME_DIR}`,
-      `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)}`,
+      `mkdir -p '${runtimeDir}'`,
+      `{ tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)}; }`,
       `tmux new-window -t cmux -n ${singleQuote(windowName)} -c ${singleQuote(repoDir)}`,
-      `echo '${scriptBase64}' | base64 -d > ${singleQuote(scriptPath)}`,
-      `chmod +x ${singleQuote(scriptPath)}`,
-      `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptPath)}" C-m`,
+      `echo '${scriptBase64}' | base64 -d > ${singleQuote(scriptFilePath)}`,
+      `chmod +x ${singleQuote(scriptFilePath)}`,
+      `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptFilePath)}" C-m`,
     ].join(" && "),
   ];
 
