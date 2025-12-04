@@ -900,16 +900,16 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       () => (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-2">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-            <span className="text-sm text-neutral-400">
+            <div className="h-5 w-5 animate-spin rounded-full border-[1.5px] border-neutral-600 border-t-transparent" />
+            <span className="text-xs text-neutral-500">
               {status === "connecting"
                 ? reconnectAttempt > 0
-                  ? `Reconnecting... (attempt ${reconnectAttempt})`
-                  : "Connecting to remote desktop..."
-                : "Waiting for connection..."}
+                  ? `Reconnecting (${reconnectAttempt})...`
+                  : "Connecting..."
+                : ""}
             </span>
             {reconnectAttempt > 0 && errorMessage && (
-              <span className="text-xs text-neutral-500 max-w-[280px] text-center">
+              <span className="text-xs text-neutral-600 max-w-[240px] text-center">
                 {errorMessage}
               </span>
             )}
