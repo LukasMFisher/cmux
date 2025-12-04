@@ -930,13 +930,15 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         style={{ background, ...style }}
         onClick={handleContainerClick}
         onContextMenu={handleContextMenu}
+        data-drag-disable-pointer
       >
-        {/* VNC Canvas Container */}
+        {/* VNC Canvas Container - noVNC creates canvas inside this */}
         <div
           ref={containerRef}
           className="absolute inset-0"
           style={{ background }}
           tabIndex={0}
+          data-drag-disable-pointer
         />
 
         {/* Loading Overlay */}

@@ -175,6 +175,7 @@ class PersistentIframeManager {
       isolation: isolate;
     `;
     wrapper.setAttribute("data-iframe-key", key);
+    wrapper.setAttribute("data-drag-disable-pointer", "");
 
     // Create iframe
     const iframe = document.createElement("iframe");
