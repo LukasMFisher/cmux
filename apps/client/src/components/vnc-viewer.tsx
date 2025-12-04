@@ -486,45 +486,262 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       }
     }, []);
 
-    // Intercept Cmd+V/Ctrl+V using capture-phase keydown + Clipboard API
-    // This fires before noVNC's handlers and works in both web and Electron
-    useEffect(() => {
+    // Send a key combo to VNC, releasing Meta/Super first (for Mac Cmd → Linux Ctrl translation)
+    const sendKeyCombo = useCallback((keysym: number, code: string, withShift = false) => {
+      const rfb = rfbRef.current;
+      if (!rfb) return;
+
+      // X11 keysyms for modifiers
+      const XK_Shift_L = 0xffe1;
+      const XK_Meta_L = 0xffe7;
+      const XK_Meta_R = 0xffe8;
+      const XK_Super_L = 0xffeb;
+      const XK_Super_R = 0xffec;
+      const XK_Control_L = 0xffe3;
+
+      // Release Meta/Super keys that might be held from user's Cmd
+      rfb.sendKey(XK_Meta_L, "MetaLeft", false);
+      rfb.sendKey(XK_Meta_R, "MetaRight", false);
+      rfb.sendKey(XK_Super_L, "OSLeft", false);
+      rfb.sendKey(XK_Super_R, "OSRight", false);
+
+      // Send Ctrl+<key> (with optional Shift)
+      rfb.sendKey(XK_Control_L, "ControlLeft", true);
+      if (withShift) rfb.sendKey(XK_Shift_L, "ShiftLeft", true);
+      rfb.sendKey(keysym, code, true);
+      rfb.sendKey(keysym, code, false);
+      if (withShift) rfb.sendKey(XK_Shift_L, "ShiftLeft", false);
+      rfb.sendKey(XK_Control_L, "ControlLeft", false);
+    }, []);
+
+    // Mac Cmd → Linux Ctrl shortcut mappings
+    // Maps key to [keysym, code, requiresShift]
+    const cmdToCtrlMap: Record<string, [number, string, boolean?]> = useMemo(() => ({
+      // Common shortcuts
+      a: [0x0061, "KeyA"],         // Select all
+      c: [0x0063, "KeyC"],         // Copy
+      x: [0x0078, "KeyX"],         // Cut
+      z: [0x007a, "KeyZ"],         // Undo
+      y: [0x0079, "KeyY"],         // Redo (alternative)
+      s: [0x0073, "KeyS"],         // Save
+      f: [0x0066, "KeyF"],         // Find
+      g: [0x0067, "KeyG"],         // Find next
+      h: [0x0068, "KeyH"],         // Replace (some apps)
+      n: [0x006e, "KeyN"],         // New
+      o: [0x006f, "KeyO"],         // Open
+      p: [0x0070, "KeyP"],         // Print
+      w: [0x0077, "KeyW"],         // Close tab/window
+      t: [0x0074, "KeyT"],         // New tab
+      l: [0x006c, "KeyL"],         // Focus address bar / Go to line
+      r: [0x0072, "KeyR"],         // Reload
+      d: [0x0064, "KeyD"],         // Bookmark / Duplicate
+      b: [0x0062, "KeyB"],         // Bold
+      i: [0x0069, "KeyI"],         // Italic
+      u: [0x0075, "KeyU"],         // Underline
+      k: [0x006b, "KeyK"],         // Kill line (terminal) / Insert link
+      "/": [0x002f, "Slash"],      // Comment (IDEs)
+      "[": [0x005b, "BracketLeft"], // Outdent
+      "]": [0x005d, "BracketRight"], // Indent
+    }), []);
+
+    // Shortcuts that need Shift modifier (Cmd+Shift+X → Ctrl+Shift+X)
+    const cmdShiftToCtrlShiftMap: Record<string, [number, string]> = useMemo(() => ({
+      z: [0x007a, "KeyZ"],         // Redo
+      f: [0x0066, "KeyF"],         // Find in files
+      s: [0x0073, "KeyS"],         // Save as
+      p: [0x0070, "KeyP"],         // Command palette (VSCode)
+      g: [0x0067, "KeyG"],         // Find previous
+    }), []);
+
+    // Check if VNC viewer is focused (container or any child including canvas)
+    const isVncFocused = useCallback(() => {
       const container = containerRef.current;
-      if (!container) return;
+      if (!container) return false;
+      const active = document.activeElement;
+      return container === active || container.contains(active);
+    }, []);
+
+    // Send Ctrl+key combo (releasing Meta first for Mac)
+    const sendCtrlKey = useCallback((keysym: number, code: string, releaseMeta = false) => {
+      const rfb = rfbRef.current;
+      if (!rfb) return;
+
+      const XK_Control_L = 0xffe3;
+
+      if (releaseMeta) {
+        // Release Meta/Super keys that might be held from user's Option key
+        rfb.sendKey(0xffe7, "MetaLeft", false);
+        rfb.sendKey(0xffe8, "MetaRight", false);
+        rfb.sendKey(0xffeb, "OSLeft", false);
+        rfb.sendKey(0xffec, "OSRight", false);
+        // Also release Alt since Option maps to Alt
+        rfb.sendKey(0xffe9, "AltLeft", false);
+        rfb.sendKey(0xffea, "AltRight", false);
+      }
+
+      rfb.sendKey(XK_Control_L, "ControlLeft", true);
+      rfb.sendKey(keysym, code, true);
+      rfb.sendKey(keysym, code, false);
+      rfb.sendKey(XK_Control_L, "ControlLeft", false);
+    }, []);
+
+    // Intercept Mac shortcuts and translate to Linux equivalents
+    // Listen at document level to intercept before browser handles them
+    useEffect(() => {
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 
       const handleKeyDown = async (e: KeyboardEvent) => {
-        // Detect paste shortcut: Cmd+V on Mac, Ctrl+V elsewhere
-        const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
-        const isPasteShortcut =
-          e.key.toLowerCase() === "v" &&
-          (isMac ? e.metaKey : e.ctrlKey) &&
-          !e.altKey &&
-          !e.shiftKey;
-
-        if (!isPasteShortcut) return;
+        // Only handle if VNC is focused
+        if (!isVncFocused()) return;
         if (!rfbRef.current) return;
 
-        // Prevent noVNC from sending raw Meta+V to the server
-        e.preventDefault();
-        e.stopPropagation();
+        const key = e.key.toLowerCase();
 
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text) {
-            console.log("[VncViewer] Cmd+V intercepted, pasting...");
-            clipboardPaste(text);
+        // === Arrow key handling ===
+        // Cmd+Arrow → Home/End (line) or Ctrl+Home/End (document)
+        if (isMac && e.metaKey && !e.ctrlKey && !e.altKey) {
+          const XK_Home = 0xff50;
+          const XK_End = 0xff57;
+
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Cmd+Left → Home");
+            sendKeyCombo(XK_Home, "Home");
+            return;
           }
-        } catch (err) {
-          console.error("[VncViewer] Clipboard read failed:", err);
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Cmd+Right → End");
+            sendKeyCombo(XK_End, "End");
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Cmd+Up → Ctrl+Home");
+            sendKeyCombo(XK_Home, "Home"); // Ctrl+Home via sendKeyCombo
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Cmd+Down → Ctrl+End");
+            sendKeyCombo(XK_End, "End"); // Ctrl+End via sendKeyCombo
+            return;
+          }
+
+          // Also handle Cmd+Backspace → Ctrl+U (kill to beginning of line)
+          if (e.key === "Backspace") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Cmd+Backspace → Ctrl+U");
+            sendKeyCombo(0x0075, "KeyU");
+            return;
+          }
+        }
+
+        // Option+Arrow → Ctrl+Arrow (word navigation)
+        if (isMac && e.altKey && !e.metaKey && !e.ctrlKey) {
+          const XK_Left = 0xff51;
+          const XK_Right = 0xff53;
+
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Option+Left → Ctrl+Left (word left)");
+            sendCtrlKey(XK_Left, "ArrowLeft", true);
+            return;
+          }
+          if (e.key === "ArrowRight") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Option+Right → Ctrl+Right (word right)");
+            sendCtrlKey(XK_Right, "ArrowRight", true);
+            return;
+          }
+          // Option+Backspace → Ctrl+W (delete word backward)
+          if (e.key === "Backspace") {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("[VncViewer] Option+Backspace → Ctrl+W (delete word)");
+            sendCtrlKey(0x0077, "KeyW", true);
+            return;
+          }
+        }
+
+        // === Cmd+<key> → Ctrl+<key> (Mac only) ===
+        if (isMac && e.metaKey && !e.altKey) {
+          // Special case: Cmd+V needs clipboard handling
+          if (key === "v" && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              const text = await navigator.clipboard.readText();
+              if (text) {
+                console.log("[VncViewer] Cmd+V intercepted, pasting...");
+                clipboardPaste(text);
+              }
+            } catch (err) {
+              console.error("[VncViewer] Clipboard read failed:", err);
+            }
+            return;
+          }
+
+          // Cmd+Shift+<key> → Ctrl+Shift+<key>
+          if (e.shiftKey && cmdShiftToCtrlShiftMap[key]) {
+            e.preventDefault();
+            e.stopPropagation();
+            const [keysym, code] = cmdShiftToCtrlShiftMap[key];
+            console.log(`[VncViewer] Cmd+Shift+${key.toUpperCase()} → Ctrl+Shift+${key.toUpperCase()}`);
+            sendKeyCombo(keysym, code, true);
+            return;
+          }
+
+          // Cmd+<key> → Ctrl+<key>
+          if (!e.shiftKey && cmdToCtrlMap[key]) {
+            e.preventDefault();
+            e.stopPropagation();
+            const [keysym, code] = cmdToCtrlMap[key];
+            console.log(`[VncViewer] Cmd+${key.toUpperCase()} → Ctrl+${key.toUpperCase()}`);
+            sendKeyCombo(keysym, code);
+            return;
+          }
+        }
+
+        // === Ctrl+<key> on Mac for GNU readline shortcuts ===
+        // Only the common ones that browsers intercept (Ctrl+A = select all in browser)
+        if (isMac && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+          const readlineKeys: Record<string, [number, string]> = {
+            a: [0x0061, "KeyA"], // Beginning of line
+            e: [0x0065, "KeyE"], // End of line
+            k: [0x006b, "KeyK"], // Kill to end of line
+            u: [0x0075, "KeyU"], // Kill to beginning of line
+            w: [0x0077, "KeyW"], // Delete word backward
+            y: [0x0079, "KeyY"], // Yank
+            l: [0x006c, "KeyL"], // Clear screen
+            c: [0x0063, "KeyC"], // Interrupt (SIGINT)
+            d: [0x0064, "KeyD"], // EOF / Delete char
+          };
+
+          if (readlineKeys[key]) {
+            e.preventDefault();
+            e.stopPropagation();
+            const [keysym, code] = readlineKeys[key];
+            console.log(`[VncViewer] Ctrl+${key.toUpperCase()} → Ctrl+${key.toUpperCase()}`);
+            sendCtrlKey(keysym, code, false);
+            return;
+          }
         }
       };
 
-      // Capture phase ensures we intercept before noVNC's bubble-phase handlers
-      container.addEventListener("keydown", handleKeyDown, { capture: true });
+      // Listen at document level with capture to intercept before browser default handlers
+      document.addEventListener("keydown", handleKeyDown, { capture: true });
       return () => {
-        container.removeEventListener("keydown", handleKeyDown, { capture: true });
+        document.removeEventListener("keydown", handleKeyDown, { capture: true });
       };
-    }, [clipboardPaste]);
+    }, [clipboardPaste, sendKeyCombo, sendCtrlKey, isVncFocused, cmdToCtrlMap, cmdShiftToCtrlShiftMap]);
 
     // Fallback: Document-level paste event listener
     // Handles cases where keydown might not fire (e.g., Electron menu triggers paste)
