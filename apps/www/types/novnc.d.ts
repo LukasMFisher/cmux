@@ -1,6 +1,11 @@
 // Type declarations for @novnc/novnc
 // Based on https://github.com/novnc/noVNC/blob/master/docs/API.md
 
+// noVNC 1.7.0-beta exports RFB directly from the package
+declare module "@novnc/novnc" {
+  export { default, RFBOptions, RFBCapabilities, RFBEventMap } from "@novnc/novnc/core/rfb";
+}
+
 declare module "@novnc/novnc/core/rfb" {
   export interface RFBOptions {
     /** Object specifying credentials to provide to the server */

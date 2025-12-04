@@ -1,4 +1,4 @@
-import { VncViewer, type VncConnectionStatus } from "@/components/vnc-viewer";
+import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { toMorphVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import { api } from "@cmux/convex/api";

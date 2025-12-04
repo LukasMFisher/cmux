@@ -29,7 +29,10 @@ import {
   type FrameworkPreset,
 } from "./framework-preset-select";
 import type { PackageManager } from "@/lib/github/framework-detection";
-import { VncViewer, type VncConnectionStatus } from "../vnc-viewer";
+import {
+  VncViewer,
+  type VncConnectionStatus,
+} from "@cmux/shared/components/vnc-viewer";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 

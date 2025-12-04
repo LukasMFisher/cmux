@@ -56,7 +56,8 @@ let RFBClass: RFBConstructor | null = null;
 const loadRFB = async (): Promise<RFBConstructor> => {
   if (RFBClass) return RFBClass;
   // noVNC 1.7.0-beta exports from core/rfb.js via package.json "exports"
-  const module = await import("@novnc/novnc");
+  // Type assertion since we have inline type definitions and don't need external @types/novnc__novnc
+  const module = await import("@novnc/novnc") as { default: RFBConstructor };
   RFBClass = module.default;
   return RFBClass;
 };
