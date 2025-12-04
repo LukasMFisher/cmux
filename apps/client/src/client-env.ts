@@ -1,6 +1,8 @@
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
-import { withRelatedProject } from "@vercel/related-projects";
+import { withRelatedProject, relatedProjects } from "@vercel/related-projects";
+
+console.log("got related projects", relatedProjects());
 
 export const env = createEnv({
   server: {},
