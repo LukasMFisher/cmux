@@ -193,9 +193,8 @@ function MockGitHubPRBrowser() {
 
   return (
     <div className="pt-12">
-      <Section title="See it in action">
-        {/* Browser window frame */}
-        <div className="rounded-lg border border-[#30363d] bg-[#0d1117] overflow-hidden shadow-2xl">
+      {/* Browser window frame */}
+      <div className="rounded-lg border border-[#30363d] bg-[#0d1117] overflow-hidden shadow-2xl">
           {/* Browser chrome - macOS style */}
           <div className="flex items-center gap-2 px-4 h-10 bg-[#161b22] border-b border-[#30363d]">
             {/* Traffic lights */}
@@ -357,31 +356,6 @@ function MockGitHubPRBrowser() {
                 </div>
               </div>
 
-              {/* Timeline: Commit */}
-              <div className="flex items-start gap-3 text-sm pt-2">
-                <div className="w-8 flex justify-center pt-0.5">
-                  <div className="w-6 h-6 rounded-full bg-[#21262d] border border-[#30363d] flex items-center justify-center">
-                    <svg className="h-3 w-3 text-[#7d8590]" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z" />
-                    </svg>
-                  </div>
-                </div>
-                <div className="flex-1 pt-0.5">
-                  <span className="font-semibold text-[#e6edf3] hover:text-[#2f81f7] cursor-pointer">austinywang</span>
-                  <span className="text-[#7d8590]"> pushed a commit that referenced this pull request </span>
-                  <code className="px-1.5 py-0.5 rounded-md bg-[#6e768166] text-[#e6edf3] font-mono text-xs hover:text-[#2f81f7] cursor-pointer">
-                    ee59b00
-                  </code>
-                </div>
-              </div>
-
-              {/* Timeline connector */}
-              <div className="flex">
-                <div className="w-8 flex justify-center">
-                  <div className="w-0.5 h-4 bg-[#30363d]" />
-                </div>
-              </div>
-
               {/* Bot comment */}
               <div className="flex gap-3">
                 <div className="shrink-0">
@@ -483,8 +457,7 @@ function MockGitHubPRBrowser() {
               </div>
             </div>
           </div>
-        </div>
-      </Section>
+      </div>
     </div>
   );
 }
