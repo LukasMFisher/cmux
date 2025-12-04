@@ -9,7 +9,6 @@ import {
   Github,
   Link2,
   Loader2,
-  Monitor,
   Pencil,
   Search,
   Server,
@@ -154,266 +153,201 @@ type MockScreenshot = {
 const MOCK_SCREENSHOTS: MockScreenshot[] = [
   {
     id: "1",
-    caption: "GitLab waitlist modal showing the empty form with email input and 'Join waitlist' button",
-    imageUrl: "https://adorable-wombat-701.convex.cloud/api/storage/51c8e9db-d7d6-4a6d-a05b-b4bf7c0f1191",
+    caption: "Full page view of the initial setup screen showing framework preset selector, maintenance/dev scripts, and environment variables sections all expanded",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/330d59e9-de98-463e-a6d4-a1d571497b4e",
   },
   {
     id: "2",
-    caption: "GitLab waitlist modal with email field filled in (user@example.com)",
-    imageUrl: "https://adorable-wombat-701.convex.cloud/api/storage/5551886d-b45b-488b-b2a6-c2ec2a9b8647",
+    caption: "Header section showing 'Configure workspace' title",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/8733e153-847b-4700-9c85-859a09bfcf76",
   },
   {
     id: "3",
-    caption: "GitLab waitlist modal showing success state with green checkmark and confirmation message",
-    imageUrl: "https://adorable-wombat-701.convex.cloud/api/storage/569dc00d-b67d-4d3a-9f16-c651f189465a",
+    caption: "Framework preset selector showing 'Vite' selected with autofill hint",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/2c878414-07a2-46ad-816a-ba3eeb61d48a",
   },
   {
     id: "4",
-    caption: "Preview dashboard showing new GitLab and Bitbucket provider buttons alongside GitHub button",
-    imageUrl: "https://adorable-wombat-701.convex.cloud/api/storage/eecc8496-6a13-4658-8caa-66d77e3ba131",
+    caption: "Full page view of workspace configuration showing sidebar with step-by-step wizard (step 3 active) and VS Code iframe embedded on the right",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/e6517fb1-194c-4128-9dc8-b0a7ed1ca67d",
   },
   {
     id: "5",
-    caption: "Close-up view of the three provider buttons: Continue with GitHub, GitLab, and Bitbucket",
-    imageUrl: "https://adorable-wombat-701.convex.cloud/api/storage/56e6b86b-81ac-4c2a-8f64-591e55dc3e13",
+    caption: "Step 3 (Run scripts in VS Code terminal) expanded showing instructions and command block",
+    imageUrl: "https://famous-camel-162.convex.cloud/api/storage/9bc44cf5-bd16-4f37-9312-62963d10311d",
   },
 ];
 
-type BrowserTab = {
-  id: string;
-  title: string;
-  icon: "github" | "code" | "terminal";
-  isActive?: boolean;
-};
-
-const BROWSER_TABS: BrowserTab[] = [
-  { id: "pr", title: "Add GitLab & Bitbucket #1156", icon: "github", isActive: true },
-  { id: "diff", title: "Files changed (12)", icon: "code" },
-  { id: "checks", title: "Checks", icon: "terminal" },
-];
-
-function BrowserTabIcon({ icon }: { icon: BrowserTab["icon"] }) {
-  if (icon === "github") {
-    return (
-      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
-      </svg>
-    );
-  }
-  if (icon === "code") {
-    return (
-      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="16 18 22 12 16 6" />
-        <polyline points="8 6 2 12 8 18" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  );
-}
-
 function MockGitHubPRBrowser() {
-  const [activeTab, setActiveTab] = useState("pr");
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
   return (
-    <div className="pt-10">
+    <div className="pt-12">
       <Section title="See it in action">
         {/* Browser window frame */}
-        <div className="rounded-xl border border-white/10 bg-[#0d1117] overflow-hidden shadow-2xl shadow-black/50">
-          {/* Browser chrome - title bar */}
-          <div className="flex items-center gap-2 px-4 py-3 bg-[#161b22] border-b border-white/5">
+        <div className="rounded-lg border border-[#30363d] bg-[#0d1117] overflow-hidden shadow-2xl">
+          {/* Browser chrome - macOS style */}
+          <div className="flex items-center gap-2 px-4 h-10 bg-[#161b22] border-b border-[#30363d]">
             {/* Traffic lights */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-[#ff5f57]" />
               <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
               <div className="w-3 h-3 rounded-full bg-[#28c840]" />
             </div>
-
-            {/* Browser tabs */}
-            <div className="flex-1 flex items-center gap-1 ml-4 overflow-x-auto">
-              {BROWSER_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={clsx(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-t-lg text-xs font-medium transition-colors whitespace-nowrap",
-                    activeTab === tab.id
-                      ? "bg-[#0d1117] text-white"
-                      : "text-neutral-400 hover:text-neutral-200 hover:bg-white/5"
-                  )}
-                >
-                  <BrowserTabIcon icon={tab.icon} />
-                  <span className="max-w-[140px] truncate">{tab.title}</span>
-                  <svg className="h-3 w-3 opacity-50 hover:opacity-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              ))}
-              <button className="p-1.5 text-neutral-500 hover:text-neutral-300">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
+            {/* URL bar */}
+            <div className="flex-1 flex justify-center">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-[#0d1117] border border-[#30363d] max-w-md w-full">
+                <svg className="h-3 w-3 text-[#7d8590]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
-              </button>
+                <span className="text-xs text-[#e6edf3] truncate">github.com/manaflow-ai/cmux/pull/1124</span>
+              </div>
             </div>
+            <div className="w-[52px]" />
           </div>
 
-          {/* URL bar */}
-          <div className="flex items-center gap-3 px-4 py-2 bg-[#161b22] border-b border-white/5">
-            <div className="flex items-center gap-1">
-              <button className="p-1 text-neutral-500 hover:text-neutral-300">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-              </button>
-              <button className="p-1 text-neutral-500 hover:text-neutral-300">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
-              <button className="p-1 text-neutral-500 hover:text-neutral-300">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M23 4v6h-6" />
-                  <path d="M1 20v-6h6" />
-                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex-1 flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#0d1117] border border-white/10">
-              <svg className="h-3.5 w-3.5 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          {/* GitHub header */}
+          <div className="bg-[#010409] border-b border-[#30363d] px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              <svg className="h-4 w-4 text-[#7d8590]" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
               </svg>
-              <span className="text-xs text-neutral-300 font-mono">github.com/acme-corp/webapp/pull/1156</span>
+              <span className="text-[#e6edf3] font-semibold">manaflow-ai</span>
+              <span className="text-[#7d8590]">/</span>
+              <span className="text-[#2f81f7] font-semibold hover:underline cursor-pointer">cmux</span>
             </div>
           </div>
 
-          {/* GitHub PR content */}
-          <div className="bg-[#0d1117] max-h-[600px] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.2) transparent" }}>
-            {activeTab === "pr" && (
-              <div className="p-6">
-                {/* PR header */}
-                <div className="pb-4 border-b border-white/10">
-                  <div className="flex items-start gap-3">
-                    <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      Open
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-xl font-semibold text-white">
-                        feat: Add GitLab and Bitbucket provider support
-                      </h3>
-                      <p className="text-sm text-neutral-400 pt-1">
-                        <span className="text-neutral-300">austin</span> wants to merge 12 commits into <code className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-xs">main</code> from <code className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-xs">feat/multi-provider</code>
-                      </p>
-                    </div>
-                  </div>
+          {/* PR header */}
+          <div className="bg-[#0d1117] border-b border-[#30363d] px-6 py-4">
+            <div className="flex items-start gap-2">
+              <h1 className="text-xl font-semibold text-[#e6edf3]">
+                reuse preview config component for step by step re 6k4tq
+                <span className="text-[#7d8590] font-normal ml-2">#1124</span>
+              </h1>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#238636] text-white">
+                <svg className="h-3 w-3" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+                </svg>
+                Merged
+              </span>
+              <span className="text-sm text-[#7d8590]">
+                <span className="text-[#e6edf3] font-medium hover:text-[#2f81f7] cursor-pointer">austinywang</span>
+                {" merged 14 commits into "}
+                <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">main</span>
+                {" from "}
+                <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">cmux/reuse-preview...</span>
+              </span>
+            </div>
+          </div>
+
+          {/* PR tabs */}
+          <div className="bg-[#0d1117] border-b border-[#30363d] px-6">
+            <nav className="flex gap-4">
+              <button className="flex items-center gap-2 px-2 py-3 text-sm font-medium text-[#e6edf3] border-b-2 border-[#f78166] -mb-px">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1.5 2.75a.25.25 0 0 1 .25-.25h8.5a.25.25 0 0 1 .25.25v5.5a.25.25 0 0 1-.25.25h-3.5a.75.75 0 0 0-.53.22L3.5 11.44V9.25a.75.75 0 0 0-.75-.75h-1a.25.25 0 0 1-.25-.25Zm-1.5 0a1.75 1.75 0 0 1 1.75-1.75h8.5A1.75 1.75 0 0 1 12 2.75v5.5A1.75 1.75 0 0 1 10.25 10H7.061l-2.574 2.573A1.458 1.458 0 0 1 2 11.543V10h-.25A1.75 1.75 0 0 1 0 8.25Zm14.5 2a.25.25 0 0 0-.25-.25h-.5a.75.75 0 0 1 0-1.5h.5A1.75 1.75 0 0 1 16 4.75v5.5A1.75 1.75 0 0 1 14.25 12H14v1.543a1.458 1.458 0 0 1-2.487 1.03L9.22 12.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.22 2.22v-2.19a.75.75 0 0 1 .75-.75h1a.25.25 0 0 0 .25-.25Z" />
+                </svg>
+                Conversation
+                <span className="px-1.5 py-0.5 rounded-full bg-[#30363d] text-xs text-[#e6edf3]">3</span>
+              </button>
+              <button className="flex items-center gap-2 px-2 py-3 text-sm text-[#7d8590] hover:text-[#e6edf3]">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z" />
+                </svg>
+                Commits
+                <span className="px-1.5 py-0.5 rounded-full bg-[#30363d] text-xs text-[#e6edf3]">14</span>
+              </button>
+              <button className="flex items-center gap-2 px-2 py-3 text-sm text-[#7d8590] hover:text-[#e6edf3]">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775Zm1.5 0c0 .066.026.13.073.177l6.25 6.25a.25.25 0 0 0 .354 0l5.025-5.025a.25.25 0 0 0 0-.354l-6.25-6.25a.25.25 0 0 0-.177-.073H2.75a.25.25 0 0 0-.25.25ZM6 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" />
+                </svg>
+                Checks
+                <span className="px-1.5 py-0.5 rounded-full bg-[#30363d] text-xs text-[#e6edf3]">4</span>
+              </button>
+              <button className="flex items-center gap-2 px-2 py-3 text-sm text-[#7d8590] hover:text-[#e6edf3]">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z" />
+                </svg>
+                Files changed
+                <span className="px-1.5 py-0.5 rounded-full bg-[#30363d] text-xs text-[#e6edf3]">2</span>
+              </button>
+            </nav>
+          </div>
+
+          {/* GitHub PR content - scrollable */}
+          <div className="bg-[#0d1117] max-h-[550px] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#30363d #0d1117" }}>
+            <div className="px-6 py-4">
+              {/* Comment */}
+              <div className="flex gap-3">
+                {/* Avatar */}
+                <div className="shrink-0">
+                  <Image
+                    src="https://avatars.githubusercontent.com/u/171392238?v=4"
+                    alt="cmux-agent avatar"
+                    width={40}
+                    height={40}
+                    className="rounded-full"
+                    unoptimized
+                  />
                 </div>
 
-                {/* PR tabs */}
-                <div className="flex items-center gap-6 py-3 border-b border-white/10 text-sm">
-                  <button className="flex items-center gap-2 text-white font-medium border-b-2 border-orange-500 pb-3 -mb-3">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                    Conversation
-                    <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-xs">8</span>
-                  </button>
-                  <button className="flex items-center gap-2 text-neutral-400 hover:text-white pb-3 -mb-3">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                    Commits
-                    <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-xs">12</span>
-                  </button>
-                  <button className="flex items-center gap-2 text-neutral-400 hover:text-white pb-3 -mb-3">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    Files changed
-                    <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-xs">24</span>
-                  </button>
-                </div>
-
-                {/* Comments section */}
-                <div className="pt-6 space-y-6">
-                  {/* cmux-agent bot comment */}
-                  <div className="rounded-lg border border-white/10 overflow-hidden">
+                {/* Comment box */}
+                <div className="flex-1 min-w-0">
+                  <div className="rounded-md border border-[#30363d] overflow-hidden">
                     {/* Comment header */}
-                    <div className="flex items-center gap-3 px-4 py-3 bg-[#161b22] border-b border-white/10">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center text-white text-xs font-bold">
-                        C
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-white text-sm">cmux-agent</span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                            bot
-                          </span>
-                          <span className="text-xs text-neutral-500">commented 2 minutes ago</span>
-                        </div>
-                      </div>
-                      <button className="p-1 text-neutral-500 hover:text-neutral-300">
-                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="1" />
-                          <circle cx="19" cy="12" r="1" />
-                          <circle cx="5" cy="12" r="1" />
-                        </svg>
-                      </button>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-[#161b22] border-b border-[#30363d]">
+                      <span className="font-semibold text-sm text-[#e6edf3] hover:text-[#2f81f7] cursor-pointer">cmux-agent</span>
+                      <span className="px-1.5 py-0.5 rounded-md text-xs font-medium bg-[#6e40c926] text-[#a371f7] border border-[#6e40c966]">
+                        bot
+                      </span>
+                      <span className="text-sm text-[#7d8590]">commented yesterday</span>
                     </div>
 
-                    {/* Comment body - Preview Screenshots */}
+                    {/* Comment body - exact GitHub markdown rendering */}
                     <div className="p-4 bg-[#0d1117]">
-                      <h4 className="text-base font-semibold text-white pb-3">Preview Screenshots</h4>
+                      {/* H2 - Preview Screenshots */}
+                      <h2 className="text-xl font-semibold text-[#e6edf3] pb-4 border-b border-[#30363d] mb-4">
+                        Preview Screenshots
+                      </h2>
 
-                      {/* Action links */}
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm pb-4">
-                        <span className="inline-flex items-center gap-1.5 text-sky-400 hover:text-sky-300 cursor-pointer hover:underline">
-                          <Monitor className="h-3.5 w-3.5" />
-                          Open Workspace (1 hr expiry)
-                        </span>
-                        <span className="text-neutral-600">·</span>
-                        <span className="inline-flex items-center gap-1.5 text-sky-400 hover:text-sky-300 cursor-pointer hover:underline">
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Open Dev Browser (1 hr expiry)
-                        </span>
-                        <span className="text-neutral-600">·</span>
-                        <span className="inline-flex items-center gap-1.5 text-sky-400 hover:text-sky-300 cursor-pointer hover:underline">
-                          <Github className="h-3.5 w-3.5" />
-                          Open Diff Heatmap
-                        </span>
-                      </div>
-
-                      {/* Commit info */}
-                      <p className="text-sm text-neutral-400 pb-4">
-                        Captured {MOCK_SCREENSHOTS.length} screenshots for commit{" "}
-                        <code className="px-1.5 py-0.5 rounded bg-white/5 text-neutral-300 font-mono text-xs">
-                          5fc6367
-                        </code>{" "}
-                        (2025-12-04 04:03:32 UTC).
+                      {/* Links */}
+                      <p className="text-sm text-[#e6edf3] mb-4">
+                        <span className="text-[#2f81f7] hover:underline cursor-pointer">Open Workspace (1 hr expiry)</span>
+                        <span className="text-[#7d8590]"> · </span>
+                        <span className="text-[#2f81f7] hover:underline cursor-pointer">Open Dev Browser (1 hr expiry)</span>
+                        <span className="text-[#7d8590]"> · </span>
+                        <span className="text-[#2f81f7] hover:underline cursor-pointer">Open Diff Heatmap</span>
                       </p>
 
-                      {/* Screenshots with captions */}
-                      <div className="space-y-4">
+                      {/* Screenshot count */}
+                      <p className="text-sm text-[#e6edf3] mb-6">
+                        Captured {MOCK_SCREENSHOTS.length} screenshots for commit{" "}
+                        <code className="px-1.5 py-0.5 rounded-md bg-[#6e768166] text-[#e6edf3] font-mono text-xs">
+                          ee59b00
+                        </code>{" "}
+                        (2025-12-03 06:56:40.263 UTC).
+                      </p>
+
+                      {/* Screenshots */}
+                      <div className="space-y-6">
                         {MOCK_SCREENSHOTS.map((screenshot) => (
-                          <div key={screenshot.id} className="space-y-2">
-                            <p className="text-sm text-neutral-300">
+                          <div key={screenshot.id}>
+                            {/* Bold caption */}
+                            <p className="text-sm text-[#e6edf3] mb-2">
                               <strong>{screenshot.caption}</strong>
                             </p>
+                            {/* Image */}
                             <button
                               onClick={() => setExpandedImage(expandedImage === screenshot.id ? null : screenshot.id)}
-                              className="relative block w-full max-w-2xl rounded-lg border border-white/10 overflow-hidden hover:border-white/20 transition-colors cursor-zoom-in"
+                              className="block rounded-md border border-[#30363d] overflow-hidden hover:border-[#8b949e] transition-colors"
                             >
                               <div className={clsx(
-                                "relative bg-neutral-900 overflow-hidden transition-all duration-300",
-                                expandedImage === screenshot.id ? "max-h-[500px]" : "max-h-[200px]"
+                                "relative overflow-hidden transition-all duration-300",
+                                expandedImage === screenshot.id ? "max-h-[600px]" : "max-h-[300px]"
                               )}>
                                 <Image
                                   src={screenshot.imageUrl}
@@ -421,115 +355,45 @@ function MockGitHubPRBrowser() {
                                   width={800}
                                   height={450}
                                   unoptimized
-                                  className="w-full h-auto object-cover object-top"
+                                  className="w-full h-auto"
                                 />
                               </div>
-                              {expandedImage !== screenshot.id && (
-                                <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-neutral-900 to-transparent flex items-end justify-center pb-2">
-                                  <span className="text-xs text-neutral-400">Click to expand</span>
-                                </div>
-                              )}
                             </button>
                           </div>
                         ))}
                       </div>
 
+                      {/* Horizontal rule */}
+                      <hr className="border-[#30363d] my-6" />
+
                       {/* Footer */}
-                      <div className="pt-6 mt-4 border-t border-white/5">
-                        <p className="text-xs text-neutral-500 italic">
-                          Generated by{" "}
-                          <span className="text-neutral-400">cmux</span>{" "}
-                          preview system
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Comment reactions */}
-                    <div className="flex items-center gap-2 px-4 py-2 bg-[#161b22] border-t border-white/10">
-                      <button className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5 border border-white/10 text-xs hover:bg-white/10 transition-colors">
-                        <span>+1</span>
-                        <span className="text-neutral-400">3</span>
-                      </button>
-                      <button className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/5 border border-white/10 text-xs hover:bg-white/10 transition-colors">
-                        <span>rocket</span>
-                        <span className="text-neutral-400">2</span>
-                      </button>
-                      <button className="p-1 text-neutral-500 hover:text-neutral-300">
-                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10" />
-                          <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                          <line x1="9" y1="9" x2="9.01" y2="9" />
-                          <line x1="15" y1="9" x2="15.01" y2="9" />
-                        </svg>
-                      </button>
+                      <p className="text-sm text-[#7d8590] italic">
+                        Generated by{" "}
+                        <span className="text-[#2f81f7] hover:underline cursor-pointer">cmux</span>{" "}
+                        preview system
+                      </p>
                     </div>
                   </div>
 
-                  {/* Another comment placeholder */}
-                  <div className="rounded-lg border border-white/10 overflow-hidden opacity-50">
-                    <div className="flex items-center gap-3 px-4 py-3 bg-[#161b22]">
-                      <div className="w-8 h-8 rounded-full bg-neutral-700" />
-                      <div className="flex-1">
-                        <div className="h-3 w-24 rounded bg-neutral-700" />
-                      </div>
-                    </div>
-                    <div className="p-4">
-                      <div className="space-y-2">
-                        <div className="h-3 w-full rounded bg-neutral-800" />
-                        <div className="h-3 w-3/4 rounded bg-neutral-800" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "diff" && (
-              <div className="p-6">
-                <div className="flex items-center justify-between pb-4">
-                  <p className="text-sm text-neutral-400">
-                    Showing <strong className="text-white">24 changed files</strong> with <span className="text-emerald-400">+847</span> additions and <span className="text-red-400">-123</span> deletions.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {["apps/www/components/preview/preview-dashboard.tsx", "apps/www/hooks/use-oauth-popup.ts", "packages/convex/convex/schema.ts"].map((file, i) => (
-                    <div key={file} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#161b22] border border-white/5">
-                      <svg className="h-4 w-4 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
+                  {/* Reactions */}
+                  <div className="flex items-center gap-1 mt-2">
+                    <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#30363d] bg-[#21262d] text-xs hover:bg-[#30363d] transition-colors">
+                      <span>+1</span>
+                      <span className="text-[#7d8590]">2</span>
+                    </button>
+                    <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#30363d] bg-[#21262d] text-xs hover:bg-[#30363d] transition-colors">
+                      <span>rocket</span>
+                      <span className="text-[#7d8590]">1</span>
+                    </button>
+                    <button className="p-1 rounded text-[#7d8590] hover:text-[#e6edf3] hover:bg-[#21262d]">
+                      <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm3.82 1.636a.75.75 0 0 1 1.038.175l.007.009c.103.118.22.222.35.31.264.178.683.37 1.285.37.602 0 1.02-.192 1.285-.371.13-.088.247-.192.35-.31l.007-.008a.75.75 0 0 1 1.222.87l-.022.03c-.2.252-.44.47-.714.647-.554.358-1.28.582-2.128.582-.848 0-1.574-.224-2.128-.582a2.7 2.7 0 0 1-.714-.647l-.022-.03a.75.75 0 0 1 .175-1.045ZM6.25 6.5c-.457 0-.75.378-.75.75 0 .37.293.75.75.75.457 0 .75-.378.75-.75 0-.37-.293-.75-.75-.75Zm4.25.75c0-.372-.293-.75-.75-.75s-.75.378-.75.75c0 .37.293.75.75.75s.75-.378.75-.75Z" />
                       </svg>
-                      <span className="flex-1 text-sm text-neutral-300 font-mono truncate">{file}</span>
-                      <span className="text-xs text-emerald-400">+{50 + i * 30}</span>
-                      <span className="text-xs text-red-400">-{10 + i * 5}</span>
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-3 px-3 py-2 text-neutral-500 text-sm">
-                    <span>... and 21 more files</span>
+                    </button>
                   </div>
                 </div>
               </div>
-            )}
-
-            {activeTab === "checks" && (
-              <div className="p-6">
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-white">All checks have passed</p>
-                      <p className="text-xs text-neutral-400">4 successful checks</p>
-                    </div>
-                  </div>
-                  {["TypeScript", "ESLint", "Build", "cmux Preview"].map((check) => (
-                    <div key={check} className="flex items-center gap-3 px-4 py-2 rounded-lg bg-[#161b22] border border-white/5">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      <span className="text-sm text-neutral-300">{check}</span>
-                      <span className="text-xs text-neutral-500 ml-auto">Successful in 45s</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       </Section>
