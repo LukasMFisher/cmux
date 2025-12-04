@@ -22,7 +22,7 @@ export const env = createEnv({
       .default(() => {
         const wwwOrigin = withRelatedProject({
           projectName: "cmux-www",
-          defaultHost: "https://cmux.dev",
+          defaultHost: process.env.NEXT_PUBLIC_WWW_ORIGIN || "https://cmux.dev",
         });
         return wwwOrigin;
       }),
