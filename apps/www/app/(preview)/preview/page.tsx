@@ -33,6 +33,7 @@ type TeamOption = {
 
 function serializeProviderConnections(
   connections: Array<{
+    id: string;
     installationId: number;
     accountLogin: string | null | undefined;
     accountType: string | null | undefined;
@@ -40,6 +41,7 @@ function serializeProviderConnections(
   }>
 ) {
   return connections.map((conn) => ({
+    id: conn.id,
     installationId: conn.installationId,
     accountLogin: conn.accountLogin ?? null,
     accountType: conn.accountType ?? null,

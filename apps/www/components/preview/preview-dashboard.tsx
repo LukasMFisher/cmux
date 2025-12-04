@@ -30,6 +30,7 @@ import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 
 type ProviderConnection = {
+  id: string;
   installationId: number;
   accountLogin: string | null;
   accountType: string | null;
@@ -800,7 +801,7 @@ function PreviewDashboardInner({
             className="h-10 appearance-none bg-transparent py-2 pl-11 pr-8 text-sm text-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             {activeConnections.map((conn) => (
-              <option key={conn.installationId} value={conn.installationId}>
+              <option key={conn.id} value={conn.installationId}>
                 {conn.accountLogin || `ID: ${conn.installationId}`}
               </option>
             ))}
