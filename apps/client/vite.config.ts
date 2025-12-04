@@ -7,15 +7,9 @@ import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 import { relatedProjects } from "@vercel/related-projects";
 
-console.log("got related projects", relatedProjects());
-
 const NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW = relatedProjects().find(
   (p) => p.project.name === "cmux-www"
 )?.preview.branch;
-console.log(
-  "NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW",
-  NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW
-);
 
 // Ensure all env is loaded
 await import("./src/client-env.ts");

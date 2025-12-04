@@ -45,5 +45,3 @@ export const env = createEnv({
    */
   emptyStringAsUndefined: true,
 });
-
-console.log("env", env);
