@@ -198,8 +198,8 @@ pub struct MuxApp<'a> {
     // Terminal manager for handling sandbox connections
     pub terminal_manager: Option<SharedTerminalManager>,
 
-    // Sandbox we need to connect to once available
-    pub pending_connect: Option<String>,
+    // Queue of sandboxes that need terminal connections
+    pub pending_connects: std::collections::VecDeque<String>,
 
     // Flag to indicate we need to create a sandbox on startup
     pub needs_initial_sandbox: bool,
@@ -220,9 +220,12 @@ pub struct MuxApp<'a> {
     /// Sandboxes that have delta pager enabled
     pub delta_enabled_sandboxes: HashSet<SandboxId>,
 
+    /// Tab IDs of all pending sandbox creations - ALL will get terminal connections.
+    pub pending_creation_tab_ids: HashSet<String>,
+
     /// The tab_id of the most recently initiated sandbox creation.
-    /// Only this sandbox will steal focus when it completes.
-    pub last_initiated_creation_tab_id: Option<String>,
+    /// Only this sandbox will steal focus/selection when it completes.
+    pub most_recent_creation_tab_id: Option<String>,
 }
 
 impl<'a> MuxApp<'a> {
@@ -246,14 +249,15 @@ impl<'a> MuxApp<'a> {
             renaming_tab: false,
             rename_input: None,
             terminal_manager: None,
-            pending_connect: None,
+            pending_connects: std::collections::VecDeque::new(),
             needs_initial_sandbox: false,
             last_terminal_views: std::collections::HashMap::new(),
             cursor_blink: true,
             cursor_color: None,
             onboard: None,
             delta_enabled_sandboxes: HashSet::new(),
-            last_initiated_creation_tab_id: None,
+            pending_creation_tab_ids: HashSet::new(),
+            most_recent_creation_tab_id: None,
         }
     }
 
@@ -889,10 +893,21 @@ impl<'a> MuxApp<'a> {
                     self.add_sandbox(&sandbox_id_str, &sandbox.name);
                 }
 
-                // Only set pending_connect on first load (when we had no active sandbox)
-                if !had_active {
+                // Only add to pending_connects on first load (when we had no active sandbox)
+                debug_log(&format!(
+                    "SandboxesRefreshed PENDING_CONNECTS: had_active={}, queue_size={}, selected_id={:?}",
+                    had_active,
+                    self.pending_connects.len(),
+                    self.sidebar.selected_id.map(|id| id.to_string().chars().take(8).collect::<String>())
+                ));
+                if !had_active && self.pending_connects.is_empty() {
                     if let Some(first) = self.sidebar.sandboxes.first() {
-                        self.pending_connect.get_or_insert(first.id.to_string());
+                        let first_id = first.id.to_string();
+                        debug_log(&format!(
+                            "SandboxesRefreshed SET_PENDING: first sandbox = {}",
+                            first_id.chars().take(8).collect::<String>()
+                        ));
+                        self.pending_connects.push_back(first_id);
                     }
                 }
 
@@ -999,17 +1014,35 @@ impl<'a> MuxApp<'a> {
                     }
                 }
 
-                // Set pending_connect for terminal connection (most recent creation only)
+                // Check if this sandbox was user-initiated (tab_id in pending_creation_tab_ids)
+                let is_user_initiated = tab_id
+                    .as_ref()
+                    .is_some_and(|id| self.pending_creation_tab_ids.remove(id));
+
+                if is_user_initiated {
+                    // Add to pending_connects queue - ALL user-initiated sandboxes get terminals
+                    self.pending_connects.push_back(sandbox_id_str.clone());
+                    debug_log(&format!(
+                        "SandboxCreated: added {} to pending_connects queue (size={})",
+                        &sandbox_id_str[..8.min(sandbox_id_str.len())],
+                        self.pending_connects.len()
+                    ));
+                }
+
+                // Only select the MOST RECENT creation (prevents focus jumping)
                 let is_most_recent = tab_id
                     .as_ref()
-                    .is_some_and(|id| self.last_initiated_creation_tab_id.as_ref() == Some(id));
+                    .is_some_and(|id| self.most_recent_creation_tab_id.as_ref() == Some(id));
                 if is_most_recent {
-                    self.pending_connect = Some(sandbox_id_str.clone());
-                    self.last_initiated_creation_tab_id = None;
-                    // Select the newly created sandbox (only for user-initiated creation)
+                    self.most_recent_creation_tab_id = None;
+                    // Select the newly created sandbox
                     self.sidebar.select_by_id(sandbox.id);
                     self.workspace_manager
                         .select_sandbox(SandboxId::from_uuid(sandbox.id));
+                    debug_log(&format!(
+                        "SandboxCreated: selected most recent sandbox {}",
+                        &sandbox_id_str[..8.min(sandbox_id_str.len())]
+                    ));
                 }
 
                 debug_log(&format!(
@@ -1144,9 +1177,10 @@ impl<'a> MuxApp<'a> {
                 .set_active_tab_id_for_sandbox(sandbox_id, tab_id);
         }
 
-        // Track the most recently initiated creation - only this one will steal focus
+        // Track ALL pending creations for terminal connections + the most recent for selection
         if let Some(ref tid) = tab_id_str {
-            self.last_initiated_creation_tab_id = Some(tid.clone());
+            self.pending_creation_tab_ids.insert(tid.clone());
+            self.most_recent_creation_tab_id = Some(tid.clone());
         }
     }
     fn remove_sandbox_by_id_string(&mut self, id: &str) {
@@ -1168,11 +1202,8 @@ impl<'a> MuxApp<'a> {
             .sandboxes
             .retain(|sandbox| sandbox.id.to_string() != id);
 
-        if let Some(pending) = &self.pending_connect {
-            if pending == id {
-                self.pending_connect = None;
-            }
-        }
+        // Remove deleted sandbox from pending_connects queue
+        self.pending_connects.retain(|pending| pending != id);
 
         if self.sidebar.sandboxes.is_empty() {
             // List is now empty - clear selection
@@ -1210,8 +1241,9 @@ mod tests {
         let sandbox = sample_sandbox("demo");
         let tab_id = Uuid::new_v4().to_string();
 
-        // Simulate user-initiated creation by setting the tracker
-        app.last_initiated_creation_tab_id = Some(tab_id.clone());
+        // Simulate user-initiated creation by setting the trackers
+        app.pending_creation_tab_ids.insert(tab_id.clone());
+        app.most_recent_creation_tab_id = Some(tab_id.clone());
 
         app.handle_event(MuxEvent::SandboxCreated {
             sandbox: sandbox.clone(),
@@ -1219,9 +1251,9 @@ mod tests {
         });
 
         assert_eq!(
-            app.pending_connect,
-            Some(sandbox.id.to_string()),
-            "pending_connect should point at the new sandbox"
+            app.pending_connects.back(),
+            Some(&sandbox.id.to_string()),
+            "pending_connects should contain the new sandbox"
         );
         assert_eq!(
             app.selected_sandbox_id_string(),
@@ -1240,17 +1272,20 @@ mod tests {
         let sandbox = sample_sandbox("demo");
 
         // Create with a different tab_id than what was initiated
-        app.last_initiated_creation_tab_id = Some(Uuid::new_v4().to_string());
+        let initiated_tab_id = Uuid::new_v4().to_string();
+        app.pending_creation_tab_ids
+            .insert(initiated_tab_id.clone());
+        app.most_recent_creation_tab_id = Some(initiated_tab_id);
 
         app.handle_event(MuxEvent::SandboxCreated {
             sandbox: sandbox.clone(),
             tab_id: Some(Uuid::new_v4().to_string()), // Different tab_id
         });
 
-        // Should NOT set pending_connect since this wasn't the most recent creation
-        assert_eq!(
-            app.pending_connect, None,
-            "pending_connect should be None for non-matching tab_id"
+        // Should NOT add to pending_connects since this wasn't user-initiated
+        assert!(
+            app.pending_connects.is_empty(),
+            "pending_connects should be empty for non-matching tab_id"
         );
     }
 
@@ -1262,7 +1297,7 @@ mod tests {
 
         app.handle_event(MuxEvent::SandboxesRefreshed(vec![sandbox.clone()]));
 
-        assert_eq!(app.pending_connect, Some(sandbox.id.to_string()));
+        assert_eq!(app.pending_connects.back(), Some(&sandbox.id.to_string()));
         assert_eq!(
             app.sidebar.selected_sandbox().map(|s| s.id),
             Some(sandbox.id)

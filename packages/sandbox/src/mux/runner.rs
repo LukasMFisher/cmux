@@ -201,7 +201,7 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
             Some(event) = event_rx.recv() => {
                 match &event {
                     MuxEvent::ConnectToSandbox { sandbox_id } => {
-                        app.pending_connect = Some(sandbox_id.clone());
+                        app.pending_connects.push_back(sandbox_id.clone());
                         try_consume_pending_connection(&mut app, &terminal_manager);
                     }
                     MuxEvent::CreateSandboxWithWorkspace {
@@ -230,11 +230,12 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         });
                     }
                     MuxEvent::ConnectActivePaneToSandbox => {
+                        // Use selected sandbox, or fall back to first item in pending queue
                         let target = app
                             .selected_sandbox_id_string()
-                            .or_else(|| app.pending_connect.clone());
+                            .or_else(|| app.pending_connects.front().cloned());
                         if let Some(sandbox_id) = target {
-                            app.pending_connect = Some(sandbox_id);
+                            app.pending_connects.push_back(sandbox_id);
                             try_consume_pending_connection(&mut app, &terminal_manager);
                         }
                     }
@@ -393,97 +394,142 @@ fn connect_active_pane_to_sandbox(
     });
 }
 
+/// Process all pending sandbox connections from the queue.
+/// This connects terminals for ALL user-created sandboxes, not just the selected one.
 fn try_consume_pending_connection(
     app: &mut MuxApp<'_>,
     terminal_manager: &crate::mux::terminal::SharedTerminalManager,
 ) {
-    let Some(sandbox_id) = app.pending_connect.clone() else {
-        return;
-    };
-
-    debug_log(&format!(
-        "try_consume_pending_connection START: sandbox_id={}..., active_workspace={:?}, sidebar_idx={}",
-        &sandbox_id[..8.min(sandbox_id.len())],
-        app.workspace_manager.active_sandbox_id.map(|id| id.to_string().chars().take(8).collect::<String>()),
-        app.sidebar.selected_index()
-    ));
-
-    // Just verify the sandbox exists, DON'T change selection
-    // Selection was already done SYNC when user pressed the key
-    let sandbox_exists = app
-        .sidebar
-        .sandboxes
-        .iter()
-        .any(|s| s.id.to_string() == sandbox_id);
-    if !sandbox_exists {
-        debug_log("try_consume_pending_connection: sandbox NOT in sidebar list");
-        return;
-    }
-
-    // CRITICAL: Only consume pending_connect if it matches the currently selected sandbox.
-    // During rapid creation, pending_connect can be set for a sandbox that's no longer selected.
-    // Connecting to the wrong sandbox causes terminal jitter and reconnection storms.
-    let selected_id = app.sidebar.selected_id.map(|id| id.to_string());
-    if selected_id.as_ref() != Some(&sandbox_id) {
+    // Process all pending connections in the queue
+    while let Some(sandbox_id) = app.pending_connects.pop_front() {
         debug_log(&format!(
-            "try_consume_pending_connection: SKIPPING - pending {} does not match selected {:?}",
+            "try_consume_pending_connection: processing {}, queue_remaining={}",
             &sandbox_id[..8.min(sandbox_id.len())],
-            selected_id
-                .as_ref()
-                .map(|s| s.chars().take(8).collect::<String>())
+            app.pending_connects.len()
         ));
-        // Clear pending_connect since this sandbox is no longer selected
-        app.pending_connect = None;
-        return;
+
+        // Verify the sandbox exists in sidebar
+        let sandbox_exists = app
+            .sidebar
+            .sandboxes
+            .iter()
+            .any(|s| s.id.to_string() == sandbox_id);
+        if !sandbox_exists {
+            debug_log(&format!(
+                "try_consume_pending_connection: sandbox {} NOT in sidebar list, skipping",
+                &sandbox_id[..8.min(sandbox_id.len())]
+            ));
+            continue;
+        }
+
+        // Connect terminal for this specific sandbox's workspace
+        connect_sandbox_terminal(app, terminal_manager, &sandbox_id);
     }
+}
 
-    // NO select_sandbox or select_by_id here - selection is already correct
+/// Connect a terminal for a SPECIFIC sandbox (not necessarily the currently selected one).
+/// This gets the pane from the sandbox's own workspace and connects the terminal there.
+fn connect_sandbox_terminal(
+    app: &mut MuxApp<'_>,
+    terminal_manager: &crate::mux::terminal::SharedTerminalManager,
+    sandbox_id: &str,
+) {
+    use crate::mux::layout::{PaneContent, SandboxId};
 
-    let Some(pane_id) = app.active_pane_id() else {
-        debug_log("try_consume_pending_connection: NO active_pane_id");
+    // Parse the sandbox ID
+    let Ok(sandbox_uuid) = uuid::Uuid::parse_str(sandbox_id) else {
+        debug_log(&format!(
+            "connect_sandbox_terminal: invalid UUID {}",
+            sandbox_id
+        ));
+        return;
+    };
+    let sandbox_layout_id = SandboxId::from_uuid(sandbox_uuid);
+
+    // Get the pane_id from this sandbox's workspace (not the active workspace!)
+    let pane_id = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .and_then(|tab| tab.active_pane);
+
+    let Some(pane_id) = pane_id else {
+        debug_log(&format!(
+            "connect_sandbox_terminal: no pane_id for sandbox {}",
+            &sandbox_id[..8.min(sandbox_id.len())]
+        ));
         return;
     };
 
     debug_log(&format!(
-        "try_consume_pending_connection: active_pane_id={}...",
+        "connect_sandbox_terminal: sandbox={}, pane_id={}",
+        &sandbox_id[..8.min(sandbox_id.len())],
         pane_id.to_string().chars().take(8).collect::<String>()
     ));
 
-    if let Some(tab) = app.active_tab_mut() {
-        if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
-            if let PaneContent::Terminal {
-                sandbox_id: pane_sandbox,
-                ..
-            } = &mut pane.content
-            {
-                debug_log(&format!(
-                    "try_consume_pending_connection: setting pane sandbox_id from {:?} to {}...",
-                    pane_sandbox
-                        .as_ref()
-                        .map(|s| s.chars().take(8).collect::<String>()),
-                    &sandbox_id[..8.min(sandbox_id.len())]
-                ));
-                *pane_sandbox = Some(sandbox_id.clone());
+    // Update the pane's sandbox_id in the workspace
+    if let Some(ws) = app.workspace_manager.get_workspace_mut(sandbox_layout_id) {
+        if let Some(tab) = ws.active_tab_mut() {
+            if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
+                if let PaneContent::Terminal {
+                    sandbox_id: pane_sandbox,
+                    ..
+                } = &mut pane.content
+                {
+                    *pane_sandbox = Some(sandbox_id.to_string());
+                }
             }
         }
-    } else {
-        debug_log("try_consume_pending_connection: NO active_tab");
     }
 
+    // Check if already connected
     let already_connected = terminal_manager
         .try_lock()
         .map(|guard| guard.is_connected(pane_id))
         .unwrap_or(false);
 
     if already_connected {
-        debug_log("try_consume_pending_connection: already_connected, clearing pending");
-        app.pending_connect = None;
+        debug_log(&format!(
+            "connect_sandbox_terminal: already connected for {}",
+            &sandbox_id[..8.min(sandbox_id.len())]
+        ));
         return;
     }
 
-    debug_log("try_consume_pending_connection: calling connect_active_pane_to_sandbox");
-    connect_active_pane_to_sandbox(app, terminal_manager, &sandbox_id);
-    app.pending_connect = None;
+    // Get dimensions for the pane
+    let (rows, cols) = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .and_then(|tab| tab.layout.find_pane(pane_id))
+        .and_then(|pane| pane_content_dimensions(pane))
+        .unwrap_or_else(fallback_terminal_size);
+
+    // Spawn terminal connection
+    let manager = terminal_manager.clone();
+    let event_tx = app.event_tx.clone();
+    let sandbox_id_owned = sandbox_id.to_string();
+    let tab_id = app
+        .workspace_manager
+        .get_workspace(sandbox_layout_id)
+        .and_then(|ws| ws.active_tab())
+        .map(|tab| tab.id);
+
+    debug_log(&format!(
+        "connect_sandbox_terminal: spawning connection for {}",
+        &sandbox_id[..8.min(sandbox_id.len())]
+    ));
+
+    tokio::spawn(async move {
+        if let Err(e) =
+            connect_to_sandbox(manager, pane_id, sandbox_id_owned, tab_id, cols, rows).await
+        {
+            let _ = event_tx.send(MuxEvent::Error(format!(
+                "Failed to connect to sandbox: {}",
+                e
+            )));
+        }
+    });
 }
 
 fn pane_content_dimensions(pane: &crate::mux::layout::Pane) -> Option<(u16, u16)> {
@@ -1157,11 +1203,8 @@ fn remove_selected_sandbox(app: &mut MuxApp<'_>) -> Option<(String, String)> {
     app.workspace_manager.remove_sandbox(sandbox_uuid);
     app.focus = FocusArea::Sidebar;
 
-    if let Some(pending) = &app.pending_connect {
-        if pending == &sandbox_id {
-            app.pending_connect = None;
-        }
-    }
+    // Remove the deleted sandbox from pending_connects queue
+    app.pending_connects.retain(|id| id != &sandbox_id);
 
     if app.sidebar.sandboxes.is_empty() {
         app.sidebar.selected_id = None;
