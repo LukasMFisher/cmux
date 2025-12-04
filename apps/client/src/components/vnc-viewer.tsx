@@ -446,86 +446,33 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       updateStatus("disconnected");
     }, [clearReconnectTimer, updateStatus]);
 
-    // Clipboard paste handler - types text directly via sendKey()
-    // This is more reliable than clipboard sync + Ctrl+V because:
-    // 1. Doesn't depend on VNC clipboard protocol timing
-    // 2. Works with any application that accepts keyboard input
-    // 3. Avoids issues with different paste shortcuts (Ctrl+V vs Ctrl+Shift+V vs Shift+Insert)
+    // Clipboard paste handler - syncs clipboard then sends Ctrl+V
+    // Uses proper DOM key codes for QEMU extended key events
     const clipboardPaste = useCallback((text: string) => {
       const rfb = rfbRef.current;
       if (!rfb) return;
 
-      // Delay slightly to ensure the intercepted keydown event is fully processed
-      // This prevents race conditions with browser event handling
-      setTimeout(() => {
-        try {
-          // Also sync clipboard for apps that might check it (e.g., for Ctrl+V later)
-          rfb.clipboardPasteFrom(text);
+      try {
+        // Sync clipboard to VNC server
+        rfb.clipboardPasteFrom(text);
+        console.log("[VncViewer] Clipboard synced, sending Ctrl+V...");
 
-          // X11 keysyms
-          const XK_Shift_L = 0xffe1;
-          const XK_Return = 0xff0d;
-          const XK_Tab = 0xff09;
-          const XK_BackSpace = 0xff08;
+        // X11 keysyms (same as noVNC's KeyTable)
+        const XK_Control_L = 0xffe3;
+        const XK_v = 0x0076;
 
-          // Map shifted characters to their base key (US keyboard layout)
-          const shiftMap: Record<string, string> = {
-            "~": "`", "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
-            "&": "7", "*": "8", "(": "9", ")": "0", "_": "-", "+": "=",
-            "{": "[", "}": "]", "|": "\\", ":": ";", '"': "'", "<": ",", ">": ".", "?": "/",
-          };
-
-          console.log(`[VncViewer] Typing ${text.length} characters...`);
-
-          // Type each character
-          for (const char of text) {
-            let keysym: number;
-            let needsShift = false;
-
-            if (char === "\n" || char === "\r") {
-              keysym = XK_Return;
-            } else if (char === "\t") {
-              keysym = XK_Tab;
-            } else if (char === "\b") {
-              keysym = XK_BackSpace;
-            } else if (char >= "A" && char <= "Z") {
-              // Uppercase letter
-              keysym = char.toLowerCase().charCodeAt(0);
-              needsShift = true;
-            } else if (shiftMap[char]) {
-              // Shifted symbol
-              keysym = shiftMap[char].charCodeAt(0);
-              needsShift = true;
-            } else {
-              const code = char.charCodeAt(0);
-              if (code >= 0x20 && code <= 0x7e) {
-                // Printable ASCII
-                keysym = code;
-              } else if (code > 0x7f) {
-                // Unicode - use X11 Unicode keysym format
-                keysym = 0x01000000 + code;
-              } else {
-                // Skip non-printable control characters
-                continue;
-              }
-            }
-
-            // Send the key with shift if needed
-            if (needsShift) {
-              rfb.sendKey(XK_Shift_L, null, true);
-            }
-            rfb.sendKey(keysym, null, true);
-            rfb.sendKey(keysym, null, false);
-            if (needsShift) {
-              rfb.sendKey(XK_Shift_L, null, false);
-            }
-          }
-
-          console.log("[VncViewer] Paste complete");
-        } catch (e) {
-          console.error("[VncViewer] Error pasting to clipboard:", e);
-        }
-      }, 50);
+        // Small delay to ensure clipboard is processed by VNC server
+        setTimeout(() => {
+          // Send Ctrl+V with proper DOM codes (like noVNC's sendCtrlAltDel)
+          rfb.sendKey(XK_Control_L, "ControlLeft", true);
+          rfb.sendKey(XK_v, "KeyV", true);
+          rfb.sendKey(XK_v, "KeyV", false);
+          rfb.sendKey(XK_Control_L, "ControlLeft", false);
+          console.log("[VncViewer] Ctrl+V sent");
+        }, 50);
+      } catch (e) {
+        console.error("[VncViewer] Error pasting to clipboard:", e);
+      }
     }, []);
 
     // Intercept Cmd+V/Ctrl+V using capture-phase keydown + Clipboard API
