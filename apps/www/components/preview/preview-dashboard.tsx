@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useId } from "react";
 import {
   ArrowLeft,
   Camera,
@@ -122,6 +122,77 @@ function GrainOverlay({ opacity = 0.08 }: { opacity?: number }) {
   );
 }
 
+function CmuxMarkIcon({ size = 16, className }: { size?: number; className?: string }) {
+  const id = useId();
+  const gradId = `cmuxMarkGradient-${id}`;
+  const glowId = `cmuxMarkGlow-${id}`;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 517 667"
+      className={className}
+      role="img"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#00D4FF" />
+          <stop offset="100%" stopColor="#7C3AED" />
+        </linearGradient>
+        <filter
+          id={glowId}
+          x="0"
+          y="0"
+          width="517"
+          height="667"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
+          <feFlood floodOpacity="0" result="BackgroundImageFix" />
+          <feColorMatrix
+            in="SourceAlpha"
+            type="matrix"
+            values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"
+            result="hardAlpha"
+          />
+          <feOffset />
+          <feGaussianBlur stdDeviation="32" />
+          <feComposite in2="hardAlpha" operator="out" />
+          <feColorMatrix
+            type="matrix"
+            values="0 0 0 0 0.14902 0 0 0 0 0.65098 0 0 0 0 0.980392 0 0 0 0.3 0"
+          />
+          <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow" />
+          <feColorMatrix
+            in="SourceAlpha"
+            type="matrix"
+            values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"
+            result="hardAlpha2"
+          />
+          <feOffset dy="4" />
+          <feGaussianBlur stdDeviation="8" />
+          <feComposite in2="hardAlpha2" operator="out" />
+          <feColorMatrix
+            type="matrix"
+            values="0 0 0 0 0.14902 0 0 0 0 0.65098 0 0 0 0 0.980392 0 0 0 0.4 0"
+          />
+          <feBlend mode="normal" in2="effect1_dropShadow" result="effect2_dropShadow" />
+          <feBlend mode="normal" in="SourceGraphic" in2="effect2_dropShadow" result="shape" />
+        </filter>
+      </defs>
+
+      <g filter={`url(#${glowId})`}>
+        <path
+          d="M64 64L453 333.5L64 603V483.222L273.462 333.5L64 183.778V64Z"
+          fill={`url(#${gradId})`}
+        />
+      </g>
+    </svg>
+  );
+}
+
 function FeatureCard({
   icon: _Icon,
   iconBgColor: _iconBgColor,
@@ -149,6 +220,19 @@ type SectionProps = {
   className?: string;
   inlineHeader?: boolean;
 };
+
+function TabFavicon({ className }: { className?: string }) {
+  return (
+    <span
+      className={clsx(
+        "flex items-center justify-center leading-none shrink-0",
+        className,
+      )}
+    >
+      <CmuxMarkIcon size={16} />
+    </span>
+  );
+}
 
 function Section({
   title,
@@ -406,7 +490,7 @@ function MockGitHubPRBrowser() {
               <svg className="h-4 w-4 shrink-0" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/>
               </svg>
-              <span className="truncate">Pull Request #1124</span>
+              <span className="truncate">GitHub</span>
               <svg className="h-3.5 w-3.5 ml-auto shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
               </svg>
@@ -419,14 +503,14 @@ function MockGitHubPRBrowser() {
             <button
               onClick={() => setActiveTab("workspace")}
               className={clsx(
-                "relative flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[160px] ml-1",
+                "relative flex items-center gap-1 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[160px] ml-1",
                 activeTab === "workspace"
                   ? "bg-[#292a2d] text-white"
                   : "bg-[#1a1a1d] text-neutral-400 hover:bg-[#242528] hover:text-neutral-300"
               )}
             >
-              <span className="text-sm font-bold text-[#7c3aed] shrink-0">&gt;</span>
-              <span className="truncate">cmux Workspace</span>
+              <TabFavicon className="shrink-0" />
+              <span className="truncate">cmux</span>
               <svg className="h-3.5 w-3.5 ml-auto shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
               </svg>
@@ -436,11 +520,11 @@ function MockGitHubPRBrowser() {
             </button>
 
             {/* New tab button */}
-            <button className="flex items-center justify-center w-8 h-8 text-neutral-500 hover:text-neutral-300 hover:bg-[#242528] rounded-lg ml-1 mb-0.5">
+            {/* <button className="flex items-center justify-center w-8 h-8 text-neutral-500 hover:text-neutral-300 hover:bg-[#242528] rounded-lg ml-1 mb-0.5">
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 1a.75.75 0 0 1 .75.75v5.5h5.5a.75.75 0 0 1 0 1.5h-5.5v5.5a.75.75 0 0 1-1.5 0v-5.5h-5.5a.75.75 0 0 1 0-1.5h5.5v-5.5A.75.75 0 0 1 8 1z"/>
               </svg>
-            </button>
+            </button> */}
           </div>
         </div>
 
@@ -1054,8 +1138,8 @@ function MockGitHubPRBrowser() {
                     {/* Chrome tab bar */}
                     <div className="flex items-end bg-[#35363a] h-[34px] px-2">
                       {/* Tab */}
-                      <div className="flex items-center gap-2 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
-                        <CmuxLogo height={12} showWordmark={false} />
+                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
+                        <TabFavicon />
                         <span className="text-[11px] text-[#e8eaed] truncate">cmux - Manage AI coding ag...</span>
                         <button className="p-0.5 hover:bg-[#35363a] rounded">
                           <X className="h-3 w-3 text-[#9aa0a6]" />
@@ -1078,7 +1162,7 @@ function MockGitHubPRBrowser() {
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        <span className="text-[#e8eaed]">cmux.dev</span>
+                        <span className="text-[#e8eaed]">cmux</span>
                       </div>
                     </div>
                     {/* Browser content - cmux.dev landing page */}
