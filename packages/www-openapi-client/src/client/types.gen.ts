@@ -372,6 +372,14 @@ export type CheckTaskRunPausedBody = {
     teamSlugOrId: string;
 };
 
+export type RefreshGitHubAuthResponse = {
+    refreshed: true;
+};
+
+export type RefreshGitHubAuthBody = {
+    teamSlugOrId: string;
+};
+
 export type SetupInstanceResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -1732,6 +1740,51 @@ export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponses = {
 };
 
 export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponse = PostApiMorphTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiMorphTaskRunsByTaskRunIdIsPausedResponses];
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthData = {
+    body: RefreshGitHubAuthBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/morph/task-runs/{taskRunId}/refresh-github-auth';
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthErrors = {
+    /**
+     * Task run is not backed by a Morph instance
+     */
+    400: unknown;
+    /**
+     * Unauthorized or GitHub not connected
+     */
+    401: unknown;
+    /**
+     * Forbidden - instance does not belong to this team
+     */
+    403: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+    /**
+     * Instance is paused - resume it first
+     */
+    409: unknown;
+    /**
+     * Failed to refresh GitHub authentication
+     */
+    500: unknown;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses = {
+    /**
+     * GitHub authentication refreshed successfully
+     */
+    200: RefreshGitHubAuthResponse;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse = PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses[keyof PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses];
 
 export type PostApiMorphSetupInstanceData = {
     body: SetupInstanceBody;

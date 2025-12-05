@@ -262,6 +262,159 @@ morphRouter.openapi(
   }
 );
 
+const RefreshGitHubAuthBody = z
+  .object({
+    teamSlugOrId: z.string(),
+  })
+  .openapi("RefreshGitHubAuthBody");
+
+const RefreshGitHubAuthResponse = z
+  .object({
+    refreshed: z.literal(true),
+  })
+  .openapi("RefreshGitHubAuthResponse");
+
+/**
+ * Fetches a fresh GitHub access token for the authenticated user.
+ * This is a reusable helper to avoid duplicating token retrieval logic.
+ */
+async function getFreshGitHubToken(
+  user: Awaited<ReturnType<typeof stackServerAppJs.getUser>>
+): Promise<{ token: string } | { error: string; status: 401 }> {
+  if (!user) {
+    return { error: "Unauthorized", status: 401 };
+  }
+  const githubAccount = await user.getConnectedAccount("github");
+  if (!githubAccount) {
+    return { error: "GitHub account not connected", status: 401 };
+  }
+  const { accessToken: githubAccessToken } =
+    await githubAccount.getAccessToken();
+  if (!githubAccessToken) {
+    return { error: "Failed to get GitHub access token", status: 401 };
+  }
+  return { token: githubAccessToken };
+}
+
+morphRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/morph/task-runs/{taskRunId}/refresh-github-auth",
+    tags: ["Morph"],
+    summary: "Refresh GitHub authentication on a Morph instance",
+    description:
+      "Re-authenticates the GitHub CLI inside a running Morph VM with a fresh token. " +
+      "Useful when the token has expired or the user has re-connected their GitHub account.",
+    request: {
+      params: z.object({
+        taskRunId: typedZid("taskRuns"),
+      }),
+      body: {
+        content: {
+          "application/json": {
+            schema: RefreshGitHubAuthBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: RefreshGitHubAuthResponse,
+          },
+        },
+        description: "GitHub authentication refreshed successfully",
+      },
+      400: { description: "Task run is not backed by a Morph instance" },
+      401: { description: "Unauthorized or GitHub not connected" },
+      403: { description: "Forbidden - instance does not belong to this team" },
+      404: { description: "Task run not found" },
+      409: { description: "Instance is paused - resume it first" },
+      500: { description: "Failed to refresh GitHub authentication" },
+    },
+  }),
+  async (c) => {
+    // Authenticate user via Stack Auth (server-side token retrieval)
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { taskRunId } = c.req.valid("param");
+    const { teamSlugOrId } = c.req.valid("json");
+
+    // Verify team access
+    const convex = getConvex({ accessToken });
+    const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    // Get task run
+    const taskRun = await convex.query(api.taskRuns.get, {
+      teamSlugOrId,
+      id: taskRunId,
+    });
+
+    if (!taskRun) {
+      return c.text("Task run not found", 404);
+    }
+
+    const instanceId = taskRun.vscode?.containerName;
+    const isMorphProvider = taskRun.vscode?.provider === "morph";
+
+    if (!isMorphProvider || !instanceId) {
+      return c.text("Task run is not backed by a Morph instance", 400);
+    }
+
+    try {
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances.get({ instanceId });
+
+      // Security: ensure the instance belongs to the requested team
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Check if instance is paused - auth refresh requires running instance
+      if (instance.status === "paused") {
+        return c.text("Instance is paused - resume it first", 409);
+      }
+
+      // Get fresh GitHub token (server-side, never from client)
+      const tokenResult = await getFreshGitHubToken(user);
+      if ("error" in tokenResult) {
+        return c.text(tokenResult.error, tokenResult.status);
+      }
+
+      // Use the existing configureGithubAccess function to refresh auth
+      await configureGithubAccess(instance, tokenResult.token);
+
+      console.log(
+        `[morph.refresh-github-auth] Successfully refreshed GitHub auth for instance ${instanceId}`
+      );
+
+      return c.json({ refreshed: true });
+    } catch (error) {
+      console.error(
+        "[morph.refresh-github-auth] Failed to refresh GitHub auth:",
+        error
+      );
+      return c.text("Failed to refresh GitHub authentication", 500);
+    }
+  }
+);
+
 morphRouter.openapi(
   createRoute({
     method: "post" as const,

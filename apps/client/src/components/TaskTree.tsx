@@ -6,7 +6,10 @@ import {
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
-import { useResumeMorphWorkspace } from "@/hooks/useMorphWorkspace";
+import {
+  useResumeMorphWorkspace,
+  useRefreshMorphGitHubAuth,
+} from "@/hooks/useMorphWorkspace";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
@@ -55,6 +58,7 @@ import {
   PinOff,
   Play,
   Plus,
+  RefreshCw,
   TerminalSquare,
   Loader2,
   Trash2,
@@ -1418,6 +1422,22 @@ function TaskRunTreeInner({
     });
   }, [resumeWorkspace, run._id, teamSlugOrId]);
 
+  const refreshGitHubAuth = useRefreshMorphGitHubAuth({
+    taskRunId: run._id,
+    teamSlugOrId,
+  });
+
+  const handleRefreshGitHubAuth = useCallback(() => {
+    if (refreshGitHubAuth.isPending) {
+      return;
+    }
+
+    void refreshGitHubAuth.mutateAsync({
+      path: { taskRunId: run._id },
+      body: { teamSlugOrId },
+    });
+  }, [refreshGitHubAuth, run._id, teamSlugOrId]);
+
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
@@ -1517,6 +1537,18 @@ function TaskRunTreeInner({
                 >
                   <Play className="w-3.5 h-3.5" />
                   {resumeWorkspace.isPending ? "Resuming…" : "Resume VM"}
+                </ContextMenu.Item>
+              ) : null}
+              {run.vscode?.provider === "morph" ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleRefreshGitHubAuth}
+                  disabled={refreshGitHubAuth.isPending}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {refreshGitHubAuth.isPending
+                    ? "Refreshing…"
+                    : "Refresh GitHub auth"}
                 </ContextMenu.Item>
               ) : null}
               {hasOpenWithActions ? (
