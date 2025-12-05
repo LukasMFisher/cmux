@@ -92,6 +92,16 @@ async fn run_main_loop<B: ratatui::backend::Backend + std::io::Write>(
     let terminal_manager = create_terminal_manager(base_url.clone(), event_tx.clone());
     app.set_terminal_manager(terminal_manager.clone());
 
+    // Pre-establish WebSocket connection in background - don't wait for first terminal
+    // This runs in parallel with sandbox creation, so WebSocket is ready when we need it
+    let ws_manager = terminal_manager.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::mux::terminal::establish_mux_connection(ws_manager).await {
+            // Non-fatal - will retry when first terminal connects
+            tracing::debug!("Pre-establish WebSocket failed (will retry): {}", e);
+        }
+    });
+
     // Start background task to periodically refresh sandboxes
     let refresh_tx = event_tx.clone();
     let refresh_url = base_url.clone();
