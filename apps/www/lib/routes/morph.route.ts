@@ -501,28 +501,25 @@ morphRouter.openapi(
       verifyTeamAccess({ req: c.req.raw, teamSlugOrId })
     );
 
-    const githubAccessTokenPromise = bench(
-      "getGithubAccessToken",
-      async () => {
-        const githubAccount = await user.getConnectedAccount("github");
-        if (!githubAccount) {
-          return {
-            githubAccessTokenError: "GitHub account not found",
-            githubAccessToken: null,
-          } as const;
-        }
-        const { accessToken: githubAccessToken } =
-          await githubAccount.getAccessToken();
-        if (!githubAccessToken) {
-          return {
-            githubAccessTokenError: "GitHub access token not found",
-            githubAccessToken: null,
-          } as const;
-        }
-
-        return { githubAccessTokenError: null, githubAccessToken } as const;
+    const githubAccessTokenPromise = bench("getGithubAccessToken", async () => {
+      const githubAccount = await user.getConnectedAccount("github");
+      if (!githubAccount) {
+        return {
+          githubAccessTokenError: "GitHub account not found",
+          githubAccessToken: null,
+        } as const;
       }
-    );
+      const { accessToken: githubAccessToken } =
+        await githubAccount.getAccessToken();
+      if (!githubAccessToken) {
+        return {
+          githubAccessTokenError: "GitHub access token not found",
+          githubAccessToken: null,
+        } as const;
+      }
+
+      return { githubAccessTokenError: null, githubAccessToken } as const;
+    });
 
     // Chain fetchGitIdentityInputs off githubAccessToken (starts ASAP once token ready)
     const gitIdentityPromise = githubAccessTokenPromise.then(
