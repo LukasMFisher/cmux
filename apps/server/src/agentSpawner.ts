@@ -97,6 +97,8 @@ export async function spawnAgent(
         environmentId: options.environmentId,
       });
     taskRunId = createdTaskRunId;
+    // After this point, taskRunId is guaranteed to be non-null
+    const runId = taskRunId;
 
     // Fetch the task to get image storage IDs
     const task = await getConvex().query(api.tasks.getById, {
@@ -427,7 +429,7 @@ export async function spawnAgent(
     await retryOnOptimisticConcurrency(() =>
       getConvex().mutation(api.taskRuns.updateWorktreePath, {
         teamSlugOrId,
-        id: taskRunId,
+        id: runId,
         worktreePath: worktreePath,
       })
     );
@@ -490,7 +492,7 @@ export async function spawnAgent(
           retryOnOptimisticConcurrency(() =>
             getConvex().mutation(api.taskRuns.fail, {
               teamSlugOrId,
-              id: taskRunId,
+              id: runId,
               errorMessage: data.errorMessage || "Terminal failed",
               // WorkerTerminalFailed does not include exitCode in schema; default to 1
               exitCode: 1,
@@ -499,7 +501,7 @@ export async function spawnAgent(
         );
 
         serverLogger.info(
-          `[AgentSpawner] Marked taskRun ${taskRunId} as failed`
+          `[AgentSpawner] Marked taskRun ${runId} as failed`
         );
       } catch (error) {
         serverLogger.error(
@@ -540,7 +542,7 @@ export async function spawnAgent(
       await retryOnOptimisticConcurrency(() =>
         getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
           teamSlugOrId,
-          id: taskRunId,
+          id: runId,
           vscode: {
             provider: vscodeInfo.provider,
             containerName: vscodeInstance.getName(),
@@ -558,8 +560,8 @@ export async function spawnAgent(
       );
     }
 
-    // Use taskRunId as terminal ID for compatibility
-    const terminalId = taskRunId;
+    // Use runId as terminal ID for compatibility
+    const terminalId = runId;
 
     // Log auth files if any
     if (authFiles.length > 0) {
@@ -940,17 +942,18 @@ exit $EXIT_CODE
 
     // Mark the task run as failed in Convex so the UI shows the failure
     if (taskRunId) {
+      const failedRunId = taskRunId; // Capture for TypeScript narrowing
       try {
         await retryOnOptimisticConcurrency(() =>
           getConvex().mutation(api.taskRuns.fail, {
             teamSlugOrId,
-            id: taskRunId,
+            id: failedRunId,
             errorMessage: `Agent spawn failed: ${errorMessage}`,
             exitCode: 1,
           })
         );
         serverLogger.info(
-          `[AgentSpawner] Marked taskRun ${taskRunId} as failed due to spawn error`
+          `[AgentSpawner] Marked taskRun ${failedRunId} as failed due to spawn error`
         );
       } catch (failError) {
         serverLogger.error(
