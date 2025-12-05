@@ -7,6 +7,8 @@ import {
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -43,6 +45,10 @@ export const TaskItem = memo(function TaskItem({
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
   const canRename = !isOptimisticUpdate;
+
+  // Get local VSCode serve web origin for local workspace URL rewriting
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
 
   const {
     isRenaming,
@@ -169,6 +175,21 @@ export const TaskItem = memo(function TaskItem({
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
 
+  // For local workspaces, compute the VSCode URL to open directly
+  const localWorkspaceVscodeUrl = useMemo(() => {
+    if (!task.isLocalWorkspace) {
+      return null;
+    }
+    if (!hasActiveVSCode || !runWithVSCode?.vscode?.url) {
+      return null;
+    }
+    const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+      runWithVSCode.vscode.url,
+      localServeWebOrigin
+    );
+    return `${normalizedUrl}?folder=/root/workspace`;
+  }, [task.isLocalWorkspace, hasActiveVSCode, runWithVSCode, localServeWebOrigin]);
+
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
       // Don't navigate if we're renaming or if modifier keys are pressed
@@ -183,8 +204,14 @@ export const TaskItem = memo(function TaskItem({
         event.preventDefault();
         return;
       }
+      // For local workspaces with active VSCode, open VSCode directly
+      if (localWorkspaceVscodeUrl) {
+        event.preventDefault();
+        window.open(localWorkspaceVscodeUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
     },
-    [isRenaming]
+    [isRenaming, localWorkspaceVscodeUrl]
   );
 
   const handleCopy = useCallback(

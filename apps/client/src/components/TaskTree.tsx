@@ -11,6 +11,8 @@ import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -335,6 +337,10 @@ function TaskTreeInner({
   defaultExpanded = false,
   teamSlugOrId,
 }: TaskTreeProps) {
+  // Get local VSCode serve web origin for local workspace URL rewriting
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+
   // Get the current route to determine if this task is selected
   const location = useLocation();
   const isTaskSelected = useMemo(
@@ -381,6 +387,26 @@ function TaskTreeInner({
   );
   const hasVisibleRuns = activeRunsFlat.length > 0;
   const showRunNumbers = flattenedRuns.length > 1;
+
+  // For local workspaces, compute the VSCode URL to open directly
+  const localWorkspaceVscodeUrl = useMemo(() => {
+    if (!task.isLocalWorkspace) {
+      return null;
+    }
+    // Find the first active run with a running VSCode instance
+    const runWithVscode = activeRunsFlat.find(
+      (run) => run.vscode?.status === "running" && run.vscode?.url
+    );
+    if (!runWithVscode?.vscode?.url) {
+      return null;
+    }
+    const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+      runWithVscode.vscode.url,
+      localServeWebOrigin
+    );
+    return `${normalizedUrl}?folder=/root/workspace`;
+  }, [task.isLocalWorkspace, activeRunsFlat, localServeWebOrigin]);
+
   const runMenuEntries = useMemo(
     () =>
       annotateAgentOrdinals(flattenedRuns).map((run) => ({
@@ -680,10 +706,11 @@ function TaskTreeInner({
     />
   );
   const taskTitleContent = isRenaming ? renameInputElement : taskTitleValue;
-  const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
+  // For local workspaces with VSCode URL, don't show expand toggle since clicking opens VSCode directly
+  const canExpand = !localWorkspaceVscodeUrl;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -823,6 +850,16 @@ function TaskTreeInner({
                 }
                 if (isRenaming) {
                   event.preventDefault();
+                  return;
+                }
+                // For local workspaces with active VSCode, open VSCode directly
+                if (localWorkspaceVscodeUrl) {
+                  event.preventDefault();
+                  window.open(
+                    localWorkspaceVscodeUrl,
+                    "_blank",
+                    "noopener,noreferrer"
+                  );
                   return;
                 }
                 handleToggle(event);
@@ -966,7 +1003,8 @@ function TaskTreeInner({
           </ContextMenu.Portal>
         </ContextMenu.Root>
 
-        {isExpanded ? (
+        {/* Hide task runs for local workspaces - clicking opens VSCode directly */}
+        {isExpanded && !localWorkspaceVscodeUrl ? (
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
