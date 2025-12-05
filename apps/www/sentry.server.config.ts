@@ -21,4 +21,29 @@ Sentry.init({
   // Enable sending user PII (Personally Identifiable Information)
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
   sendDefaultPii: true,
+
+  beforeSendTransaction(event) {
+    const name = event.transaction;
+    if (!name) {
+      return event;
+    }
+    const isCatchAllApi =
+      name.includes("/api/[[...route]]") || name.endsWith(" /api/[[...route]]");
+    if (!isCatchAllApi) {
+      return event;
+    }
+    const url = event.request?.url;
+    if (!url) {
+      return event;
+    }
+    try {
+      const { pathname } = new URL(url);
+      const methodFromName = name.split(" ")[0] || "UNKNOWN";
+      const method = methodFromName.toUpperCase();
+      event.transaction = `${method} ${pathname}`;
+    } catch {
+      // If URL parsing fails for some reason, keep the original transaction name.
+    }
+    return event;
+  },
 });
