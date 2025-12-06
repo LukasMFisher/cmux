@@ -446,7 +446,7 @@ async fn run() -> anyhow::Result<()> {
                 sandbox_id_for_upload
             );
             let client_for_workspace = client_for_upload.clone();
-            tokio::spawn(async move {
+            let workspace_upload_handle = tokio::spawn(async move {
                 let response = client_for_workspace
                     .post(&upload_url)
                     .body(workspace_body)
@@ -469,7 +469,7 @@ async fn run() -> anyhow::Result<()> {
             });
 
             // Spawn auth upload task - waits for tar to be ready first
-            tokio::spawn(async move {
+            let auth_upload_handle = tokio::spawn(async move {
                 let sync_tar = sync_tar_handle.await.ok().flatten();
                 if let Some(tar_data) = sync_tar {
                     if let Err(e) = upload_prebuilt_sync_files(
@@ -493,6 +493,9 @@ async fn run() -> anyhow::Result<()> {
             if should_attach() {
                 handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
             } else {
+                // In non-interactive mode, wait for uploads to complete before exiting
+                // (otherwise the runtime shuts down and cancels the background tasks)
+                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                 eprintln!(
                     "Skipping interactive shell attach (non-interactive environment detected)."
                 );
@@ -750,7 +753,7 @@ async fn run() -> anyhow::Result<()> {
                         sandbox_id_for_upload
                     );
                     let client_for_workspace = client_for_upload.clone();
-                    tokio::spawn(async move {
+                    let workspace_upload_handle = tokio::spawn(async move {
                         let response = client_for_workspace
                             .post(&upload_url)
                             .body(workspace_body)
@@ -773,7 +776,7 @@ async fn run() -> anyhow::Result<()> {
                     });
 
                     // Spawn auth upload task - waits for tar to be ready first
-                    tokio::spawn(async move {
+                    let auth_upload_handle = tokio::spawn(async move {
                         let sync_tar = sync_tar_handle.await.ok().flatten();
                         if let Some(tar_data) = sync_tar {
                             if let Err(e) = upload_prebuilt_sync_files(
@@ -797,6 +800,9 @@ async fn run() -> anyhow::Result<()> {
                     if should_attach() {
                         handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
                     } else {
+                        // In non-interactive mode, wait for uploads to complete before exiting
+                        // (otherwise the runtime shuts down and cancels the background tasks)
+                        let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                         eprintln!(
                             "Skipping interactive shell attach (non-interactive environment detected)."
                         );
