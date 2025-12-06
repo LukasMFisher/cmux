@@ -403,10 +403,12 @@ impl std::io::Write for ChunkedWriter {
 
 /// Pre-build the sync files tar archive into a buffer.
 /// This can be called before sandbox creation to overlap CPU work with network I/O.
-pub fn prebuild_sync_files_tar() -> Option<Vec<u8>> {
+/// Returns Ok(None) if there are no files to sync, Ok(Some(data)) on success,
+/// or Err(message) if there was an error reading/packaging files.
+pub fn prebuild_sync_files_tar() -> Result<Option<Vec<u8>>, String> {
     let files_to_upload = detect_sync_files();
     if files_to_upload.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut buffer = Vec::new();
@@ -452,7 +454,10 @@ pub fn prebuild_sync_files_tar() -> Option<Vec<u8>> {
                         let bytes = merged.as_bytes();
                         let mut header = Header::new_gnu();
                         if header.set_path(&tar_path).is_err() {
-                            return None;
+                            return Err(format!(
+                                "Failed to set tar path for {}",
+                                tar_path.display()
+                            ));
                         }
                         header.set_size(bytes.len() as u64);
                         header.set_mode(0o644);
@@ -470,17 +475,21 @@ pub fn prebuild_sync_files_tar() -> Option<Vec<u8>> {
                 tar.append_path_with_name(&host_path, &tar_path)
             };
 
-            if result.is_err() {
-                return None;
+            if let Err(e) = result {
+                return Err(format!(
+                    "Failed to add {} to tar: {}",
+                    host_path.display(),
+                    e
+                ));
             }
         }
 
-        if tar.finish().is_err() {
-            return None;
+        if let Err(e) = tar.finish() {
+            return Err(format!("Failed to finalize tar archive: {}", e));
         }
     }
 
-    Some(buffer)
+    Ok(Some(buffer))
 }
 
 /// Upload pre-built sync files tar and execute the move script.

@@ -1097,6 +1097,8 @@ impl SandboxService for BubblewrapService {
         // Handle network prepare result
         if let Err(error) = net_prepare_result {
             let _ = child.kill().await;
+            // Clean up veth pair if it was partially created
+            let _ = run_command(&self.ip_path, &["link", "del", &host_if]).await;
             cleanup_overlays(&system_dir).await;
             let mut pool = self.ip_pool.lock().await;
             pool.release(&lease);

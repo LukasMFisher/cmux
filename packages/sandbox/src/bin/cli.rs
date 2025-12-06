@@ -470,31 +470,53 @@ async fn run() -> anyhow::Result<()> {
 
             // Spawn auth upload task - waits for tar to be ready first
             let auth_upload_handle = tokio::spawn(async move {
-                let sync_tar = sync_tar_handle.await.ok().flatten();
-                if let Some(tar_data) = sync_tar {
-                    if let Err(e) = upload_prebuilt_sync_files(
-                        &client_for_upload,
-                        &base_url_for_upload,
-                        &sandbox_id_for_upload,
-                        tar_data,
-                        false,
-                    )
-                    .await
-                    {
+                let sync_tar_result = match sync_tar_handle.await {
+                    Ok(result) => result,
+                    Err(e) => {
                         eprintln!(
-                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
                             e
                         );
+                        return;
                     }
+                };
+                let tar_data = match sync_tar_result {
+                    Ok(Some(data)) => data,
+                    Ok(None) => return, // No files to sync
+                    Err(e) => {
+                        eprintln!(
+                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                            e
+                        );
+                        return;
+                    }
+                };
+                if let Err(e) = upload_prebuilt_sync_files(
+                    &client_for_upload,
+                    &base_url_for_upload,
+                    &sandbox_id_for_upload,
+                    tar_data,
+                    false,
+                )
+                .await
+                {
+                    eprintln!(
+                        "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                        e
+                    );
                 }
             });
 
             save_last_sandbox(&summary.id.to_string());
             if should_attach() {
-                handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
+                // Run SSH session, but ensure uploads complete even if SSH exits quickly
+                let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
+                // Wait for background uploads to complete before exiting
+                // (otherwise the runtime shuts down and cancels the background tasks)
+                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                ssh_result?;
             } else {
                 // In non-interactive mode, wait for uploads to complete before exiting
-                // (otherwise the runtime shuts down and cancels the background tasks)
                 let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                 eprintln!(
                     "Skipping interactive shell attach (non-interactive environment detected)."
@@ -777,31 +799,53 @@ async fn run() -> anyhow::Result<()> {
 
                     // Spawn auth upload task - waits for tar to be ready first
                     let auth_upload_handle = tokio::spawn(async move {
-                        let sync_tar = sync_tar_handle.await.ok().flatten();
-                        if let Some(tar_data) = sync_tar {
-                            if let Err(e) = upload_prebuilt_sync_files(
-                                &client_for_upload,
-                                &base_url_for_upload,
-                                &sandbox_id_for_upload,
-                                tar_data,
-                                false,
-                            )
-                            .await
-                            {
+                        let sync_tar_result = match sync_tar_handle.await {
+                            Ok(result) => result,
+                            Err(e) => {
                                 eprintln!(
-                                    "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                                    "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
                                     e
                                 );
+                                return;
                             }
+                        };
+                        let tar_data = match sync_tar_result {
+                            Ok(Some(data)) => data,
+                            Ok(None) => return, // No files to sync
+                            Err(e) => {
+                                eprintln!(
+                                    "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+                        if let Err(e) = upload_prebuilt_sync_files(
+                            &client_for_upload,
+                            &base_url_for_upload,
+                            &sandbox_id_for_upload,
+                            tar_data,
+                            false,
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                                e
+                            );
                         }
                     });
 
                     save_last_sandbox(&summary.id.to_string());
                     if should_attach() {
-                        handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
+                        // Run SSH session, but ensure uploads complete even if SSH exits quickly
+                        let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
+                        // Wait for background uploads to complete before exiting
+                        // (otherwise the runtime shuts down and cancels the background tasks)
+                        let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                        ssh_result?;
                     } else {
                         // In non-interactive mode, wait for uploads to complete before exiting
-                        // (otherwise the runtime shuts down and cancels the background tasks)
                         let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                         eprintln!(
                             "Skipping interactive shell attach (non-interactive environment detected)."
