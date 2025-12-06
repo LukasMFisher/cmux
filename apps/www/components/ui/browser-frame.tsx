@@ -19,7 +19,7 @@ export function BrowserFrame({ url, className, children }: BrowserFrameProps) {
     >
       <div className="flex items-center gap-3 px-3 sm:px-4 h-10 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-900/60">
         {/* Window controls */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <span className="h-3 w-3 rounded-full bg-[#ff5f56]" aria-hidden />
           <span className="h-3 w-3 rounded-full bg-[#ffbd2e]" aria-hidden />
           <span className="h-3 w-3 rounded-full bg-[#27c93f]" aria-hidden />
@@ -31,8 +31,8 @@ export function BrowserFrame({ url, className, children }: BrowserFrameProps) {
             <span className="truncate">{url}</span>
           </div>
         </div>
-        {/* Right spacer */}
-        <div className="w-6" aria-hidden />
+        {/* Right spacer to balance traffic lights (3 dots × 12px + 2 gaps × 6px = 48px) */}
+        <div className="w-12 shrink-0" aria-hidden />
       </div>
       <div className="bg-white dark:bg-neutral-950">{children}</div>
     </div>
