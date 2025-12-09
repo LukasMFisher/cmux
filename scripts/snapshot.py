@@ -85,7 +85,7 @@ CURRENT_MANIFEST_SCHEMA_VERSION = 1
 
 IDE_PROVIDER_CODER = "coder"
 IDE_PROVIDER_OPENVSCODE = "openvscode"
-DEFAULT_IDE_PROVIDER = IDE_PROVIDER_CODER
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_OPENVSCODE
 
 # Module-level IDE provider setting (set from args before task graph runs)
 _ide_provider: str = DEFAULT_IDE_PROVIDER
