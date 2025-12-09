@@ -8,7 +8,7 @@
     </item>
     <item label="Chrome">
       <action name="Execute">
-        <command>google-chrome-stable --no-sandbox</command>
+        <command>/usr/local/lib/cmux/cmux-start-chrome</command>
       </action>
     </item>
     <separator />

@@ -403,7 +403,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_mj3x7688' | 'snapshot_r63tbc5v' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_7xn3r21v' | 'snapshot_1k9r7cze' | 'snapshot_pcmfvjra');
 };
 
 export type CreateEnvironmentResponse = {

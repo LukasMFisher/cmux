@@ -80,6 +80,26 @@ MORPH_SNAPSHOT_MANIFEST_PATH = (
 CURRENT_MANIFEST_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
+# IDE Provider Configuration
+# ---------------------------------------------------------------------------
+
+IDE_PROVIDER_CODER = "coder"
+IDE_PROVIDER_OPENVSCODE = "openvscode"
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_CODER
+
+# Module-level IDE provider setting (set from args before task graph runs)
+_ide_provider: str = DEFAULT_IDE_PROVIDER
+
+
+def set_ide_provider(provider: str) -> None:
+    global _ide_provider
+    _ide_provider = provider
+
+
+def get_ide_provider() -> str:
+    return _ide_provider
+
+# ---------------------------------------------------------------------------
 # Manifest types and helpers
 # ---------------------------------------------------------------------------
 
@@ -1183,6 +1203,9 @@ async def task_install_rust_toolchain(ctx: TaskContext) -> None:
     description="Install OpenVSCode server",
 )
 async def task_install_openvscode(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_OPENVSCODE:
+        ctx.console.info("Skipping install-openvscode (IDE provider is not openvscode)")
+        return
     cmd = textwrap.dedent(
         """
         set -eux
@@ -1202,6 +1225,52 @@ async def task_install_openvscode(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-openvscode", cmd)
+
+
+@registry.task(
+    name="install-coder",
+    deps=("apt-bootstrap",),
+    description="Install Coder (code-server)",
+)
+async def task_install_coder(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_CODER:
+        ctx.console.info("Skipping install-coder (IDE provider is not coder)")
+        return
+    cmd = textwrap.dedent(
+        """
+        set -eux
+        CODER_RELEASE="$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        arch="$(dpkg --print-architecture)"
+        case "${arch}" in
+          amd64) ARCH="amd64" ;;
+          arm64) ARCH="arm64" ;;
+          *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
+        esac
+        mkdir -p /app/code-server
+        url="https://github.com/coder/code-server/releases/download/v${CODER_RELEASE}/code-server-${CODER_RELEASE}-linux-${ARCH}.tar.gz"
+        curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}" || \
+          curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}"
+        tar xf /tmp/code-server.tar.gz -C /app/code-server --strip-components=1
+        rm -f /tmp/code-server.tar.gz
+
+        # Create code-server config directory and config.yaml
+        mkdir -p /root/.config/code-server
+        cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:39378
+auth: none
+cert: false
+EOF
+
+        # Create code-server user settings to disable welcome screen
+        mkdir -p /root/.code-server/User
+        cat > /root/.code-server/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none"
+}
+EOF
+        """
+    )
+    await ctx.run("install-coder", cmd)
 
 
 @registry.task(
@@ -1229,85 +1298,97 @@ async def task_package_vscode_extension(ctx: TaskContext) -> None:
 
 
 @registry.task(
-    name="install-openvscode-extensions",
-    deps=("install-openvscode", "package-vscode-extension"),
-    description="Preinstall language extensions for OpenVSCode",
+    name="install-ide-extensions",
+    deps=("install-openvscode", "install-coder", "package-vscode-extension"),
+    description="Preinstall language extensions for the IDE",
 )
-async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
+async def task_install_ide_extensions(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    if ide_provider == IDE_PROVIDER_CODER:
+        server_root = "/app/code-server"
+        bin_path = f"{server_root}/bin/code-server"
+        extensions_dir = "/root/.code-server/extensions"
+        user_data_dir = "/root/.code-server"
+    else:
+        server_root = "/app/openvscode-server"
+        bin_path = f"{server_root}/bin/openvscode-server"
+        extensions_dir = "/root/.openvscode-server/extensions"
+        user_data_dir = "/root/.openvscode-server/data"
+
     cmd = textwrap.dedent(
-        """
+        f"""
         set -eux
         export HOME=/root
-        server_root="/app/openvscode-server"
-        bin_path="${server_root}/bin/openvscode-server"
-        if [ ! -x "${bin_path}" ]; then
-          echo "OpenVSCode binary not found at ${bin_path}" >&2
+        server_root="{server_root}"
+        bin_path="{bin_path}"
+        if [ ! -x "${{bin_path}}" ]; then
+          echo "IDE binary not found at ${{bin_path}}" >&2
           exit 1
         fi
-        extensions_dir="/root/.openvscode-server/extensions"
-        user_data_dir="/root/.openvscode-server/data"
-        mkdir -p "${extensions_dir}" "${user_data_dir}"
+        extensions_dir="{extensions_dir}"
+        user_data_dir="{user_data_dir}"
+        mkdir -p "${{extensions_dir}}" "${{user_data_dir}}"
         cmux_vsix="/tmp/cmux-vscode-extension.vsix"
-        if [ ! -f "${cmux_vsix}" ]; then
-          echo "cmux extension package missing at ${cmux_vsix}" >&2
+        if [ ! -f "${{cmux_vsix}}" ]; then
+          echo "cmux extension package missing at ${{cmux_vsix}}" >&2
           exit 1
         fi
-        install_from_file() {
+        install_from_file() {{
           local package_path="$1"
-          "${bin_path}" \
-            --install-extension "${package_path}" \
-            --force \
-            --extensions-dir "${extensions_dir}" \
-            --user-data-dir "${user_data_dir}"
-        }
-        install_from_file "${cmux_vsix}"
-        rm -f "${cmux_vsix}"
+          "${{bin_path}}" \\
+            --install-extension "${{package_path}}" \\
+            --force \\
+            --extensions-dir "${{extensions_dir}}" \\
+            --user-data-dir "${{user_data_dir}}"
+        }}
+        install_from_file "${{cmux_vsix}}"
+        rm -f "${{cmux_vsix}}"
         download_dir="$(mktemp -d)"
-        cleanup() {
-          rm -rf "${download_dir}"
-        }
+        cleanup() {{
+          rm -rf "${{download_dir}}"
+        }}
         trap cleanup EXIT
-        download_extension() {
+        download_extension() {{
           local publisher="$1"
           local name="$2"
           local version="$3"
           local destination="$4"
-          local tmpfile="${destination}.download"
-          local curl_stderr="${tmpfile}.stderr"
-          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
+          local tmpfile="${{destination}}.download"
+          local curl_stderr="${{tmpfile}}.stderr"
+          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${{publisher}}/vsextensions/${{name}}/${{version}}/vspackage"
           local attempt=1
           local max_attempts=3
-          while [ "${attempt}" -le "${max_attempts}" ]; do
-            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}" 2>"${curl_stderr}"; then
-              rm -f "${curl_stderr}"
+          while [ "${{attempt}}" -le "${{max_attempts}}" ]; do
+            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${{tmpfile}}" "${{url}}" 2>"${{curl_stderr}}"; then
+              rm -f "${{curl_stderr}}"
               break
             fi
-            echo "Download attempt ${attempt}/${max_attempts} failed for ${publisher}.${name}@${version}; retrying..." >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+            echo "Download attempt ${{attempt}}/${{max_attempts}} failed for ${{publisher}}.${{name}}@${{version}}; retrying..." >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${tmpfile}"
+            rm -f "${{tmpfile}}"
             attempt=$((attempt + 1))
             sleep $((attempt * 2))
           done
-          if [ "${attempt}" -gt "${max_attempts}" ]; then
-            echo "Failed to download ${publisher}.${name}@${version} after ${max_attempts} attempts" >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+          if [ "${{attempt}}" -gt "${{max_attempts}}" ]; then
+            echo "Failed to download ${{publisher}}.${{name}}@${{version}} after ${{max_attempts}} attempts" >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${curl_stderr}"
+            rm -f "${{curl_stderr}}"
             return 1
           fi
-          if gzip -t "${tmpfile}" >/dev/null 2>&1; then
-            gunzip -c "${tmpfile}" > "${destination}"
-            rm -f "${tmpfile}"
+          if gzip -t "${{tmpfile}}" >/dev/null 2>&1; then
+            gunzip -c "${{tmpfile}}" > "${{destination}}"
+            rm -f "${{tmpfile}}"
           else
-            mv "${tmpfile}" "${destination}"
+            mv "${{tmpfile}}" "${{destination}}"
           fi
-        }
+        }}
         while IFS='|' read -r publisher name version; do
-          [ -z "${publisher}" ] && continue
-          download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
+          [ -z "${{publisher}}" ] && continue
+          download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
         anthropic|claude-code|2.0.27
         openai|chatgpt|0.5.27
@@ -1317,15 +1398,15 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
         ms-python|debugpy|2025.14.0
         EXTENSIONS
         wait
-        set -- "${download_dir}"/*.vsix
+        set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
-          if [ -f "${vsix}" ]; then
-            install_from_file "${vsix}"
+          if [ -f "${{vsix}}" ]; then
+            install_from_file "${{vsix}}"
           fi
         done
         """
     )
-    await ctx.run("install-openvscode-extensions", cmd)
+    await ctx.run("install-ide-extensions", cmd)
 
 
 @registry.task(
@@ -1548,8 +1629,7 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
     name="install-systemd-units",
     deps=(
         "upload-repo",
-        "install-openvscode",
-        "install-openvscode-extensions",
+        "install-ide-extensions",
         "install-service-scripts",
         "build-worker",
         "build-cdp-proxy",
@@ -1560,13 +1640,26 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
 )
 async def task_install_systemd_units(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
+    ide_provider = get_ide_provider()
+
+    # Determine IDE-specific service and configure script
+    if ide_provider == IDE_PROVIDER_CODER:
+        ide_service = "cmux-coder.service"
+        ide_configure_script = "configure-coder"
+        ide_env_file = "ide.env.coder"
+    else:
+        ide_service = "cmux-openvscode.service"
+        ide_configure_script = "configure-openvscode"
+        ide_env_file = "ide.env.openvscode"
+
     cmd = textwrap.dedent(
         f"""
         set -euo pipefail
 
         install -d /usr/local/lib/cmux
+        install -d /etc/cmux
         install -Dm0644 {repo}/configs/systemd/cmux.target /usr/lib/systemd/system/cmux.target
-        install -Dm0644 {repo}/configs/systemd/cmux-openvscode.service /usr/lib/systemd/system/cmux-openvscode.service
+        install -Dm0644 {repo}/configs/systemd/{ide_service} /usr/lib/systemd/system/cmux-ide.service
         install -Dm0644 {repo}/configs/systemd/cmux-worker.service /usr/lib/systemd/system/cmux-worker.service
         install -Dm0644 {repo}/configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
@@ -1578,7 +1671,9 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
-        install -Dm0755 {repo}/configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
+        install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
+        install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
+        install -Dm0755 {repo}/configs/systemd/bin/code /usr/local/bin/code
         touch /usr/local/lib/cmux/dockerd.flag
         mkdir -p /var/log/cmux
         mkdir -p /root/workspace
@@ -1586,7 +1681,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         mkdir -p /etc/systemd/system/cmux.target.wants
         mkdir -p /etc/systemd/system/swap.target.wants
         ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-        ln -sf /usr/lib/systemd/system/cmux-openvscode.service /etc/systemd/system/cmux.target.wants/cmux-openvscode.service
+        ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
         ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
         ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
@@ -1973,13 +2068,13 @@ async def task_check_vscode(ctx: TaskContext) -> None:
         """
         for attempt in $(seq 1 15); do
           if curl -fsS -o /dev/null http://127.0.0.1:39378/; then
-            echo "VS Code endpoint is reachable"
+            echo "IDE endpoint is reachable"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint not reachable after 30s" >&2
-        systemctl status cmux-openvscode.service --no-pager || true
+        echo "ERROR: IDE endpoint not reachable after 30s" >&2
+        systemctl status cmux-ide.service --no-pager || true
         exit 1
         """
     )
@@ -1992,20 +2087,22 @@ async def task_check_vscode(ctx: TaskContext) -> None:
     description="Verify VS Code endpoint is accessible through cmux-proxy",
 )
 async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    log_file = "coder.log" if ide_provider == IDE_PROVIDER_CODER else "openvscode.log"
     cmd = textwrap.dedent(
-        """
+        f"""
         for attempt in $(seq 1 15); do
           if curl -fsS -H 'X-Cmux-Port-Internal: 39378' http://127.0.0.1:39379/ >/dev/null; then
-            echo "VS Code endpoint is reachable via cmux-proxy"
+            echo "IDE endpoint is reachable via cmux-proxy"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint via cmux-proxy not reachable after 30s" >&2
+        echo "ERROR: IDE endpoint via cmux-proxy not reachable after 30s" >&2
         systemctl status cmux-proxy.service --no-pager || true
-        systemctl status cmux-openvscode.service --no-pager || true
+        systemctl status cmux-ide.service --no-pager || true
         tail -n 80 /var/log/cmux/cmux-proxy.log || true
-        tail -n 80 /var/log/cmux/openvscode.log || true
+        tail -n 80 /var/log/cmux/{log_file} || true
         exit 1
         """
     )
@@ -2425,6 +2522,9 @@ async def provision_and_snapshot_for_preset(
 
 
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
+    # Set the IDE provider before running tasks
+    set_ide_provider(args.ide_provider)
+
     console = Console()
     client = MorphCloudClient()
     started_instances: list[Instance] = []
@@ -2448,7 +2548,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     console.always(
         "Starting snapshot runs for presets "
         f"{', '.join(plan.preset_id for plan in preset_plans)} "
-        f"from base snapshot {args.snapshot_id}"
+        f"from base snapshot {args.snapshot_id} "
+        f"(IDE provider: {args.ide_provider})"
     )
 
     preset_order: dict[str, int] = {
@@ -2586,6 +2687,12 @@ def parse_args() -> argparse.Namespace:
         "--require-verify",
         action="store_true",
         help="Require manual verification (VS Code/VNC) before snapshotting each preset",
+    )
+    parser.add_argument(
+        "--ide-provider",
+        choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE),
+        default=DEFAULT_IDE_PROVIDER,
+        help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
     )
     return parser.parse_args()
 
