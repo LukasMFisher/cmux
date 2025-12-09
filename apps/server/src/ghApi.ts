@@ -77,6 +77,87 @@ export function createGitHubApiClient(token: string) {
       return branches.map(branch => branch.name);
     },
 
+    async getRepoDefaultBranch(repo: string): Promise<string | undefined> {
+      try {
+        const response = await this.fetchGitHub(`/repos/${repo}`);
+        const data = await response.json() as { default_branch?: string };
+        return data.default_branch;
+      } catch {
+        return undefined;
+      }
+    },
+
+    async searchBranches(repo: string, search?: string, limit = 30): Promise<{
+      name: string;
+      lastCommitSha?: string;
+      isDefault?: boolean;
+    }[]> {
+      type BranchResp = { name: string; commit: { sha: string } };
+
+      // If no search query, get first page of branches
+      if (!search) {
+        const response = await this.fetchGitHub(`/repos/${repo}/branches?per_page=${limit}`);
+        const branches = await response.json() as BranchResp[];
+
+        // Get default branch
+        let defaultBranchName: string | undefined;
+        try {
+          const repoResp = await this.fetchGitHub(`/repos/${repo}`);
+          const repoData = await repoResp.json() as { default_branch?: string };
+          defaultBranchName = repoData.default_branch;
+        } catch {
+          // Ignore
+        }
+
+        return branches.map(br => ({
+          name: br.name,
+          lastCommitSha: br.commit.sha,
+          isDefault: br.name === defaultBranchName,
+        }));
+      }
+
+      // With search query, we need to fetch all and filter
+      // GitHub doesn't have a branch search API, so we fetch branches page by page
+      // until we find enough matches
+      const results: { name: string; lastCommitSha?: string; isDefault?: boolean }[] = [];
+      let page = 1;
+      const perPage = 100;
+      const searchLower = search.toLowerCase();
+
+      // Get default branch
+      let defaultBranchName: string | undefined;
+      try {
+        const repoResp = await this.fetchGitHub(`/repos/${repo}`);
+        const repoData = await repoResp.json() as { default_branch?: string };
+        defaultBranchName = repoData.default_branch;
+      } catch {
+        // Ignore
+      }
+
+      while (results.length < limit) {
+        const response = await this.fetchGitHub(`/repos/${repo}/branches?per_page=${perPage}&page=${page}`);
+        const branches = await response.json() as BranchResp[];
+
+        if (branches.length === 0) break;
+
+        for (const br of branches) {
+          if (br.name.toLowerCase().includes(searchLower)) {
+            results.push({
+              name: br.name,
+              lastCommitSha: br.commit.sha,
+              isDefault: br.name === defaultBranchName,
+            });
+            if (results.length >= limit) break;
+          }
+        }
+
+        if (branches.length < perPage) break;
+        page++;
+      }
+
+      return results;
+    },
+
     async getRepoBranchesWithActivity(repo: string): Promise<{
       name: string;
       lastCommitSha?: string;

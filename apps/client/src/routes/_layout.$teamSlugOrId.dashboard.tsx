@@ -23,7 +23,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { branchesQueryOptions } from "@/queries/branches";
+import { branchesQueryOptions, defaultBranchQueryOptions } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -190,47 +190,87 @@ function DashboardComponent() {
     setTaskDescription(value);
   }, []);
 
-  // Fetch branches for selected repo from Convex
+  // Fetch branches for selected repo
   const isEnvSelected = useMemo(
     () => (selectedProject[0] || "").startsWith("env:"),
     [selectedProject]
   );
 
-  const branchesQuery = useQuery({
-    ...branchesQueryOptions({
+  // Track if branch selector is open and the search query
+  const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
+  const [branchSearch, setBranchSearch] = useState("");
+
+  // Fast query to get just the default branch (single API call)
+  const defaultBranchQuery = useQuery({
+    ...defaultBranchQueryOptions({
       teamSlugOrId,
       repoFullName: selectedProject[0] || "",
     }),
     enabled: !!selectedProject[0] && !isEnvSelected,
   });
+
+  // Full branches query - only runs when selector is open
+  const branchesQuery = useQuery({
+    ...branchesQueryOptions({
+      teamSlugOrId,
+      repoFullName: selectedProject[0] || "",
+      search: branchSearch || undefined,
+    }),
+    enabled: !!selectedProject[0] && !isEnvSelected && branchSelectorOpen,
+  });
+
   const branchSummary = useMemo(() => {
-    const data = branchesQuery.data;
-    if (!data?.branches) {
+    // If we have branches loaded, use them
+    const branchData = branchesQuery.data;
+    if (branchData?.branches && branchData.branches.length > 0) {
+      const names = branchData.branches.map((branch) => branch.name);
+      const fromResponse = branchData.defaultBranch?.trim();
+      const flaggedDefault = branchData.branches.find(
+        (branch) => branch.isDefault
+      )?.name;
+      const normalizedFromResponse =
+        fromResponse && names.includes(fromResponse) ? fromResponse : undefined;
+      const normalizedFlagged =
+        flaggedDefault && names.includes(flaggedDefault)
+          ? flaggedDefault
+          : undefined;
+
       return {
-        names: [] as string[],
-        defaultName: undefined as string | undefined,
+        names,
+        defaultName: normalizedFromResponse ?? normalizedFlagged,
       };
     }
-    const names = data.branches.map((branch) => branch.name);
-    const fromResponse = data.defaultBranch?.trim();
-    const flaggedDefault = data.branches.find(
-      (branch) => branch.isDefault
-    )?.name;
-    const normalizedFromResponse =
-      fromResponse && names.includes(fromResponse) ? fromResponse : undefined;
-    const normalizedFlagged =
-      flaggedDefault && names.includes(flaggedDefault)
-        ? flaggedDefault
-        : undefined;
+
+    // Otherwise, use just the default branch from the fast query
+    const defaultBranch = defaultBranchQuery.data?.defaultBranch;
+    if (defaultBranch) {
+      return {
+        names: [defaultBranch],
+        defaultName: defaultBranch,
+      };
+    }
 
     return {
-      names,
-      defaultName: normalizedFromResponse ?? normalizedFlagged,
+      names: [] as string[],
+      defaultName: undefined as string | undefined,
     };
-  }, [branchesQuery.data]);
+  }, [branchesQuery.data, defaultBranchQuery.data]);
 
   const branchNames = branchSummary.names;
   const remoteDefaultBranch = branchSummary.defaultName;
+
+  // Callbacks for branch selector events
+  const handleBranchSelectorOpen = useCallback((open: boolean) => {
+    setBranchSelectorOpen(open);
+    if (!open) {
+      // Reset search when closing
+      setBranchSearch("");
+    }
+  }, []);
+
+  const handleBranchSearchChange = useCallback((search: string) => {
+    setBranchSearch(search);
+  }, []);
   // Callback for project selection changes
   const handleProjectChange = useCallback(
     (newProjects: string[]) => {
@@ -1002,12 +1042,14 @@ function DashboardComponent() {
               branchOptions={branchOptions}
               selectedBranch={effectiveSelectedBranch}
               onBranchChange={handleBranchChange}
+              onBranchSelectorOpen={handleBranchSelectorOpen}
+              onBranchSearchChange={handleBranchSearchChange}
               selectedAgents={selectedAgents}
               onAgentChange={handleAgentChange}
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isPending}
+              isLoadingBranches={branchesQuery.isPending || (branchSelectorOpen && branchesQuery.isFetching)}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1080,6 +1122,8 @@ type DashboardMainCardProps = {
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (newBranches: string[]) => void;
+  onBranchSelectorOpen?: (open: boolean) => void;
+  onBranchSearchChange?: (search: string) => void;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1109,6 +1153,8 @@ function DashboardMainCard({
   branchOptions,
   selectedBranch,
   onBranchChange,
+  onBranchSelectorOpen,
+  onBranchSearchChange,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1145,6 +1191,8 @@ function DashboardMainCard({
           branchOptions={branchOptions}
           selectedBranch={selectedBranch}
           onBranchChange={onBranchChange}
+          onBranchSelectorOpen={onBranchSelectorOpen}
+          onBranchSearchChange={onBranchSearchChange}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}

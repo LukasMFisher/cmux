@@ -97,6 +97,10 @@ export interface SearchableSelectProps {
   popoverSide?: PopoverContentProps["side"];
   popoverAlign?: PopoverContentProps["align"];
   popoverSideOffset?: number;
+  // Callback when the popover opens or closes (for lazy loading)
+  onOpenChange?: (open: boolean) => void;
+  // Callback when the search input changes (for server-side filtering)
+  onSearchChange?: (search: string) => void;
 }
 
 interface WarningIndicatorProps {
@@ -251,6 +255,8 @@ const SearchableSelect = forwardRef<
     popoverSide = "bottom",
     popoverAlign = "start",
     popoverSideOffset = 2,
+    onOpenChange,
+    onSearchChange,
   },
   ref
 ) {
@@ -266,9 +272,21 @@ const SearchableSelect = forwardRef<
     ? Math.max(1, Math.floor(maxCountPerValue))
     : 1;
   const allowValueCountAdjustments = !singleSelect && resolvedMaxPerValue > 1;
-  const [open, setOpen] = useState(false);
+  const [open, setOpenInternal] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearchInternal] = useState("");
+
+  // Wrapper to call onOpenChange callback when open state changes
+  const setOpen = useCallback((newOpen: boolean) => {
+    setOpenInternal(newOpen);
+    onOpenChange?.(newOpen);
+  }, [onOpenChange]);
+
+  // Wrapper to call onSearchChange callback when search changes
+  const setSearch = useCallback((newSearch: string) => {
+    setSearchInternal(newSearch);
+    onSearchChange?.(newSearch);
+  }, [onSearchChange]);
   const [_recalcTick, setRecalcTick] = useState(0);
   // Popover width is fixed; no need to track trigger width
   const pendingFocusRef = useRef<string | null>(null);
@@ -294,7 +312,7 @@ const SearchableSelect = forwardRef<
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, setOpen]);
 
   const displayContent = useMemo(() => {
     if (loading) {
@@ -404,6 +422,7 @@ const SearchableSelect = forwardRef<
     normOptions,
     placeholder,
     selectedLabels,
+    setOpen,
     value,
     valueToOption,
   ]);
@@ -505,7 +524,7 @@ const SearchableSelect = forwardRef<
         setOpen(false);
       },
     }),
-    [filteredOptions, open, rowVirtualizer]
+    [filteredOptions, open, rowVirtualizer, setOpen, setSearch]
   );
 
   const updateValueCount = (val: string, nextCount: number) => {

@@ -7,6 +7,7 @@ import {
   GitFullDiffRequestSchema,
   GitHubCreateDraftPrSchema,
   GitHubFetchBranchesSchema,
+  GitHubFetchDefaultBranchSchema,
   GitHubFetchReposSchema,
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
@@ -2242,9 +2243,41 @@ Please address the issue mentioned in the comment above.`;
       }
     });
 
+    // Fast endpoint to get only the default branch (single API call)
+    socket.on("github-fetch-default-branch", async (data, callback) => {
+      try {
+        const { repo } = GitHubFetchDefaultBranchSchema.parse(data);
+
+        // Get OAuth token from Stack Auth for authenticated GitHub API access
+        const githubToken = await getGitHubOAuthToken();
+        if (!githubToken) {
+          callback({
+            success: false,
+            error: "GitHub token is not configured. Please connect your GitHub account.",
+          });
+          return;
+        }
+
+        const ghClient = createGitHubApiClient(githubToken);
+        const defaultBranch = await ghClient.getRepoDefaultBranch(repo);
+
+        callback({
+          success: true,
+          defaultBranch,
+        });
+      } catch (error) {
+        serverLogger.error("Error fetching default branch:", error);
+        callback({
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    // Fetch branches with optional search filter (lazy-loaded)
     socket.on("github-fetch-branches", async (data, callback) => {
       try {
-        const { repo } = GitHubFetchBranchesSchema.parse(data);
+        const { repo, search } = GitHubFetchBranchesSchema.parse(data);
 
         // Get OAuth token from Stack Auth for authenticated GitHub API access
         const githubToken = await getGitHubOAuthToken();
@@ -2259,7 +2292,7 @@ Please address the issue mentioned in the comment above.`;
 
         // Use GitHub API with OAuth token for branch listing
         const ghClient = createGitHubApiClient(githubToken);
-        const branches = await ghClient.getRepoBranchesWithActivity(repo);
+        const branches = await ghClient.searchBranches(repo, search, 30);
         const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
 
         callback({

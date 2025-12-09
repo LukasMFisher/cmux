@@ -293,6 +293,19 @@ export const GitHubFetchReposSchema = z.object({
 export const GitHubFetchBranchesSchema = z.object({
   teamSlugOrId: z.string(),
   repo: z.string(),
+  search: z.string().optional(), // Optional search query to filter branches
+});
+
+// Fetch only the default branch for a repo (fast - single API call)
+export const GitHubFetchDefaultBranchSchema = z.object({
+  teamSlugOrId: z.string(),
+  repo: z.string(),
+});
+
+export const GitHubDefaultBranchResponseSchema = z.object({
+  success: z.boolean(),
+  defaultBranch: z.string().optional(),
+  error: z.string().optional(),
 });
 
 export const GitHubBranchSchema = z.object({
@@ -474,8 +487,12 @@ export type ListFilesResponse = z.infer<typeof ListFilesResponseSchema>;
 export type VSCodeSpawned = z.infer<typeof VSCodeSpawnedSchema>;
 export type GitHubBranch = z.infer<typeof GitHubBranchSchema>;
 export type GitHubFetchBranches = z.infer<typeof GitHubFetchBranchesSchema>;
+export type GitHubFetchDefaultBranch = z.infer<typeof GitHubFetchDefaultBranchSchema>;
 export type GitHubBranchesResponse = z.infer<
   typeof GitHubBranchesResponseSchema
+>;
+export type GitHubDefaultBranchResponse = z.infer<
+  typeof GitHubDefaultBranchResponseSchema
 >;
 export type GitHubReposResponse = z.infer<typeof GitHubReposResponseSchema>;
 export type GitHubAuthResponse = z.infer<typeof GitHubAuthResponseSchema>;
@@ -539,6 +556,10 @@ export interface ClientToServerEvents {
   "github-fetch-branches": (
     data: GitHubFetchBranches,
     callback: (response: GitHubBranchesResponse) => void
+  ) => void;
+  "github-fetch-default-branch": (
+    data: GitHubFetchDefaultBranch,
+    callback: (response: GitHubDefaultBranchResponse) => void
   ) => void;
   // Create a draft pull request for a given task run
   "github-create-draft-pr": (
