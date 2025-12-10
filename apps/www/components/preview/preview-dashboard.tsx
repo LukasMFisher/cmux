@@ -13,7 +13,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Code,
   ExternalLink,
   FileText,
   Folder,
@@ -65,6 +64,7 @@ import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 import { PreviewItemButton } from "./preview-item-button";
 import { BlinkingCursor } from "./blinking-cursor";
+import { VSCodeIcon } from "@/components/icons/vscode-icon";
 
 type ProviderConnection = {
   id: string;
@@ -600,6 +600,7 @@ function MockGitHubPRBrowser() {
   const containerRef = useRef<HTMLDivElement>(null);
   const isResizingHorizontal = useRef(false);
   const isResizingVertical = useRef(false);
+  const [isResizing, setIsResizing] = useState(false);
 
   const toggleFileCollapse = useCallback((fileId: string) => {
     setCollapsedFiles((prev) => {
@@ -641,6 +642,7 @@ function MockGitHubPRBrowser() {
   const stopResizing = useCallback(() => {
     isResizingHorizontal.current = false;
     isResizingVertical.current = false;
+    setIsResizing(false);
     document.body.style.cursor = "";
     document.body.classList.remove("select-none");
   }, []);
@@ -670,6 +672,7 @@ function MockGitHubPRBrowser() {
   const startHorizontalResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isResizingHorizontal.current = true;
+    setIsResizing(true);
     document.body.style.cursor = "col-resize";
     document.body.classList.add("select-none");
   }, []);
@@ -677,6 +680,7 @@ function MockGitHubPRBrowser() {
   const startVerticalResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isResizingVertical.current = true;
+    setIsResizing(true);
     document.body.style.cursor = "row-resize";
     document.body.classList.add("select-none");
   }, []);
@@ -846,9 +850,7 @@ function MockGitHubPRBrowser() {
                     main
                   </span>
                   {" from "}
-                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">
-                    cmux/reuse-preview...
-                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono"></span>
                 </span>
               </div>
             </div>
@@ -1850,7 +1852,7 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-400"
                             )}
                           >
-                            <Code className="w-3 h-3 shrink-0" />
+                            <VSCodeIcon className="w-3 h-3 shrink-0 text-neutral-400" />
                             <span>VS Code</span>
                           </button>
                           <button
@@ -1945,7 +1947,7 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-400"
                             )}
                           >
-                            <Code className="w-3 h-3 shrink-0" />
+                            <VSCodeIcon className="w-3 h-3 shrink-0 text-neutral-400" />
                             <span>VS Code</span>
                           </button>
                           <button
@@ -2040,7 +2042,7 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-400"
                             )}
                           >
-                            <Code className="w-3 h-3 shrink-0" />
+                            <VSCodeIcon className="w-3 h-3 shrink-0 text-neutral-400" />
                             <span>VS Code</span>
                           </button>
                           <button
@@ -2111,7 +2113,7 @@ function MockGitHubPRBrowser() {
                   >
                     {/* Panel header */}
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                      <Code className="h-4 w-4 text-[#007acc]" />
+                      <VSCodeIcon className="h-4 w-4 text-neutral-400" />
                       <span className="text-xs text-[#cccccc]">Workspace</span>
                     </div>
                     {/* VS Code content */}
@@ -2367,7 +2369,10 @@ function MockGitHubPRBrowser() {
                         <div className="flex-1 bg-[#030712] overflow-hidden">
                           <iframe
                             src="/"
-                            className="border-0 origin-top-left"
+                            className={clsx(
+                              "border-0 origin-top-left",
+                              isResizing && "pointer-events-none"
+                            )}
                             style={{
                               width: "200%",
                               height: "200%",
@@ -2599,7 +2604,7 @@ function MockGitHubPRBrowser() {
                 <div className="flex-1 bg-[#1e1e1e] flex flex-col">
                   {/* Panel header */}
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                    <Code className="h-4 w-4 text-[#007acc]" />
+                    <VSCodeIcon className="h-4 w-4 text-neutral-400" />
                     <span className="text-xs text-[#cccccc]">Workspace</span>
                     <div className="ml-auto flex items-center gap-1">
                       <button
@@ -2825,7 +2830,10 @@ function MockGitHubPRBrowser() {
                     <div className="flex-1 bg-[#030712] overflow-hidden">
                       <iframe
                         src="https://cmux.dev"
-                        className="border-0 origin-top-left"
+                        className={clsx(
+                          "border-0 origin-top-left",
+                          isResizing && "pointer-events-none"
+                        )}
                         style={{
                           width: "200%",
                           height: "200%",
