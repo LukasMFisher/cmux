@@ -224,7 +224,8 @@ If UI changes exist, capture screenshots:
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
 7. After taking a screenshot, always open the image to verify that the capture is expected
-8. Delete any screenshot files from the filessytem that you do not want included
+8. If the screenshot seems outdated, clear build caches, restart the dev server, and retake the screenshot
+9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
 
 <WHAT_TO_CAPTURE>
