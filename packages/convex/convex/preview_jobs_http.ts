@@ -368,12 +368,42 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       const workspaceUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
       const devServerUrl = `https://www.cmux.sh/${teamSlug}/task/${taskRun.taskId}/run/${taskRunId}/browser`;
 
-      // Check if we have an existing comment to update (from initial posting)
-      if (previewRun.githubCommentId) {
+      // Determine which comment to update:
+      // 1. Use stored githubCommentId if available
+      // 2. Otherwise, search for an existing cmux comment on the PR (fallback)
+      // 3. If no existing comment found, create a new one
+      let commentIdToUpdate = previewRun.githubCommentId;
+
+      if (!commentIdToUpdate) {
+        console.log("[preview-jobs-http] No stored githubCommentId, searching for existing comment", {
+          taskRunId,
+          previewRunId: previewRun._id,
+        });
+
+        const findResult = await ctx.runAction(
+          internal.github_pr_comments.findExistingPreviewComment,
+          {
+            installationId: previewRun.repoInstallationId,
+            repoFullName: previewRun.repoFullName,
+            prNumber: previewRun.prNumber,
+          }
+        );
+
+        if (findResult.ok && findResult.commentId) {
+          commentIdToUpdate = findResult.commentId;
+          console.log("[preview-jobs-http] Found existing comment to update via search", {
+            taskRunId,
+            previewRunId: previewRun._id,
+            commentId: commentIdToUpdate,
+          });
+        }
+      }
+
+      if (commentIdToUpdate) {
         console.log("[preview-jobs-http] Updating existing GitHub comment", {
           taskRunId,
           previewRunId: previewRun._id,
-          commentId: previewRun.githubCommentId,
+          commentId: commentIdToUpdate,
         });
 
         const updateResult = await ctx.runAction(
@@ -382,7 +412,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             installationId: previewRun.repoInstallationId,
             repoFullName: previewRun.repoFullName,
             prNumber: previewRun.prNumber,
-            commentId: previewRun.githubCommentId,
+            commentId: commentIdToUpdate,
             screenshotSetId: taskRun.latestScreenshotSetId,
             previewRunId: previewRun._id,
             workspaceUrl,
@@ -394,7 +424,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           console.log("[preview-jobs-http] Successfully updated GitHub comment", {
             taskRunId,
             previewRunId: previewRun._id,
-            commentId: previewRun.githubCommentId,
+            commentId: commentIdToUpdate,
           });
 
           const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
@@ -409,7 +439,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           console.error("[preview-jobs-http] Failed to update GitHub comment", {
             taskRunId,
             previewRunId: previewRun._id,
-            commentId: previewRun.githubCommentId,
+            commentId: commentIdToUpdate,
             error: updateResult.error,
           });
           return jsonResponse({
@@ -418,7 +448,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           }, 500);
         }
       } else {
-        // No existing comment - create a new one (fallback)
+        // No existing comment found - create a new one
         console.log("[preview-jobs-http] Posting new GitHub comment (no existing comment found)", {
           taskRunId,
           previewRunId: previewRun._id,
