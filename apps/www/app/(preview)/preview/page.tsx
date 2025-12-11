@@ -149,13 +149,19 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   if (waitlistProviders.length > 0) {
     const serverMetadata = user.serverMetadata as Record<string, unknown> | null;
     const existingWaitlist = serverMetadata?.previewWaitlist as string[] | undefined;
-    if (!existingWaitlist) {
+    // Only update if waitlist providers changed (compare sorted arrays)
+    const existingSorted = existingWaitlist?.slice().sort().join(",") ?? "";
+    const newSorted = waitlistProviders.slice().sort().join(",");
+    if (existingSorted !== newSorted) {
       waitUntil(
         user.update({
           serverMetadata: {
             ...serverMetadata,
             previewWaitlist: waitlistProviders,
-            previewWaitlistJoinedAt: new Date().toISOString(),
+            // Only set joinedAt on first registration
+            ...(!existingWaitlist && {
+              previewWaitlistJoinedAt: new Date().toISOString(),
+            }),
           },
         })
       );
