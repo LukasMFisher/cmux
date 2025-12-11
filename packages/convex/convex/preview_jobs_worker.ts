@@ -193,15 +193,162 @@ interface ScreenshotCollectorResult {
 }
 
 /**
+ * Write content to a file on Morph instance by fetching from a URL
+ * The content is fetched in Convex and passed via stdin to avoid shell escaping
+ */
+async function writeFileToMorphFromUrl({
+  morphClient,
+  instanceId,
+  filePath,
+  url,
+  previewRunId,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  filePath: string;
+  url: string;
+  previewRunId: Id<"previewRuns">;
+}): Promise<{ content: string; fileSize: number }> {
+  // Fetch the content in Convex
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  }
+  const content = await response.text();
+
+  // Use curl to download directly on Morph (simpler and more reliable)
+  const downloadResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["curl", "-fsSL", "-o", filePath, url],
+    },
+  });
+
+  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
+    throw new Error(
+      `Failed to download file to ${filePath}: ${downloadResponse.data?.stderr || downloadResponse.error}`
+    );
+  }
+
+  // Verify the file was written
+  const verifyResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["stat", "-c", "%s", filePath],
+    },
+  });
+
+  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
+  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
+    throw new Error(`File ${filePath} missing or empty after download: size=${fileSize}`);
+  }
+
+  console.log("[preview-jobs] File downloaded successfully", {
+    previewRunId,
+    filePath,
+    fileSize,
+  });
+
+  return { content, fileSize };
+}
+
+/**
+ * Upload string content to Convex storage and return a URL for downloading
+ */
+async function uploadToStorage(
+  ctx: ActionCtx,
+  content: string,
+  contentType = "text/plain",
+): Promise<{ storageId: Id<"_storage">; url: string }> {
+  const blob = new Blob([content], { type: contentType });
+  const storageId = await ctx.storage.store(blob);
+  const url = await ctx.storage.getUrl(storageId);
+  if (!url) {
+    throw new Error(`Failed to get URL for storage ID: ${storageId}`);
+  }
+  return { storageId, url };
+}
+
+/**
+ * Write string content to a file on Morph instance by uploading to storage then downloading via curl
+ */
+async function writeStringToMorph({
+  ctx,
+  morphClient,
+  instanceId,
+  filePath,
+  content,
+  previewRunId,
+  contentType = "text/plain",
+}: {
+  ctx: ActionCtx;
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  filePath: string;
+  content: string;
+  previewRunId: Id<"previewRuns">;
+  contentType?: string;
+}): Promise<void> {
+  // Upload content to Convex storage
+  const { url, storageId } = await uploadToStorage(ctx, content, contentType);
+
+  console.log("[preview-jobs] Uploaded content to storage", {
+    previewRunId,
+    filePath,
+    contentLength: content.length,
+    storageId,
+  });
+
+  // Download via curl on Morph
+  const downloadResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["curl", "-fsSL", "-o", filePath, url],
+    },
+  });
+
+  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
+    throw new Error(
+      `Failed to download file to ${filePath}: ${downloadResponse.data?.stderr || downloadResponse.error}`
+    );
+  }
+
+  // Verify the file was written
+  const verifyResponse = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["stat", "-c", "%s", filePath],
+    },
+  });
+
+  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
+  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
+    throw new Error(`File ${filePath} missing or empty after download: size=${fileSize}`);
+  }
+
+  console.log("[preview-jobs] File written successfully via curl", {
+    previewRunId,
+    filePath,
+    fileSize,
+  });
+}
+
+/**
  * Download and run the screenshot collector via Morph exec
  */
 async function runScreenshotCollector({
+  ctx,
   morphClient,
   instanceId,
   collectorUrl,
   options,
   previewRunId,
 }: {
+  ctx: ActionCtx;
   morphClient: ReturnType<typeof createMorphCloudClient>;
   instanceId: string;
   collectorUrl: string;
@@ -209,80 +356,72 @@ async function runScreenshotCollector({
   previewRunId: Id<"previewRuns">;
 }): Promise<ScreenshotCollectorResult> {
   const collectorPath = "/tmp/screenshot-collector.mjs";
-  const optionsJson = JSON.stringify(options);
+  const optionsPath = "/tmp/screenshot-options.json";
+  const runScriptPath = "/tmp/screenshot-runner.mjs";
 
+  // Step 1: Download the collector script from URL via curl on Morph
   console.log("[preview-jobs] Downloading screenshot collector", {
     previewRunId,
     collectorUrl,
-    collectorPath,
   });
 
-  // Download the collector - use curl with --fail to error on HTTP errors
-  // Pass as array to avoid shell quoting issues
-  const downloadResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["curl", "-fsSL", "-o", collectorPath, collectorUrl],
-    },
-  });
-
-  if (downloadResponse.error || downloadResponse.data?.exit_code !== 0) {
-    throw new Error(
-      `Failed to download screenshot collector: ${downloadResponse.data?.stderr || downloadResponse.error}`
-    );
-  }
-
-  console.log("[preview-jobs] Download command completed, verifying file", {
+  await writeFileToMorphFromUrl({
+    morphClient,
+    instanceId,
+    filePath: collectorPath,
+    url: collectorUrl,
     previewRunId,
-    collectorPath,
-    downloadStdout: sliceOutput(downloadResponse.data?.stdout),
-    downloadStderr: sliceOutput(downloadResponse.data?.stderr),
   });
 
-  // Verify the file was actually downloaded and has content
-  const verifyResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["stat", "-c", "%s", collectorPath],
-    },
-  });
-
-  const fileSize = parseInt(verifyResponse.data?.stdout?.trim() || "0", 10);
-  if (verifyResponse.error || verifyResponse.data?.exit_code !== 0 || fileSize === 0) {
-    throw new Error(
-      `Screenshot collector file missing or empty after download: size=${fileSize}, stderr=${verifyResponse.data?.stderr || verifyResponse.error}`
-    );
-  }
-
-  console.log("[preview-jobs] Screenshot collector downloaded successfully", {
-    previewRunId,
-    collectorPath,
-    fileSize,
-  });
-
-  // Pass options via environment variable with base64 encoding to avoid shell escaping issues
-  const optionsBase64 = stringToBase64(optionsJson);
-
-  console.log("[preview-jobs] Running screenshot collector", {
+  // Step 2: Write options JSON to Morph via curl (upload to storage, download on Morph)
+  const optionsJson = JSON.stringify(options, null, 2);
+  console.log("[preview-jobs] Writing screenshot options to file", {
     previewRunId,
     optionsLength: optionsJson.length,
-    base64Length: optionsBase64.length,
   });
 
-  // Run the collector with options decoded inline from base64
-  // Use bash -lc to source shell hooks (which includes envctl variables)
-  // The SCREENSHOT_OPTIONS env var is set by decoding base64 inline
+  await writeStringToMorph({
+    ctx,
+    morphClient,
+    instanceId,
+    filePath: optionsPath,
+    content: optionsJson,
+    previewRunId,
+    contentType: "application/json",
+  });
+
+  // Step 3: Write the runner script to Morph via curl (upload to storage, download on Morph)
+  const runScriptContent = `import { claudeCodeCapturePRScreenshots } from '${collectorPath}';
+import { readFileSync } from 'fs';
+const options = JSON.parse(readFileSync('${optionsPath}', 'utf-8'));
+const result = await claudeCodeCapturePRScreenshots(options);
+console.log(JSON.stringify(result));`;
+
+  console.log("[preview-jobs] Writing runner script", {
+    previewRunId,
+    runScriptPath,
+  });
+
+  await writeStringToMorph({
+    ctx,
+    morphClient,
+    instanceId,
+    filePath: runScriptPath,
+    content: runScriptContent,
+    previewRunId,
+    contentType: "application/javascript",
+  });
+
+  // Step 4: Execute the runner script
+  console.log("[preview-jobs] Running screenshot collector", {
+    previewRunId,
+  });
+
   const runResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
     body: {
-      command: [
-        "bash",
-        "-lc",
-        `export SCREENSHOT_OPTIONS="$(echo '${optionsBase64}' | base64 -d)" && bun '${collectorPath}' 2>&1`,
-      ],
+      command: ["/root/.bun/bin/bun", "run", runScriptPath],
     },
   });
 
@@ -1591,6 +1730,7 @@ export async function runPreviewJob(
 
         // Run the screenshot collector via Morph exec
         const collectorResult = await runScreenshotCollector({
+          ctx,
           morphClient,
           instanceId: instance.id,
           collectorUrl: collectorRelease.url,

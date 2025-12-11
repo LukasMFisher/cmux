@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target node --format esm",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --minify",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
