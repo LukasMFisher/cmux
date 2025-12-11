@@ -18,22 +18,30 @@ export function isStaging(): boolean {
 }
 
 /**
- * Gets the Convex URL for fetching the screenshot collector
+ * Gets the Convex site URL for HTTP endpoints.
+ * Note: HTTP endpoints require the .site URL, not .cloud URL
  */
-function getConvexUrl(): string | null {
-  return (
-    process.env.CONVEX_SITE_URL ||
-    process.env.CONVEX_URL ||
-    process.env.NEXT_PUBLIC_CONVEX_URL ||
-    null
-  );
+function getConvexSiteUrl(): string | null {
+  // CONVEX_SITE_URL should be the .site URL for HTTP endpoints
+  if (process.env.CONVEX_SITE_URL) {
+    return process.env.CONVEX_SITE_URL;
+  }
+
+  // Try to convert .cloud URL to .site URL
+  const cloudUrl = process.env.CONVEX_URL || process.env.NEXT_PUBLIC_CONVEX_URL;
+  if (cloudUrl) {
+    // Convert https://xxx.convex.cloud to https://xxx.convex.site
+    return cloudUrl.replace(".convex.cloud", ".convex.site");
+  }
+
+  return null;
 }
 
 /**
  * Downloads the latest screenshot collector from Convex storage
  */
 async function downloadScreenshotCollector(): Promise<string | null> {
-  const convexUrl = getConvexUrl();
+  const convexUrl = getConvexSiteUrl();
   if (!convexUrl) {
     log("WARN", "No Convex URL configured, cannot fetch remote screenshot collector");
     return null;
