@@ -112,37 +112,58 @@ export const NotificationPlugin = async ({ project: _project, client: _client, $
   // Add post-start commands to poll the session endpoint and submit the prompt
   // These run after the opencode TUI starts
   const baseUrl = `http://${OPENCODE_HTTP_HOST}:${OPENCODE_HTTP_PORT}`;
+  const logFile = "/root/lifecycle/opencode-post-start.log";
 
   // Command 1: Poll /session until it's ready (with retries)
   postStartCommands.push({
     description: "Wait for opencode session to be ready",
     command: `
+      LOG="${logFile}"
+      echo "[$(date -Iseconds)] Waiting for opencode session..." >> "$LOG"
       for i in $(seq 1 60); do
-        if curl -sf "${baseUrl}/session" > /dev/null 2>&1; then
-          echo "OpenCode session ready after $i attempts"
+        if curl -sf "${baseUrl}/session" >> "$LOG" 2>&1; then
+          echo "" >> "$LOG"
+          echo "[$(date -Iseconds)] OpenCode session ready after $i attempts" >> "$LOG"
           exit 0
         fi
         sleep 1
       done
-      echo "OpenCode session not ready after 60 attempts" >&2
+      echo "[$(date -Iseconds)] OpenCode session not ready after 60 attempts" >> "$LOG"
       exit 1
     `.trim(),
     timeoutMs: 90000, // 90 seconds total (60 retries * 1 second + overhead)
     continueOnError: false,
   });
 
-  // Command 2: Submit the prompt via HTTP API
-  // We need to escape the prompt for JSON
-  const escapedPrompt = ctx.prompt
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+  // Command 2: Append the prompt to the TUI's prompt field
+  // Use base64 encoding to safely pass through shell without escaping issues
+  const promptBase64 = Buffer.from(ctx.prompt).toString("base64");
 
   postStartCommands.push({
-    description: "Submit prompt to opencode via HTTP API",
-    command: `curl -sf -X POST "${baseUrl}/tui/submit-prompt" -H "Content-Type: application/json" -d '{"prompt":"${escapedPrompt}"}'`,
+    description: "Append prompt to opencode TUI",
+    // Decode base64 prompt, build JSON with jq, then curl
+    command: `
+      LOG="${logFile}"
+      PROMPT=$(echo "${promptBase64}" | base64 -d)
+      JSON=$(printf '%s' "$PROMPT" | jq -Rs '{text: .}')
+      echo "[$(date -Iseconds)] Appending prompt to TUI..." >> "$LOG"
+      echo "JSON payload: $JSON" >> "$LOG"
+      RESULT=$(curl -sf -X POST "${baseUrl}/tui/append-prompt" -H "Content-Type: application/json" -d "$JSON" 2>&1)
+      echo "[$(date -Iseconds)] append-prompt result: $RESULT" >> "$LOG"
+    `.trim(),
+    timeoutMs: 30000, // 30 seconds
+    continueOnError: false,
+  });
+
+  // Command 3: Submit the prompt (triggers execution)
+  postStartCommands.push({
+    description: "Submit prompt to opencode",
+    command: `
+      LOG="${logFile}"
+      echo "[$(date -Iseconds)] Submitting prompt..." >> "$LOG"
+      RESULT=$(curl -sf -X POST "${baseUrl}/tui/submit-prompt" 2>&1)
+      echo "[$(date -Iseconds)] submit-prompt result: $RESULT" >> "$LOG"
+    `.trim(),
     timeoutMs: 30000, // 30 seconds
     continueOnError: false,
   });
