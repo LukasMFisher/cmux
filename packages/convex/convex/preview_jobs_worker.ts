@@ -262,13 +262,18 @@ async function runScreenshotCollector({
     fileSize,
   });
 
+  // Pass options via environment variable with base64 encoding to avoid shell escaping issues
+  const optionsBase64 = stringToBase64(optionsJson);
+
   console.log("[preview-jobs] Running screenshot collector", {
     previewRunId,
     optionsLength: optionsJson.length,
+    base64Length: optionsBase64.length,
   });
 
-  // Run the collector with options passed via environment variable
+  // Run the collector with options decoded inline from base64
   // Use bash -lc to source shell hooks (which includes envctl variables)
+  // The SCREENSHOT_OPTIONS env var is set by decoding base64 inline
   const runResponse = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
@@ -276,7 +281,7 @@ async function runScreenshotCollector({
       command: [
         "bash",
         "-lc",
-        `SCREENSHOT_OPTIONS='${optionsJson.replace(/'/g, "'\\''")}' bun '${collectorPath}'`,
+        `export SCREENSHOT_OPTIONS="$(echo '${optionsBase64}' | base64 -d)" && bun '${collectorPath}' 2>&1`,
       ],
     },
   });
@@ -308,28 +313,53 @@ async function runScreenshotCollector({
   }
 
   // Parse the JSON result from stdout
-  // The collector outputs JSON as the last line
+  // The collector outputs JSON on a line (look for lines starting with '{')
+  // The wrapper script may add extra output after the collector finishes
   const stdoutLines = (stdout || "").split("\n").filter((line) => line.trim());
-  const lastLine = stdoutLines[stdoutLines.length - 1];
 
-  if (!lastLine) {
+  if (stdoutLines.length === 0) {
     return {
       status: "failed",
       error: "No output from screenshot collector",
     };
   }
 
-  try {
-    const result = JSON.parse(lastLine) as ScreenshotCollectorResult;
-    return result;
-  } catch {
-    console.error("[preview-jobs] Failed to parse collector output", {
+  // Find the JSON result line - it should start with '{'
+  // Search from the end since the collector outputs JSON as its final meaningful output
+  let jsonLine: string | null = null;
+  for (let i = stdoutLines.length - 1; i >= 0; i--) {
+    const line = stdoutLines[i].trim();
+    if (line.startsWith("{")) {
+      jsonLine = line;
+      break;
+    }
+  }
+
+  if (!jsonLine) {
+    const lastLine = stdoutLines[stdoutLines.length - 1];
+    console.error("[preview-jobs] No JSON output found from collector", {
       previewRunId,
       lastLine: sliceOutput(lastLine, 500),
+      totalLines: stdoutLines.length,
+      stdout: sliceOutput(stdout, 1000),
     });
     return {
       status: "failed",
-      error: `Failed to parse collector output: ${sliceOutput(lastLine, 200)}`,
+      error: `No JSON output from collector. Last line: ${sliceOutput(lastLine, 200)}`,
+    };
+  }
+
+  try {
+    const result = JSON.parse(jsonLine) as ScreenshotCollectorResult;
+    return result;
+  } catch {
+    console.error("[preview-jobs] Failed to parse collector JSON output", {
+      previewRunId,
+      jsonLine: sliceOutput(jsonLine, 500),
+    });
+    return {
+      status: "failed",
+      error: `Failed to parse collector output: ${sliceOutput(jsonLine, 200)}`,
     };
   }
 }

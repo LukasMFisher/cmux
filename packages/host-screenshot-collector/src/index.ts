@@ -689,7 +689,15 @@ async function main() {
 }
 
 // Check if running as CLI (not imported as module)
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/index.js")) {
+// Support various filename patterns: index.js, index.mjs, screenshot-collector.mjs, etc.
+const scriptPath = process.argv[1] ?? "";
+const isRunningAsCli =
+  import.meta.url === `file://${scriptPath}` ||
+  scriptPath.endsWith("/index.js") ||
+  scriptPath.endsWith("/index.mjs") ||
+  scriptPath.includes("screenshot-collector");
+
+if (isRunningAsCli) {
   main().catch((error) => {
     console.error("CLI execution failed:", error);
     process.exit(1);
