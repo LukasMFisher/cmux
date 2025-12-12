@@ -5,6 +5,65 @@ type SearchParamsRecord = {
 };
 
 export const HEATMAP_MODEL_QUERY_KEY = "model";
+export const HEATMAP_LANGUAGE_QUERY_KEY = "lang";
+
+// Supported languages for tooltip localization
+export const TOOLTIP_LANGUAGE_OPTIONS = [
+  { value: "en", label: "English" },
+  { value: "zh-Hant", label: "繁體中文" },
+  { value: "zh-Hans", label: "简体中文" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+  { value: "es", label: "Español" },
+  { value: "fr", label: "Français" },
+  { value: "de", label: "Deutsch" },
+  { value: "pt", label: "Português" },
+  { value: "ru", label: "Русский" },
+  { value: "hi", label: "हिन्दी" },
+  { value: "bn", label: "বাংলা" },
+  { value: "te", label: "తెలుగు" },
+  { value: "mr", label: "मराठी" },
+  { value: "ta", label: "தமிழ்" },
+  { value: "gu", label: "ગુજરાતી" },
+  { value: "kn", label: "ಕನ್ನಡ" },
+  { value: "ml", label: "മലയാളം" },
+  { value: "pa", label: "ਪੰਜਾਬੀ" },
+  { value: "ar", label: "العربية" },
+  { value: "vi", label: "Tiếng Việt" },
+  { value: "th", label: "ไทย" },
+  { value: "id", label: "Bahasa Indonesia" },
+] as const;
+
+export type TooltipLanguageValue =
+  (typeof TOOLTIP_LANGUAGE_OPTIONS)[number]["value"];
+
+export const DEFAULT_TOOLTIP_LANGUAGE: TooltipLanguageValue = "en";
+
+export function normalizeTooltipLanguage(
+  raw: string | null | undefined
+): TooltipLanguageValue {
+  if (typeof raw !== "string") {
+    return DEFAULT_TOOLTIP_LANGUAGE;
+  }
+  const normalized = raw.trim().toLowerCase();
+  const found = TOOLTIP_LANGUAGE_OPTIONS.find(
+    (opt) => opt.value.toLowerCase() === normalized
+  );
+  return found ? found.value : DEFAULT_TOOLTIP_LANGUAGE;
+}
+
+export function getLanguageDisplayName(value: TooltipLanguageValue): string {
+  const found = TOOLTIP_LANGUAGE_OPTIONS.find((opt) => opt.value === value);
+  return found ? found.label : "English";
+}
+
+export function parseTooltipLanguageFromUrlSearchParams(
+  searchParams: URLSearchParams
+): TooltipLanguageValue {
+  return normalizeTooltipLanguage(
+    searchParams.get(HEATMAP_LANGUAGE_QUERY_KEY)
+  );
+}
 export const HEATMAP_MODEL_FINETUNE_QUERY_VALUE = "finetune";
 export const HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE = "cmux-heatmap-1";
 export const HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE = "cmux-heatmap-2";
